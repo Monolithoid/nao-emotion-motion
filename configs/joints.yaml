@@ -1,0 +1,34 @@
+# Articulations apprises et limites calibrées.
+# Unités : radians. Noms : ceux de NAOqi (ALMotion).
+# Les jambes ne figurent pas ici : elles restent hors du périmètre d'apprentissage
+# et ne sont jamais commandées par ce logiciel.
+#
+# IMPORTANT : les limites ci-dessous sont des VALEURS DE REMPLACEMENT, déduites
+# prudemment des plages nominales publiées pour NAO et resserrées. Elles ne sont
+# pas calibrées sur votre robot. Tant que `calibration.calibrated` vaut false,
+# l'exécution sur le robot réel est refusée.
+schema_version: 1
+calibration:
+  version: placeholder-0
+  calibrated: false
+  notes: "Remplacer par les limites min/max mesurées sur le robot, puis passer calibrated à true et changer version."
+
+groups:
+  left_arm:  [LShoulderPitch, LShoulderRoll, LElbowYaw, LElbowRoll, LWristYaw]
+  right_arm: [RShoulderPitch, RShoulderRoll, RElbowYaw, RElbowRoll, RWristYaw]
+  head:      [HeadYaw, HeadPitch]
+
+# min / max en radians. Marge de sécurité appliquée en plus par le guardian.
+limits:
+  LShoulderPitch: [-1.80, 1.80]
+  LShoulderRoll:  [-0.25, 1.20]
+  LElbowYaw:      [-1.80, 1.80]
+  LElbowRoll:     [-1.45, -0.05]
+  LWristYaw:      [-1.50, 1.50]
+  RShoulderPitch: [-1.80, 1.80]
+  RShoulderRoll:  [-1.20, 0.25]
+  RElbowYaw:      [-1.80, 1.80]
+  RElbowRoll:     [0.05, 1.45]
+  RWristYaw:      [-1.50, 1.50]
+  HeadYaw:        [-1.60, 1.60]
+  HeadPitch:      [-0.60, 0.45]

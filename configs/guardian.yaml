@@ -1,0 +1,36 @@
+# Contrôleur de sécurité indépendant des modèles.
+# Toutes les valeurs sont à ajuster sur le robot réel ; elles sont prudentes par défaut.
+schema_version: 1
+limit_margin_rad: 0.03          # marge intérieure appliquée aux limites min/max
+max_velocity_rad_s: 1.5         # par articulation (valeur par défaut)
+max_acceleration_rad_s2: 8.0
+per_joint_velocity_rad_s:       # surcharges éventuelles
+  HeadPitch: 1.0
+check_rate_hz: 100              # le trajet complet est vérifié à cette fréquence
+min_duration_s: 0.3
+max_duration_s: 15.0
+start_tolerance_rad: 0.05       # écart toléré entre l'état mesuré et le début d'un segment
+transition_velocity_rad_s: 0.5  # vitesse max des transitions repos <-> départ <-> geste
+
+# Contraintes couplées linéaires : sum(coef_i * q_i) <= bound (radians).
+# Elles complètent les min/max indépendants, qui ne garantissent PAS l'absence
+# de collision. Exemples ci-dessous, à remplacer par des zones mesurées.
+coupled_constraints:
+  - name: tete_baissee_tournee
+    description: "Limiter la flexion de la tête quand elle est très tournée (butée et câbles)."
+    terms: {HeadPitch: 1.0, HeadYaw: 0.25}
+    bound: 0.50
+  - name: tete_baissee_tournee_neg
+    terms: {HeadPitch: 1.0, HeadYaw: -0.25}
+    bound: 0.50
+  - name: bras_gauche_vers_tete
+    description: "Exemple : bras gauche levé et rentré vers l'axe pendant que la tête tourne à gauche."
+    terms: {LShoulderPitch: -1.0, LShoulderRoll: -1.0, HeadYaw: 0.5}
+    bound: 1.40
+  - name: bras_droit_vers_tete
+    terms: {RShoulderPitch: -1.0, RShoulderRoll: 1.0, HeadYaw: -0.5}
+    bound: 1.40
+  - name: avant_bras_croises
+    description: "Exemple : éviter que les deux bras se croisent devant le torse."
+    terms: {LShoulderRoll: -1.0, RShoulderRoll: 1.0}
+    bound: 0.35

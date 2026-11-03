@@ -1,0 +1,270 @@
+# -*- coding: utf-8 -*-
+"""Pont minimal entre nao_motion (Python 3) et NAOqi.
+
+Ce fichier est volontairement compatible Python 2.7 ET Python 3 (pas de
+f-strings, pas d'annotations), car le SDK Python de NAOqi pour NAO est
+souvent limité à Python 2.7 selon la version. Il ne dépend que de la
+bibliothèque standard et du SDK NAOqi.
+
+Il peut tourner sur le PC (connexion au robot par IP) ou sur le robot.
+
+Protocole : TCP, une requête JSON par ligne -> une réponse JSON par ligne.
+    {"cmd": "read_angles", "joints": [...]} -> {"ok": true, "result": [...]}
+
+Sécurité :
+  - AUCUN mouvement au démarrage ni à la connexion d'un client.
+  - Chien de garde : si une commande de mouvement a été envoyée et qu'aucun
+    message (battement ou commande) n'arrive pendant --watchdog secondes, le
+    pont arrête les tâches de mouvement et maintient la posture MESURÉE. Il
+    ne renvoie pas le robot au repos et ne relâche rien.
+  - Les jambes sont refusées.
+
+Usage :
+    python naoqi_bridge.py --robot-ip 192.168.1.10 --robot-port 9559 --port 9600
+    python naoqi_bridge.py --fake      # sans robot (tests du protocole)
+"""
+from __future__ import print_function
+
+import argparse
+import json
+import socket
+import sys
+import threading
+import time
+
+LEG_PREFIXES = ("LHip", "RHip", "LKnee", "RKnee", "LAnkle", "RAnkle")
+PROTOCOL_VERSION = 1
+
+
+class FakeBackend(object):
+    """Robot factice pour tester le protocole (aucune physique)."""
+    real = False
+
+    def __init__(self):
+        self.q = {}
+        self.stiff = {}
+        self.killed = 0
+
+    def info(self):
+        return {"backend": "fake", "naoqi_version": None, "robot": None}
+
+    def get_angles(self, names):
+        return [self.q.get(n, 0.0) for n in names]
+
+    def set_stiffness(self, names, value):
+        for n in names:
+            self.stiff[n] = value
+
+    def get_stiffness(self, names):
+        return [self.stiff.get(n, 0.0) for n in names]
+
+    def set_angles(self, names, angles, speed):
+        for n, a in zip(names, angles):
+            self.q[n] = a
+
+    def angle_interpolation(self, names, angles, times):
+        for n, a in zip(names, angles):
+            self.q[n] = a[-1]
+
+    def stop(self, names):
+        self.killed += 1
+
+
+class NaoqiBackend(object):
+    real = True
+
+    def __init__(self, ip, port):
+        self.motion = None
+        self.system = None
+        try:
+            import qi  # NAOqi 2.x (libqi)
+            session = qi.Session()
+            session.connect("tcp://%s:%d" % (ip, port))
+            self.motion = session.service("ALMotion")
+            try:
+                self.system = session.service("ALSystem")
+            except Exception:
+                self.system = None
+            self.api = "qi"
+        except ImportError:
+            from naoqi import ALProxy  # SDK historique
+            self.motion = ALProxy("ALMotion", ip, port)
+            try:
+                self.system = ALProxy("ALSystem", ip, port)
+            except Exception:
+                self.system = None
+            self.api = "naoqi"
+
+    def info(self):
+        version = None
+        robot = None
+        try:
+            version = self.system.systemVersion() if self.system else None
+        except Exception:
+            pass
+        try:
+            robot = self.motion.getRobotConfig()
+        except Exception:
+            pass
+        return {"backend": self.api, "naoqi_version": version, "robot": robot}
+
+    def get_angles(self, names):
+        return list(self.motion.getAngles(names, True))  # True = capteurs
+
+    def set_stiffness(self, names, value):
+        self.motion.setStiffnesses(names, value)
+
+    def get_stiffness(self, names):
+        return list(self.motion.getStiffnesses(names))
+
+    def set_angles(self, names, angles, speed):
+        self.motion.setAngles(names, angles, speed)
+
+    def angle_interpolation(self, names, angles, times):
+        # non bloquant ; interrompu par stop()
+        if self.api == "qi":
+            self.motion.angleInterpolation(names, angles, times, True, _async=True)
+        else:
+            self.motion.post.angleInterpolation(names, angles, times, True)
+
+    def stop(self, names):
+        try:
+            self.motion.killTasksUsingResources(names)
+        except Exception:
+            pass
+        current = self.get_angles(names)
+        # maintien de la posture mesurée, sans changer la raideur
+        self.motion.setAngles(names, current, 0.1)
+
+
+class Bridge(object):
+    def __init__(self, backend, watchdog_s):
+        self.backend = backend
+        self.watchdog_s = watchdog_s
+        self.lock = threading.Lock()
+        self.last_msg = time.time()
+        self.motion_active = False
+        self.commanded = set()
+        self.watchdog_trips = 0
+
+    def check_names(self, names):
+        for n in names:
+            if n.startswith(LEG_PREFIXES):
+                raise ValueError("jambes hors perimetre : %s" % n)
+
+    def handle(self, req):
+        cmd = req.get("cmd")
+        with self.lock:
+            self.last_msg = time.time()
+            if cmd == "hello":
+                info = self.backend.info()
+                info["protocol"] = PROTOCOL_VERSION
+                info["real"] = self.backend.real
+                info["watchdog_s"] = self.watchdog_s
+                return info
+            if cmd == "heartbeat":
+                return {"watchdog_trips": self.watchdog_trips}
+            names = req.get("joints", [])
+            self.check_names(names)
+            if cmd == "read_angles":
+                return self.backend.get_angles(names)
+            if cmd == "get_stiffness":
+                return self.backend.get_stiffness(names)
+            if cmd == "set_stiffness":
+                self.backend.set_stiffness(names, float(req["value"]))
+                return True
+            if cmd == "set_angles":
+                self.backend.set_angles(names, [float(a) for a in req["angles"]], float(req["speed"]))
+                self.motion_active = True
+                self.commanded.update(names)
+                return True
+            if cmd == "angle_interpolation":
+                self.backend.angle_interpolation(names, req["angles"], req["times"])
+                self.motion_active = True
+                self.commanded.update(names)
+                return True
+            if cmd == "stop":
+                self._stop()
+                return True
+            raise ValueError("commande inconnue : %s" % cmd)
+
+    def _stop(self):
+        if self.commanded:
+            self.backend.stop(sorted(self.commanded))
+        self.motion_active = False
+
+    def watchdog_loop(self):
+        while True:
+            time.sleep(self.watchdog_s / 4.0)
+            with self.lock:
+                if self.motion_active and time.time() - self.last_msg > self.watchdog_s:
+                    self.watchdog_trips += 1
+                    sys.stderr.write("[bridge] chien de garde : client muet, arret et maintien\n")
+                    try:
+                        self._stop()
+                    except Exception as e:
+                        sys.stderr.write("[bridge] echec arret : %s\n" % e)
+
+
+def serve(bridge, host, port, ready_event=None):
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind((host, port))
+    srv.listen(1)
+    t = threading.Thread(target=bridge.watchdog_loop)
+    t.daemon = True
+    t.start()
+    if ready_event is not None:
+        ready_event.port = srv.getsockname()[1]
+        ready_event.set()
+    while True:
+        conn, _ = srv.accept()
+        f = conn.makefile("rwb") if sys.version_info[0] >= 3 else conn.makefile("rw")
+        try:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    req = json.loads(line.decode("utf-8") if isinstance(line, bytes) else line)
+                    resp = {"ok": True, "result": bridge.handle(req)}
+                except Exception as e:
+                    resp = {"ok": False, "error": str(e)}
+                out = json.dumps(resp) + "\n"
+                f.write(out.encode("utf-8") if sys.version_info[0] >= 3 else out)
+                f.flush()
+        except Exception:
+            pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        # client déconnecté : si un mouvement était en cours, arrêt et maintien
+        with bridge.lock:
+            if bridge.motion_active:
+                sys.stderr.write("[bridge] client deconnecte pendant un mouvement : arret et maintien\n")
+                bridge._stop()
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--robot-ip")
+    p.add_argument("--robot-port", type=int, default=9559)
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=9600)
+    p.add_argument("--watchdog", type=float, default=0.6)
+    p.add_argument("--fake", action="store_true")
+    a = p.parse_args()
+    if a.fake:
+        backend = FakeBackend()
+    else:
+        if not a.robot_ip:
+            p.error("--robot-ip requis (ou --fake)")
+        backend = NaoqiBackend(a.robot_ip, a.robot_port)
+    print("[bridge] pret sur %s:%d (backend=%s). Aucun mouvement n'est envoye au demarrage."
+          % (a.host, a.port, backend.info().get("backend")))
+    serve(Bridge(backend, a.watchdog), a.host, a.port)
+
+
+if __name__ == "__main__":
+    main()

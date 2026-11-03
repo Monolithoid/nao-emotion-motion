@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NAO – collecte de mouvements expressifs</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand">NAO · émotion → mouvement</div>
+  <div id="status" class="status"></div>
+  <label class="arm"><input type="checkbox" id="armed"> Mouvements autorisés</label>
+  <button id="stop" class="stop" title="Arrêt : interrompt et maintient la posture">ARRÊT</button>
+</header>
+<div id="warn" class="warn"></div>
+<nav>
+  <button data-tab="arms" class="active">1 · Bras</button>
+  <button data-tab="head">2 · Tête</button>
+  <button data-tab="takes">Prises</button>
+  <button data-tab="train">Entraînement</button>
+  <button data-tab="gen">Génération</button>
+  <button data-tab="robot">Robot</button>
+</nav>
+<main>
+<section id="tab-arms" class="tab active">
+  <div class="row">
+    <label>Émotion <select id="a-emotion"></select></label>
+    <label>Intensité <input type="range" id="a-intensity" min="0" max="1" step="0.05" value="0.7"> <span id="a-int-val"></span></label>
+    <label>Intention (optionnelle) <select id="a-intention"><option value="">—</option></select></label>
+  </div>
+  <div class="consigne" id="a-consigne"></div>
+  <p class="hint">Passage 1 : les bras sont relâchés (tenez-les) et seuls leurs capteurs sont lus ; la tête reste raide sur place.</p>
+  <div class="row">
+    <button id="a-prepare">Préparer (relâcher les bras)</button>
+    <button id="a-start">Démarrer (compte à rebours)</button>
+    <button id="a-stop">Arrêter l'enregistrement</button>
+    <button id="a-hold">Raidir les bras sur place</button>
+  </div>
+  <div class="recstate" id="a-rec"></div>
+  <div id="a-draft" class="draft hidden">
+    <h3>Prise enregistrée — aperçu (aucun mouvement)</h3>
+    <div class="plot" id="a-plot"></div>
+    <div class="row">
+      <input id="a-notes" placeholder="Annotation">
+      <button class="ok" id="a-accept">Accepter</button>
+      <button id="a-pending">Garder en attente</button>
+      <button class="bad" id="a-reject">Rejeter</button>
+      <button id="a-retry">Recommencer</button>
+    </div>
+  </div>
+</section>
+
+<section id="tab-head" class="tab">
+  <p class="hint">Passage 2 : les bras rejouent une prise (motorisés) pendant que vous guidez uniquement la tête.
+  Plusieurs contextes de regard peuvent être enregistrés pour un même mouvement des bras.</p>
+  <div class="row">
+    <label>Prise de bras <select id="h-arm"></select></label>
+    <span id="h-arm-info"></span>
+  </div>
+  <div class="plot" id="h-arm-plot"></div>
+  <fieldset>
+    <legend>Contexte événementiel (repère torse : azimut + à gauche, élévation + en haut)</legend>
+    <label><input type="radio" name="evmode" value="none" checked> Aucun événement</label>
+    <label><input type="radio" name="evmode" value="test"> Événement de test :
+      azimut <input type="number" id="h-az" value="30" step="5" class="num">°
+      élévation <input type="number" id="h-el" value="0" step="5" class="num">°</label>
+    <label><input type="radio" name="evmode" value="external"> Dernier événement du composant externe</label>
+    <button id="h-setev">Appliquer</button>
+    <span id="h-ev"></span>
+  </fieldset>
+  <div class="consigne" id="h-consigne"></div>
+  <div class="row">
+    <button id="h-prepare">Préparer (approche motorisée des bras, puis tête relâchée)</button>
+    <button id="h-start">Démarrer (compte à rebours + relecture)</button>
+    <button id="h-stop">Arrêter</button>
+    <button id="h-hold">Raidir la tête sur place</button>
+  </div>
+  <div class="recstate" id="h-rec"></div>
+  <div id="h-draft" class="draft hidden">
+    <h3>Prise de tête — aperçu</h3>
+    <div class="plot" id="h-plot"></div>
+    <div class="row">
+      <input id="h-notes" placeholder="Annotation">
+      <button class="ok" id="h-accept">Accepter</button>
+      <button id="h-pending">Garder en attente</button>
+      <button class="bad" id="h-reject">Rejeter</button>
+      <button id="h-retry">Recommencer</button>
+    </div>
+  </div>
+</section>
+
+<section id="tab-takes" class="tab">
+  <h3>Répartition (émotion × intensité, prises acceptées / total)</h3>
+  <div id="stats"></div>
+  <div class="row">
+    <label>Type <select id="t-kind"><option value="">tous</option><option value="arms">bras</option><option value="head">tête</option></select></label>
+    <button id="t-refresh">Actualiser</button>
+  </div>
+  <table id="t-table"></table>
+  <div id="t-detail" class="draft hidden">
+    <h3 id="t-title"></h3>
+    <div class="plot" id="t-plot"></div>
+    <div class="row">
+      <button id="t-play">Rejouer virtuellement</button>
+      <input id="t-notes" placeholder="Annotation">
+      <button class="ok" id="t-accept">Accepter</button>
+      <button class="bad" id="t-reject">Rejeter</button>
+      <button id="t-save-notes">Enregistrer l'annotation</button>
+      <button id="t-use-head">Enregistrer une tête sur cette prise</button>
+    </div>
+    <div id="t-info" class="mono"></div>
+  </div>
+</section>
+
+<section id="tab-train" class="tab">
+  <p class="hint">L'entraînement n'entraîne aucun mouvement. Par défaut, seules les prises acceptées sont utilisées ;
+  la validation est faite par groupes (une prise de bras et ses prises de tête restent ensemble).</p>
+  <div class="row">
+    <label>Époques <input type="number" id="tr-epochs" value="800" class="num"></label>
+    <label><input type="checkbox" id="tr-pending"> inclure les prises en attente</label>
+    <button id="tr-arms">Entraîner les bras</button>
+    <button id="tr-head">Entraîner la tête (bras figés)</button>
+  </div>
+  <div id="tr-jobs"></div>
+  <h3>Résultats</h3>
+  <div id="tr-runs"></div>
+</section>
+
+<section id="tab-gen" class="tab">
+  <div class="row">
+    <label>Émotion <select id="g-emotion"></select></label>
+    <label>Mélange avec <select id="g-emotion2"><option value="">—</option></select></label>
+    <label>part <input type="range" id="g-mix" min="0" max="1" step="0.05" value="0.5"></label>
+    <label>Intensité <input type="range" id="g-intensity" min="0" max="1" step="0.05" value="0.7"> <span id="g-int-val"></span></label>
+    <label>Variation <input type="number" id="g-var" value="0" step="0.02" min="0" class="num"></label>
+    <label><input type="checkbox" id="g-event" checked> utiliser l'événement courant</label>
+    <button id="g-go">Générer et valider</button>
+  </div>
+  <div class="plot" id="g-plot"></div>
+  <div id="g-report" class="mono"></div>
+  <div class="row"><button id="g-exec" disabled>Exécuter le cycle (repos → départ → geste → départ → repos)</button></div>
+</section>
+
+<section id="tab-robot" class="tab">
+  <div class="row">
+    <button id="r-connect">Connecter (aucun mouvement)</button>
+    <button id="r-ack">Acquitter l'état</button>
+    <button id="r-hold-all">Raidir tout sur place</button>
+    <button id="r-rest">Retour au repos (explicite)</button>
+    <button id="r-relax-arms" class="bad">Relâcher les bras</button>
+    <button id="r-relax-head" class="bad">Relâcher la tête</button>
+  </div>
+  <pre id="r-status" class="mono"></pre>
+</section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
