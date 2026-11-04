@@ -183,6 +183,60 @@ class Guardian:
             stats["suggested_time_scale"] = round(float(max(sv, sa, 1.0)), 3)
         return Report(not v, v, stats)
 
+    def validate_rest_transition(self, traj: Trajectory, start_state: Optional[dict] = None,
+                                 time_offset: float = 0.0) -> Report:
+        """Segment repos <-> départ.
+
+        Le repos peut être hors de la zone de mouvement calibrée (ex. bras posés sur les
+        genoux : contact). Ces segments sont les SEULS autorisés à la quitter. Ils sont
+        vérifiés sur les limites d'usine, à vitesse réduite et en accélération ; ni marge
+        ni contraintes couplées. Le guardian ne garantit pas l'absence de collision le
+        long de ce trajet : que le départ soit accessible sans heurt depuis le repos est
+        à la charge de l'opérateur qui calibre."""
+        v: List[Violation] = []
+        try:
+            from ..trajectory import check_samples
+            check_samples(traj.t, traj.q, traj.joints)
+        except TrajectoryError as e:
+            return Report(False, [Violation("format", str(e))])
+        for j in traj.joints:
+            if j.startswith(LEG_PREFIXES) or j not in self.cfg.rest_limits:
+                return Report(False, [Violation("unknown_joint", "Articulation non configurée", joint=j)])
+        n = max(2, int(np.ceil(traj.duration * self.g.check_rate_hz)) + 1)
+        tt = np.union1d(traj.t, np.linspace(traj.t[0], traj.t[-1], n))
+        qq = traj.sample(tt)
+        for k, j in enumerate(traj.joints):
+            lo, hi = self.cfg.rest_limits[j]
+            bad = np.nonzero((qq[:, k] < lo) | (qq[:, k] > hi))[0]
+            if bad.size:
+                i = bad[0]
+                v.append(Violation("rest_limit", "Segment repos <-> départ hors limites d'usine", joint=j,
+                                   time_s=float(tt[i]) + time_offset, value=float(qq[i, k]),
+                                   limit=lo if qq[i, k] < lo else hi))
+        dt = np.diff(traj.t)
+        vel = np.diff(traj.q, axis=0) / dt[:, None] if dt.size else np.zeros((0, len(traj.joints)))
+        lim = self.g.rest_velocity_rad_s
+        for k, j in enumerate(traj.joints):
+            if vel.size and np.abs(vel[:, k]).max() > lim:
+                i = int(np.argmax(np.abs(vel[:, k])))
+                v.append(Violation("rest_velocity", "Segment repos <-> départ trop rapide", joint=j,
+                                   time_s=float(traj.t[i]) + time_offset, value=float(np.abs(vel[i, k])), limit=lim))
+        if vel.shape[0] >= 2:
+            acc = np.diff(vel, axis=0) / ((dt[1:] + dt[:-1]) / 2)[:, None]
+            for k, j in enumerate(traj.joints):
+                if np.abs(acc[:, k]).max() > self.g.max_acceleration_rad_s2:
+                    i = int(np.argmax(np.abs(acc[:, k])))
+                    v.append(Violation("acceleration", "Accélération excessive (segment repos <-> départ)", joint=j,
+                                       time_s=float(traj.t[i + 1]) + time_offset, value=float(np.abs(acc[i, k])),
+                                       limit=self.g.max_acceleration_rad_s2))
+        if start_state is not None:
+            for k, j in enumerate(traj.joints):
+                if j in start_state and abs(float(traj.q[0, k]) - float(start_state[j])) > self.g.start_tolerance_rad:
+                    v.append(Violation("start_mismatch", "Premier point éloigné de l'état mesuré", joint=j,
+                                       value=abs(float(traj.q[0, k]) - float(start_state[j])),
+                                       limit=self.g.start_tolerance_rad))
+        return Report(not v, v, {"duration_s": traj.duration, "rest_transition": True})
+
     def require(self, traj: Trajectory, **kw) -> Report:
         rep = self.validate(traj, **kw)
         if not rep.ok:

@@ -221,14 +221,26 @@ def compute_calibration(sweeps: Dict[str, Dict[str, np.ndarray]], joints: Sequen
             coupled.append({"name": f"calib:{a}-{b}:{k}", "terms": {a: round(na, 6), b: round(nb, 6)},
                             "bound": round(bound, 6), "description": f"enveloppe mesurée {a}/{b}"})
     if poses:
+        # Le repos peut être hors de la zone de mouvement (ex. bras posés sur les genoux :
+        # contact) : il n'est borné que par les limites d'usine. Que le départ soit
+        # accessible sans heurt depuis le repos est à la charge de qui calibre.
         for name, groups in poses.items():
             for g, jq in groups.items():
                 for j, v in jq.items():
+                    if name == "rest":
+                        m = measured[j]
+                        flo, fhi = m["factory"] if m.get("factory") else (min(m["min"], limits[j][0]),
+                                                                          max(m["max"], limits[j][1]))
+                        if not flo - tol <= v <= fhi + tol:
+                            raise CalibrationError(f"Pose rest/{j}={v:.3f} hors des limites d'usine [{flo:.3f}, {fhi:.3f}]")
+                        continue
                     lo, hi = limits[j]
                     if not lo <= v <= hi:
                         raise CalibrationError(f"Pose {name}/{j}={v:.3f} hors des limites calibrées [{lo:.3f}, {hi:.3f}]")
         for c in coupled:
             for name, groups in poses.items():
+                if name == "rest":
+                    continue
                 flat = {j: v for jq in groups.values() for j, v in jq.items()}
                 if all(j in flat for j in c["terms"]):
                     val = sum(k * flat[j] for j, k in c["terms"].items())

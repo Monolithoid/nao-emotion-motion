@@ -108,3 +108,24 @@ def test_exploration_beyond_factory_keeps_factory_limit_with_warning():
     assert cal.measured["HeadPitch"]["beyond_factory"] and not cal.measured["HeadYaw"]["beyond_factory"]
     d = cal.to_dict()
     assert d["warnings"] == cal.warnings
+
+
+def test_rest_pose_may_be_outside_motion_zone():
+    """Repos en contact (bras sur les genoux) : accepté hors des limites calibrées et
+    des enveloppes, mais pas hors des limites d'usine. Le départ reste vérifié."""
+    rng = np.random.default_rng(2)
+    q = np.stack([rng.uniform(-0.4, 0.3, 200), rng.uniform(-1.0, 1.0, 200)], axis=1)
+    sweeps = {"head": {"joints": ["HeadPitch", "HeadYaw"], "q": q}}
+    factory = {"HeadPitch": [-0.672, 0.515, 7.2, 1.2], "HeadYaw": [-2.086, 2.086, 8.3, 1.2]}
+    proc = {"margin_rad": 0.05, "pairs": [["HeadYaw", "HeadPitch"]]}
+    start = {"head": {"HeadPitch": 0.0, "HeadYaw": 0.0}}
+    cal = compute_calibration(sweeps, ["HeadPitch", "HeadYaw"], proc, factory,
+                              poses={"rest": {"head": {"HeadPitch": 0.5, "HeadYaw": 0.0}}, "start": start})
+    assert cal.limits["HeadPitch"][1] < 0.5
+    with pytest.raises(CalibrationError, match="usine"):
+        compute_calibration(sweeps, ["HeadPitch", "HeadYaw"], proc, factory,
+                            poses={"rest": {"head": {"HeadPitch": 0.6, "HeadYaw": 0.0}}, "start": start})
+    with pytest.raises(CalibrationError, match="calibrées"):
+        compute_calibration(sweeps, ["HeadPitch", "HeadYaw"], proc, factory,
+                            poses={"rest": {"head": {"HeadPitch": 0.5, "HeadYaw": 0.0}},
+                                   "start": {"head": {"HeadPitch": 0.5, "HeadYaw": 0.0}}})
