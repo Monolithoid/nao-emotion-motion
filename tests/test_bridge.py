@@ -76,13 +76,83 @@ def test_robot_address_given_by_interface(cfg, tmp_path):
         a.read_angles(["HeadYaw"])
     a.disconnect()
     with pytest.raises(ValueError):
-        wb.connect_robot("pas une adresse!", 9559, "127.0.0.1", ready.port)
-    info = wb.connect_robot("nao.local", 9559, "127.0.0.1", ready.port)
+        wb.connect_robot("pas une adresse!", 9559, "127.0.0.1", ready.port, bridge_on_robot=False)
+    info = wb.connect_robot("nao.local", 9559, "127.0.0.1", ready.port, bridge_on_robot=False)
     assert created == [("nao.local", 9559)] and info["robot_address"] == "nao.local:9559"
     st = wb.status()
     assert st["adapter"] == "bridge" and st["robot_address"] == "nao.local:9559" and not st["armed"]
     assert br.motion_active is False and created[0] and wb.adapter.roles["HeadYaw"] == "idle"
-    wb.connect_robot("192.168.1.10", 9559, "127.0.0.1", ready.port)
+    wb.connect_robot("192.168.1.10", 9559, "127.0.0.1", ready.port, bridge_on_robot=False)
     assert created[-1] == ("192.168.1.10", 9559)
     wb.use_simulation()
     assert wb.status()["adapter"] == "sim"
+
+
+def _load_bridge_module():
+    spec = importlib.util.spec_from_file_location("naoqi_bridge", BRIDGE)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_bridge_on_robot_mode(cfg, tmp_path):
+    """Pont lancé sur le NAO (--on-robot) : déjà relié à NAOqi local ; l'interface joint
+    le pont à l'adresse du robot et ne redemande pas de connexion NAOqi."""
+    mod = _load_bridge_module()
+    created = []
+
+    def factory(host, port):
+        created.append((host, port))
+        return mod.FakeBackend()
+
+    br = mod.Bridge(None, 0.3, factory)
+    br.handle({"cmd": "connect_robot", "host": "127.0.0.1", "port": 9559})  # comme --on-robot
+    ready = threading.Event()
+    threading.Thread(target=mod.serve, args=(br, "127.0.0.1", 0, ready), daemon=True).start()
+    assert ready.wait(5)
+    from nao_motion.workbench import Workbench
+    wb = Workbench(tmp_path / "d", tmp_path / "r", cfg=cfg, adapter_kind="sim", virtual_time=True)
+    assert cfg.robot["bridge"]["location"] == "robot"
+    # l'« adresse du robot » est ici 127.0.0.1 car le pont factice tourne en local
+    wb.connect_robot("127.0.0.1", 9559, None, ready.port)
+    assert created == [("127.0.0.1", 9559)]  # aucune reconnexion NAOqi
+    assert wb.status()["adapter"] == "bridge" and not wb.status()["armed"] and br.motion_active is False
+    wb.use_simulation()
+
+
+def test_backend_prefers_naoqi_module(monkeypatch):
+    """Sur le robot (NAOqi 2.1), le module `naoqi` est utilisé avant `qi`."""
+    import sys
+    import types
+    mod = _load_bridge_module()
+    calls = []
+    fake = types.ModuleType("naoqi")
+    fake.ALProxy = lambda name, ip, port: calls.append((name, ip, port)) or object()
+    monkeypatch.setitem(sys.modules, "naoqi", fake)
+    be = mod.NaoqiBackend("127.0.0.1", 9559)
+    assert be.api == "naoqi" and calls[0] == ("ALMotion", "127.0.0.1", 9559)
+    monkeypatch.setitem(sys.modules, "naoqi", None)
+    monkeypatch.setitem(sys.modules, "qi", None)
+    with pytest.raises(RuntimeError, match="on-robot"):
+        mod.NaoqiBackend("127.0.0.1", 9559)
+
+
+def test_bridge_is_python27_compatible():
+    """Le pont doit tourner sur le Python 2.7.3 du NAO : contrôle statique (pas de Python 2 ici)."""
+    import ast
+    src = BRIDGE.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    assert src.startswith("# -*- coding: utf-8 -*-")
+    allowed = {"__future__", "argparse", "json", "re", "socket", "sys", "threading", "time", "os", "naoqi", "qi"}
+    for n in ast.walk(tree):
+        assert not isinstance(n, (ast.JoinedStr, ast.AnnAssign, ast.AsyncFunctionDef, ast.Await,
+                                  ast.YieldFrom, ast.Nonlocal, ast.NamedExpr)), type(n).__name__
+        if isinstance(n, ast.FunctionDef):
+            assert n.returns is None and not n.args.kwonlyargs and not n.args.posonlyargs
+            assert all(a.annotation is None for a in n.args.args)
+        if isinstance(n, ast.Import):
+            assert {a.name for a in n.names} <= allowed
+        if isinstance(n, ast.ImportFrom):
+            assert n.module in allowed
+        if isinstance(n, ast.ClassDef):
+            assert n.bases, n.name

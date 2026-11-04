@@ -273,10 +273,13 @@ async function init() {
   $("r-port").value = stored.port || (CFG.robot && CFG.robot.port) || 9559;
   $("r-bhost").value = stored.bhost || (CFG.bridge && CFG.bridge.host) || "127.0.0.1";
   $("r-bport").value = stored.bport || (CFG.bridge && CFG.bridge.port) || 9600;
+  $("r-bloc").value = stored.bloc || (CFG.bridge && CFG.bridge.location) || "robot";
+  const syncBloc = () => { $("r-bhost-l").classList.toggle("hidden", $("r-bloc").value === "robot"); $("r-bport-l").classList.toggle("hidden", $("r-bloc").value !== "robot"); };
+  $("r-bloc").onchange = syncBloc; syncBloc();
   $("r-connect-robot").onclick = async () => {
-    const v = {host: $("r-host").value.trim(), port: parseInt($("r-port").value), bhost: $("r-bhost").value.trim(), bport: parseInt($("r-bport").value)};
+    const v = {host: $("r-host").value.trim(), port: parseInt($("r-port").value), bhost: $("r-bhost").value.trim(), bport: parseInt($("r-bport").value), bloc: $("r-bloc").value};
     if (!v.host) return alert("Indiquer l'adresse du robot (IP ou nom DNS)");
-    await api("connect", {mode: "robot", robot_host: v.host, robot_port: v.port, bridge_host: v.bhost, bridge_port: v.bport});
+    await api("connect", {mode: "robot", robot_host: v.host, robot_port: v.port, bridge_host: v.bhost, bridge_port: v.bport, bridge_on_robot: v.bloc === "robot"});
     try { localStorage.setItem("nao-robot", JSON.stringify(v)); } catch (e) {}
   };
   $("r-sim").onclick = () => api("connect", {mode: "sim"});

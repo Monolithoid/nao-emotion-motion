@@ -21,17 +21,33 @@ def _wb(a, **kw):
                      **kw)
 
 
+def _robot_host(cfg, a):
+    host = getattr(a, "robot", None) or (cfg.robot.get("robot") or {}).get("ip")
+    if not host:
+        raise SystemExit("Adresse du robot inconnue : --robot <IP ou nom DNS> (ou NAO_IP dans .env)")
+    return host
+
+
+def _bridge_on_robot(cfg):
+    return (cfg.robot.get("bridge") or {}).get("location", "robot") == "robot"
+
+
+def _target_bridge(ad, cfg, a):
+    """Pont sur le robot : l'adresse du pont est celle du robot."""
+    if ad.name == "bridge" and _bridge_on_robot(cfg) and not ad.is_connected():
+        ad.host = _robot_host(cfg, a)
+
+
 def _connect(ad, cfg, a):
     """Connecte l'adaptateur ; pour le pont, transmet l'adresse du robot (IP ou DNS)."""
+    _target_bridge(ad, cfg, a)
     ad.connect()
     _connect_robot(ad, cfg, a)
 
 
 def _connect_robot(ad, cfg, a):
     if ad.name == "bridge" and not ad.info.get("robot_connected"):
-        host = getattr(a, "robot", None) or (cfg.robot.get("robot") or {}).get("ip")
-        if not host:
-            raise SystemExit("Adresse du robot inconnue : --robot <IP ou nom DNS> (ou NAO_IP dans .env)")
+        host = "127.0.0.1" if _bridge_on_robot(cfg) else _robot_host(cfg, a)
         ad.connect_robot(host, int((cfg.robot.get("robot") or {}).get("port") or 9559))
 
 
@@ -153,6 +169,7 @@ def cmd_execute(a):
         return 2
     wb = _wb(a, adapter=a.adapter)
     traj = Trajectory.from_dict(json.loads(Path(a.plan).read_text())["trajectory"])
+    _target_bridge(wb.adapter, wb.cfg, a)
     wb.ctrl.connect()
     _connect_robot(wb.adapter, wb.cfg, a)
     plan = wb.ctrl.plan_cycle(traj, from_pose="rest")

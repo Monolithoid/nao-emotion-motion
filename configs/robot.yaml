@@ -11,7 +11,8 @@ robot:
   ip: null
   port: 9559
 bridge:
-  host: 127.0.0.1           # machine où tourne bridge/naoqi_bridge.py
+  location: robot           # robot (recommandé : rien à installer, naoqi est déjà sur le NAO) | pc (SDK pynaoqi requis)
+  host: 127.0.0.1           # machine où tourne bridge/naoqi_bridge.py quand location = pc
   port: 9600
   heartbeat_s: 0.2          # le pont arrête le mouvement s'il ne reçoit plus de battement
   watchdog_s: 0.6

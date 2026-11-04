@@ -85,7 +85,7 @@ nao-motion export-guardian --out guardian_export   # standalone guardian for ano
 
 ```
 configs/                versioned YAML: joints + limits, poses, emotions, guardian, robot, model
-bridge/naoqi_bridge.py  NAOqi bridge (Python 2.7 or 3), the only file depending on the SDK
+bridge/naoqi_bridge.py  NAOqi bridge (Python 2.7 or 3), the only file depending on NAOqi; runs on the robot by default
 nao_motion/
   config/               loading and validation of configurations
   events.py             event context, frames, conversions
@@ -263,15 +263,18 @@ python --version                         # embedded Python
 Steps:
 
 1. `cp .env.example .env` (not versioned): expected robot identity, bridge port. These values override those in `configs/robot.yaml`.
-2. **Install the NAOqi 2.1.4 Python SDK** (Python 2.7) on the machine that will run the bridge, or run the bridge directly on the robot, which has Python 2.7.3. The bridge tries `import qi`, then `from naoqi import ALProxy`.
+2. **Choose where the bridge runs.** By default (`NAO_BRIDGE_LOCATION=robot`), it runs **on the NAO**, and there is **nothing to install**: the `naoqi` module is already present in the robot's Python 2.7.3. This is also what ia-agent does (embedded `nao_ws_bridge.py`). The `pc` mode requires the NAOqi Python SDK (pynaoqi, Python 2.7), which has become hard to find and install. The bridge tries `from naoqi import ALProxy`, then `import qi` (`--api` to force one).
 3. **Prepare the robot's position.** The legs stay out of scope and are never commanded. Put the robot in a stable posture, for example sitting or crouching. Handle autonomous life, breathing and idle movements from your usual tools: the bridge does not touch them, because disabling them can make the robot move depending on the version.
-4. **Start the bridge**, which sends no movement at startup and waits for the robot address:
+4. **Start the bridge**, which sends no movement at startup:
    ```bash
+   # on the robot (recommended)
+   scp bridge/naoqi_bridge.py nao@<IP>:/home/nao/
+   ssh nao@<IP> python /home/nao/naoqi_bridge.py --on-robot   # local NAOqi, listens on network port 9600
+   # or on the PC, with the pynaoqi SDK (NAO_BRIDGE_LOCATION=pc)
    python2 bridge/naoqi_bridge.py            # address supplied later by the interface
-   python2 bridge/naoqi_bridge.py --robot-ip nao.local   # or right at launch
    ```
-   To test the protocol without a robot: `python bridge/naoqi_bridge.py --fake`. The bridge accepts only one client at a time (interface **or** command).
-   Then, in `nao-motion ui --adapter bridge` → **Robot** tab, enter the **robot address (IP or DNS name)**, for example `192.168.1.10` or `nao.local`, and click *Connecter au robot* (connect to robot). This action sends no movement and changes no stiffness. The address is remembered in the browser. On the command line, `--robot <IP or DNS>` plays the same role, with `NAO_IP` as the default.
+   The bridge has no authentication: on the robot, use it only on a trusted network, and stop it (Ctrl+C) after the session. To test the protocol without a robot: `python bridge/naoqi_bridge.py --fake`. The bridge accepts only one client at a time (interface **or** command).
+   Then, in `nao-motion ui --adapter bridge` → **Robot** tab, choose where the bridge runs, enter the **robot address (IP or DNS name)**, for example `192.168.1.10` or `nao.local`, and click *Connecter au robot* (connect to robot). This action sends no movement and changes no stiffness. The address is remembered in the browser. On the command line, `--robot <IP or DNS>` plays the same role, with `NAO_IP` as the default.
 5. `nao-motion robot-info --robot <IP or DNS>`: checks the connection and shows identity, factory limits and measured posture, without any movement.
 6. `nao-motion calibrate` (previous section), then `nao-motion check-config`.
 7. Adjust velocities, accelerations, stiffness (`robot.yaml` → `stiffness`) and manual constraints between limbs (`guardian.yaml`).
