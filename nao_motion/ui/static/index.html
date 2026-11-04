@@ -20,6 +20,7 @@
   <button data-tab="takes">Prises</button>
   <button data-tab="train">Entraînement</button>
   <button data-tab="gen">Génération</button>
+  <button data-tab="calib">Calibration</button>
   <button data-tab="robot">Robot</button>
 </nav>
 <main>
@@ -148,6 +149,63 @@
   <div class="row"><button id="g-exec" disabled>Exécuter le cycle (repos → départ → geste → départ → repos)</button></div>
 </section>
 
+<section id="tab-calib" class="tab">
+  <p class="hint">Calibration du guardian, robot par robot : les limites utilisées sur le robot réel viennent uniquement
+  d'ici. <b>Rien n'est commandé</b> : un groupe est relâché pour être guidé à la main, ou raidi sur place.
+  Fermer ou annuler laisse chaque articulation dans son état (pas de retour au repos). Même calcul que
+  <code>nao-motion calibrate</code>.</p>
+  <div class="row">
+    <button id="c-open" class="ok">Ouvrir la calibration</button>
+    <button id="c-close">Fermer sans enregistrer</button>
+    <span id="c-robot" class="hint"></span>
+  </div>
+  <div id="c-status" class="cal-status">Aucune calibration ouverte. Connecter le robot (onglet Robot), puis ouvrir.</div>
+  <div id="c-body" class="hidden">
+    <div class="row" id="c-groups"></div>
+    <div class="cal-grid">
+      <div>
+        <ol class="cal-steps">
+          <li><div class="what">1. Exploration des amplitudes</div>
+            <div class="hint">Tenir le groupe. Au démarrage il est relâché (les autres sont raidis sur place) :
+            amener lentement chaque articulation jusqu'à ses butées utiles et parcourir les combinaisons.
+            À l'arrêt, le groupe est raidi sur place.</div>
+            <div class="row"><button id="c-sweep" class="ok">Démarrer l'exploration</button>
+              <button id="c-sweep-stop">Terminer l'exploration</button><span id="c-sweep-n" class="hint"></span></div></li>
+          <li><div class="what">2. Pose de repos</div>
+            <div class="hint">Relâcher, placer le groupe à la main en position de repos, capturer (moyenne de 5 lectures), raidir sur place.</div>
+            <div class="row"><button data-cal="release">Relâcher le groupe</button>
+              <button data-cal="capture" data-pose="rest" class="ok">Capturer le repos</button>
+              <button data-cal="hold">Raidir sur place</button></div></li>
+          <li><div class="what">3. Pose de départ</div>
+            <div class="hint">Même chose pour la position d'où partent les gestes.</div>
+            <div class="row"><button data-cal="release">Relâcher le groupe</button>
+              <button data-cal="capture" data-pose="start" class="ok">Capturer le départ</button>
+              <button data-cal="hold">Raidir sur place</button></div></li>
+          <li><div class="what">4. Calcul</div>
+            <div class="hint">Quand tous les groupes sont explorés et toutes les poses capturées : limites = amplitude
+            explorée ∩ limites d'usine, moins la marge ; contraintes couplées = enveloppes des couples.</div>
+            <div class="row"><label>Nom <input id="c-version" placeholder="&lt;robot&gt;-&lt;date&gt;" size="22"></label>
+              <button id="c-compute" class="ok">Calculer</button><span id="c-missing" class="hint"></span></div></li>
+          <li><div class="what">5. Enregistrer puis activer</div>
+            <div class="hint">Le fichier va dans configs/calibration/ et n'est jamais écrasé. Activer le désigne au
+            guardian (le contrôleur reste désarmé).</div>
+            <div class="row"><button id="c-save" class="ok">Enregistrer</button>
+              <button id="c-activate" class="bad">Activer pour le guardian</button><span id="c-saved" class="hint"></span></div></li>
+        </ol>
+      </div>
+      <div>
+        <h3 id="c-table-title">Articulations</h3>
+        <table id="c-table"></table>
+        <h3>Couples explorés</h3>
+        <p class="hint">Chaque point est une mesure ; le contour est l'enveloppe convexe d'où viennent les
+        contraintes couplées (marge retirée au calcul). Le cadre pointillé : limites de remplacement.</p>
+        <div id="c-pairs" class="cal-pairs"></div>
+      </div>
+    </div>
+    <div id="c-result" class="draft hidden"></div>
+  </div>
+</section>
+
 <section id="tab-robot" class="tab">
   <fieldset>
     <legend>Connexion (aucun mouvement, aucune raideur modifiée)</legend>
@@ -172,5 +230,6 @@
 </section>
 </main>
 <script src="app.js"></script>
+<script src="calib.js"></script>
 </body>
 </html>

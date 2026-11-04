@@ -240,6 +240,8 @@ class CalibrationSession:
         self._stop = threading.Event()
         self.current: Optional[str] = None
         self.n = 0
+        self.live: List[np.ndarray] = []      # mesures du balayage en cours (lecture par l'interface)
+        self.live_joints: List[str] = []
 
     def robot_info(self) -> dict:
         info = {}
@@ -267,6 +269,7 @@ class CalibrationSession:
         self.current = group
         a = self.adapter
         qs = []
+        self.live, self.live_joints = qs, list(joints)
         t0 = a.now()
         k = 0
         while not self._stop.is_set() and a.now() - t0 < max_duration_s:
@@ -280,9 +283,15 @@ class CalibrationSession:
         q = np.array(qs)
         return {j: (float(q[:, i].min()), float(q[:, i].max())) for i, j in enumerate(joints)} if len(qs) else {}
 
-    def capture_pose(self, name: str, group: str) -> Dict[str, float]:
+    def capture_pose(self, name: str, group: str, samples: int = 5, interval_s: float = 0.02) -> Dict[str, float]:
+        """Moyenne de `samples` lectures capteurs (aucune commande)."""
         js = self.cfg.groups[group]
-        q = self.adapter.read_angles(js)
+        reads = []
+        for k in range(max(1, int(samples))):
+            if k:
+                self.adapter.sleep(interval_s)
+            reads.append(self.adapter.read_angles(js))
+        q = np.mean(reads, axis=0)
         self.poses.setdefault(name, {})[group] = {j: float(v) for j, v in zip(js, q)}
         return self.poses[name][group]
 

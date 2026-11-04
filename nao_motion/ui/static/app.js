@@ -49,7 +49,7 @@ async function refreshStatus() {
     (STATUS.event.present ? ` · événement az ${(STATUS.event.azimuth_rad * 180 / Math.PI).toFixed(0)}° el ${(STATUS.event.elevation_rad * 180 / Math.PI).toFixed(0)}°` : " · aucun événement");
   $("armed").checked = STATUS.armed;
   const w = [];
-  if (!STATUS.calibrated || !STATUS.poses_calibrated) w.push("Aucune calibration active (nao-motion calibrate) : limites de remplacement, exécution réelle refusée.");
+  if (!STATUS.calibrated || !STATUS.poses_calibrated) w.push("Aucune calibration active (onglet Calibration) : limites de remplacement, exécution réelle refusée.");
   if (STATUS.sim_demonstration) w.push("Simulation : un démonstrateur SYNTHÉTIQUE remplace votre main ; les prises sont marquées comme synthétiques.");
   $("warn").textContent = w.join(" ");
   const txt = r.state === "none" ? "" : r.state === "countdown" ? `Départ dans ${Math.ceil(r.countdown_left)}…` :

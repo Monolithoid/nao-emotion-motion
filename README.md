@@ -196,15 +196,20 @@ Le modèle **propose**, le contrôleur **encadre**.
 
 La calibration est une procédure à part entière, faite robot par robot. Son résultat est un fichier versionné, `configs/calibration/<robot>-<date>.yaml`. Le fichier actif est désigné par `configs/calibration/ACTIVE`, et une calibration n'est jamais écrasée.
 
+Elle se conduit dans l'**onglet Calibration** de l'interface (`nao-motion ui`), ou au terminal avec `nao-motion calibrate`. Les deux utilisent la même procédure et le même calcul.
+
 ```bash
-nao-motion calibrate            # interactive, via le pont ; rien n'est commandé
+nao-motion ui                   # onglet Robot : connecter le robot, puis onglet Calibration
+nao-motion calibrate            # la même procédure au terminal, via le pont ; rien n'est commandé
 ```
+
+Dans l'onglet Calibration, on choisit un groupe et on avance étape par étape, dans l'ordre qu'on veut. Le tableau affiche en direct les angles mesurés et les min/max qui s'élargissent pendant l'exploration, ainsi que les poses capturées. Pour chaque couple, un nuage de points avec son enveloppe convexe montre les zones pas encore explorées. Les boutons ne s'activent que lorsque l'étape est possible : le calcul attend que tous les groupes soient explorés et toutes les poses capturées, l'activation attend l'enregistrement. Ouvrir une calibration désarme le contrôleur, et la collecte, l'exécution et l'armement sont refusés tant qu'elle reste ouverte. Fermer ne remet rien au repos. En simulation, un démonstrateur synthétique fait l'exploration, et une calibration simulée ne peut pas être activée.
 
 1. **Identification** : nom du robot, version de NAOqi, configuration matérielle, et limites d'usine lues par `ALMotion.getLimits`.
 2. **Exploration guidée**, groupe par groupe (bras gauche, bras droit, tête). Le groupe exploré est relâché et seulement lu, les autres sont raidis sur place. Amenez lentement chaque articulation jusqu'à ses butées *utiles*, et parcourez les combinaisons (tête tournée **et** baissée, épaule levée **et** écartée, etc.).
-3. **Poses** de repos et de départ, capturées pour chaque groupe en plaçant le robot à la main.
+3. **Poses** de repos et de départ, capturées pour chaque groupe en plaçant le robot à la main (moyenne de 5 lectures).
 4. **Calcul** : les limites sont l'amplitude mesurée, intersectée avec les limites d'usine, moins une marge (`configs/calibration.yaml`). Les **contraintes couplées** viennent de l'enveloppe convexe de chaque couple exploré (`pairs`), simplifiée de façon conservatrice. La procédure est refusée si l'exploration est trop courte ou trop étroite, ou si une pose sort de l'enveloppe.
-5. **Relecture** du résumé, puis enregistrement et activation (`nao-motion calibration-activate`).
+5. **Relecture** du résumé, puis enregistrement et activation (bouton de l'onglet, ou `nao-motion calibration-activate`). Depuis l'interface, l'activation recharge la configuration sans redémarrer, et le contrôleur reste désarmé.
 
 Une calibration active remplace limites, poses et version de calibration dans toute la chaîne (guardian, prises, checkpoints). Les contraintes manuelles de `guardian.yaml` s'y ajoutent, notamment entre membres (bras ↔ tête, bras ↔ bras), qu'une exploration articulation par articulation ne mesure pas. L'enveloppe convexe suppose une zone atteignable convexe pour chaque couple ; une zone en L doit être découpée à la main.
 

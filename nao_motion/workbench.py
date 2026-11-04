@@ -50,11 +50,13 @@ class Workbench:
         self.sim_demonstration = self.adapter.name == "sim"
         self.rng = np.random.default_rng(0)
         self.lock = threading.RLock()
+        self.calibration = None  # CalibrationWizard ouvert depuis l'interface
 
     # -- connexion au robot (adresse saisie dans l'interface) -------------------
     def _busy(self) -> bool:
         rec = self.recording
-        return self.ctrl.state == State.EXECUTING or (
+        cal = self.calibration
+        return self.ctrl.state == State.EXECUTING or (cal is not None and cal.sweeping) or (
             rec is not None and rec.state in (RecState.COUNTDOWN, RecState.RECORDING))
 
     def use_adapter(self, adapter):
@@ -68,6 +70,7 @@ class Workbench:
             pass
         self.adapter = adapter
         self.ctrl = Controller(self.cfg, adapter, self.guardian)
+        self.calibration = None  # liée à l'ancien adaptateur
         self.recording = None
         self.engine = None
         self.sim_demonstration = adapter.name == "sim"
@@ -102,6 +105,51 @@ class Workbench:
         self.use_adapter(SimAdapter(self.cfg))
         self.ctrl.connect()
 
+    # -- calibration du guardian (onglet Calibration) ---------------------------
+    def open_calibration(self):
+        """Ouvre une calibration guidée. Aucun mouvement, aucune raideur modifiée."""
+        from .calibration_wizard import CalibrationWizard
+        if self._busy():
+            raise ControllerError("Mouvement ou enregistrement en cours : arrêter d'abord")
+        if not self.adapter.is_connected():
+            raise ControllerError("Robot non connecté (onglet Robot)")
+        if self.ctrl.armed:
+            self.ctrl.disarm()  # aucun mouvement motorisé pendant une calibration
+        if self.calibration is not None:
+            self.calibration.stop()
+        self.calibration = CalibrationWizard(self)
+        return self.calibration.state()
+
+    def close_calibration(self):
+        """Ferme sans rien enregistrer ; les articulations restent dans leur état (pas de retour au repos)."""
+        if self.calibration is not None:
+            self.calibration.stop()
+        self.calibration = None
+
+    def check_no_calibration(self):
+        if self.calibration is not None:
+            raise ControllerError("Calibration ouverte : la fermer avant toute collecte ou exécution")
+
+    def require_calibration(self):
+        if self.calibration is None:
+            raise ControllerError("Aucune calibration ouverte")
+        return self.calibration
+
+    def reload_config(self):
+        """Recharge configs/ (après activation d'une calibration). Contrôleur désarmé, aucun mouvement."""
+        if self._busy():
+            raise ControllerError("Mouvement ou enregistrement en cours : arrêter d'abord")
+        cfg = load_config(self.cfg.root)
+        state = self.ctrl.state
+        self.cfg = cfg
+        self.store.cfg = cfg
+        self.guardian = Guardian(cfg)
+        self.ctrl = Controller(cfg, self.adapter, self.guardian)
+        self.ctrl.state = state if state != State.EXECUTING else State.HOLDING
+        self.ctrl._log(f"configuration rechargée : calibration {cfg.calibration_version} (aucun mouvement)")
+        self.engine = None
+        self.plans = {}
+
     # -- événement extérieur ---------------------------------------------------
     def set_event(self, d: dict, ttl_s: Optional[float] = None) -> EventContext:
         """Reçoit un événement (composant caméra/micros, ou test manuel)."""
@@ -127,6 +175,7 @@ class Workbench:
 
     # -- collecte ---------------------------------------------------------------
     def prepare_arm_take(self, emotion, intensity, intention=None, confirm=False):
+        self.check_no_calibration()
         if self.recording is not None and self.recording.state in (RecState.COUNTDOWN, RecState.RECORDING):
             raise ControllerError("Un enregistrement est déjà en cours")
         self.cfg.emotion_index(emotion)
@@ -140,6 +189,7 @@ class Workbench:
     def prepare_head_take(self, arm_take_id=None, confirm=False, generated: Optional[dict] = None):
         """Passage 2. `generated={"emotion", "intensity", "variation"?, "seed"?}` : le modèle
         des bras existant (figé) produit le geste ; sinon `arm_take_id` : démonstration rejouée."""
+        self.check_no_calibration()
         ev = self.current_event()
         if generated is not None:
             g = dict(generated)
@@ -334,6 +384,7 @@ class Workbench:
         return out
 
     def execute_plan(self, plan_id, background=True):
+        self.check_no_calibration()
         entry = self.plans.get(plan_id)
         if entry is None or entry["plan"] is None:
             raise ControllerError("Plan inconnu ou non planifiable")
@@ -362,6 +413,8 @@ class Workbench:
         """Arrêt explicite global : enregistrement, relecture et exécution."""
         if self.recording is not None:
             self.recording.request_stop()
+        if self.calibration is not None and self.calibration.sweeping:
+            self.calibration.sweep_stop()
         self.ctrl.stop()
 
     def status(self) -> dict:
