@@ -272,6 +272,8 @@ def cmd_calibrate(a):
     for j, (lo, hi) in cal.limits.items():
         m = cal.measured[j]
         print(f"  {j:15s} mesuré [{m['min']:+.3f}, {m['max']:+.3f}] usine {m['factory']} -> guardian [{lo:+.3f}, {hi:+.3f}]")
+    for w in cal.warnings:
+        print("  ATTENTION :", w)
     if _ask("Enregistrer cette calibration ? [o/N] ") != "o":
         print("Non enregistrée.")
         return 1

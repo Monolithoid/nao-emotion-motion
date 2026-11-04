@@ -246,7 +246,8 @@ class CalibrationWizard:
         if self.result is not None:
             r = self.result
             res = {"version": r.version, "limits": {j: list(v) for j, v in r.limits.items()},
-                   "measured": r.measured, "coupled": len(r.coupled), "margin_rad": r.margin_rad}
+                   "measured": r.measured, "coupled": len(r.coupled), "margin_rad": r.margin_rad,
+                   "warnings": list(r.warnings)}
         missing = [f"{n}/{g}" for n in POSE_NAMES for g in self.cfg.groups if g not in s.poses.get(n, {})]
         return {"active": True, "sim": self.sim, "robot": self.robot, "groups": self.cfg.groups,
                 "sweeping": s.current if self.sweeping else None, "sweep_n": s.n if self.sweeping else 0,

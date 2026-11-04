@@ -91,3 +91,20 @@ def test_calibration_file_validation(tmp_path):
     p.write_text("schema_version: 1\nkind: autre\n")
     with pytest.raises(CalibrationError):
         Calibration.load(p)
+
+
+def test_exploration_beyond_factory_keeps_factory_limit_with_warning():
+    """Mesure au-delà d'une limite d'usine (butée, jeu mécanique) : pas de refus,
+    la limite d'usine est gardée et un avertissement est enregistré."""
+    from nao_motion.calibration import Calibration, compute_calibration
+    rng = np.random.default_rng(1)
+    q = np.stack([rng.uniform(-0.70, 0.40, 200), rng.uniform(-1.0, 1.0, 200)], axis=1)
+    sweeps = {"head": {"joints": ["HeadPitch", "HeadYaw"], "q": q}}
+    factory = {"HeadPitch": [-0.672, 0.515, 7.2, 1.2], "HeadYaw": [-2.086, 2.086, 8.3, 1.2]}
+    cal = compute_calibration(sweeps, ["HeadPitch", "HeadYaw"], {"margin_rad": 0.05, "pairs": []}, factory)
+    lo, hi = cal.limits["HeadPitch"]
+    assert abs(lo - (-0.672 + 0.05)) < 1e-9 and hi < 0.40
+    assert len(cal.warnings) == 1 and "HeadPitch" in cal.warnings[0] and "usine" in cal.warnings[0]
+    assert cal.measured["HeadPitch"]["beyond_factory"] and not cal.measured["HeadYaw"]["beyond_factory"]
+    d = cal.to_dict()
+    assert d["warnings"] == cal.warnings

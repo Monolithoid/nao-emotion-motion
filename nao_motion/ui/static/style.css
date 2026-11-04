@@ -36,3 +36,4 @@ td.live{color:var(--accent);font-variant-numeric:tabular-nums}td.num{font-varian
 .fov svg{width:100%;max-width:640px;height:auto;cursor:crosshair;display:block}
 
 .facbar{vertical-align:middle}.warn{color:var(--bad,#c0392b);font-size:.85em}
+.banner-warn{background:var(--warn);border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin:6px 0}.banner-warn ul{margin:4px 0 0 18px;padding:0}

@@ -126,10 +126,11 @@
     box.classList.toggle("hidden", !res);
     if (!res) return;
     let h = `<h3>Calibration ${esc(res.version)} : ${Object.keys(res.limits).length} articulations, ${res.coupled} contraintes couplées, marge ${res.margin_rad} rad</h3>` +
+      ((res.warnings || []).length ? `<div class="banner-warn"><b>Attention :</b> l'exploration a dépassé des limites d'usine ; ce sont les limites d'usine qui sont gardées.<ul>${res.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>` : "") +
       "<table><tr><th>Articulation</th><th>Mesuré</th><th>Usine</th><th>Guardian</th></tr>";
     for (const [j, lim] of Object.entries(res.limits)) {
       const m = res.measured[j] || {};
-      h += `<tr><td>${j}</td><td class="num">${f3(m.min)} … ${f3(m.max)}</td>` +
+      h += `<tr${m.beyond_factory ? ' class="beyond"' : ""}><td>${j}${m.beyond_factory ? ' <span class="warn">au-delà de l\'usine</span>' : ""}</td><td class="num">${f3(m.min)} … ${f3(m.max)}</td>` +
         `<td class="num">${m.factory ? f3(m.factory[0]) + " … " + f3(m.factory[1]) : "non lues"}</td>` +
         `<td class="num">${f3(lim[0])} … ${f3(lim[1])}</td></tr>`;
     }
