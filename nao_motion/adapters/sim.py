@@ -78,7 +78,7 @@ class SimAdapter(RobotAdapter):
         self._require()
 
     def capabilities(self) -> dict:
-        return {"adapter": "sim", "real_robot": False, "stream": True, "interpolation": False}
+        return {"adapter": "sim", "robot_name": "sim", "real_robot": False, "stream": True, "interpolation": False}
 
     # -- démonstrateur virtuel ---------------------------------------------
     def set_demonstrator(self, fn: Optional[Callable[[float], Dict[str, float]]]):

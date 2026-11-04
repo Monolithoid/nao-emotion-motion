@@ -28,7 +28,8 @@ def cmd_check_config(a):
     cfg = load_config(a.config)
     g = Guardian(cfg)
     print(f"Configuration : {cfg.root}")
-    print(f"  calibration : {cfg.calibration_version} (calibrée : {cfg.calibrated}) ; poses calibrées : {cfg.poses_calibrated}")
+    print(f"  calibration : {cfg.calibration_version} (active : {cfg.calibrated}) ; poses calibrées : {cfg.poses_calibrated}"
+          + (f" ; robot {cfg.calibration.robot.get('robot_name')}" if cfg.calibration else ""))
     print(f"  articulations : {cfg.all_joints}")
     print(f"  émotions : {cfg.emotions} ; intentions : {cfg.intentions}")
     ok = True
@@ -40,8 +41,11 @@ def cmd_check_config(a):
             print("    -", v.to_dict())
         ok &= rep.ok
     if not cfg.calibrated or not cfg.poses_calibrated:
-        print("  ATTENTION : valeurs de remplacement ; l'exécution sur robot réel sera refusée.")
+        print("  ATTENTION : aucune calibration active (nao-motion calibrate) ; l'exécution sur robot réel sera refusée.")
     r = cfg.robot["robot"]
+    if cfg.robot.get("_env_sources"):
+        print(f"  surchargé par .env / environnement : {cfg.robot['_env_sources']}")
+    print(f"  robot : {r.get('name')} {r.get('model')} NAOqi {r.get('naoqi_version')} @ {r.get('ip')}:{r.get('port')}")
     missing = [k for k in ("model", "naoqi_version", "ip") if not r.get(k)]
     if missing:
         print(f"  Robot réel : informations à renseigner dans robot.yaml : {missing}")
@@ -162,6 +166,98 @@ def cmd_capture_pose(a):
     print(f"  {a.group}: {{" + ", ".join(f"{j}: {v:.4f}" for j, v in zip(js, q)) + "}")
 
 
+def cmd_robot_info(a):
+    """Identité et limites d'usine du robot via le pont : lecture seule, aucun mouvement."""
+    from .adapters import make_adapter
+    from .config import load_config
+    cfg = load_config(a.config)
+    ad = make_adapter(cfg, a.adapter)
+    ad.connect()
+    caps = ad.capabilities()
+    print(json.dumps({k: v for k, v in caps.items()}, indent=1, ensure_ascii=False, default=str))
+    fl = getattr(ad, "factory_limits", None)
+    if fl:
+        print("Limites d'usine (ALMotion.getLimits) : [min, max, vitesse max, couple max]")
+        for j, l in fl(cfg.all_joints).items():
+            print(f"  {j:15s} {l}")
+    q = ad.read_angles(cfg.all_joints)
+    print("Posture mesurée :", {j: round(float(v), 3) for j, v in zip(cfg.all_joints, q)})
+    ad.disconnect()
+
+
+def _ask(msg):
+    return input(msg).strip().lower()
+
+
+def cmd_calibrate(a):
+    """Procédure de calibration du guardian (voir nao_motion/calibration.py)."""
+    import threading
+    from .adapters import make_adapter
+    from .calibration import CalibrationSession, activate, load_procedure
+    from .config import load_config
+    cfg = load_config(a.config, use_calibration=False)  # on mesure sans s'appuyer sur une calibration existante
+    proc = load_procedure(cfg.root)
+    if a.adapter == "sim":
+        from .demo import simulate_calibration
+        from .workbench import Workbench
+        import tempfile
+        wb = Workbench(tempfile.mkdtemp(), tempfile.mkdtemp(), cfg=cfg, adapter_kind="sim", virtual_time=True)
+        wb.ctrl.connect()
+        cal = simulate_calibration(wb)
+        out = Path(a.out or "calibration-sim.yaml")
+        cal.save(out)
+        print(f"Calibration SIMULÉE écrite dans {out} (aucune valeur réelle ; non activée).")
+        return 0
+    ad = make_adapter(cfg, a.adapter)
+    ad.connect()
+    sess = CalibrationSession(cfg, ad, proc)
+    print("Robot :", sess.robot_info())
+    print("Rien ne sera commandé : chaque groupe exploré est relâché, les autres sont raidis sur place.")
+    print("Placez le robot dans une posture stable (assis/accroupi) avant de commencer.")
+    for g in cfg.groups:
+        if _ask(f"\n[{g}] Tenez le groupe. Entrée pour le relâcher et commencer l'exploration (q pour quitter) ") == "q":
+            return 1
+        th = threading.Thread(target=sess.sweep, args=(g,), kwargs={"max_duration_s": 600, "confirm": True}, daemon=True)
+        th.start()
+        print(f"  Amenez lentement chaque articulation de {g} jusqu'à ses butées utiles, "
+              "et parcourez les combinaisons (ex. tête tournée ET baissée).")
+        input("  Entrée pour terminer l'exploration de ce groupe ")
+        sess.request_stop()
+        th.join()
+        q = sess.sweeps[g]["q"]
+        for i, j in enumerate(cfg.groups[g]):
+            print(f"  {j:15s} min {q[:, i].min():+.3f}  max {q[:, i].max():+.3f} rad ({len(q)} mesures)")
+        ad.set_roles(driven=cfg.groups[g])  # raidi sur place, sans déplacement
+    for name in ("rest", "start"):
+        for g in cfg.groups:
+            input(f"\n[{name}/{g}] Entrée pour relâcher {g} et le placer en position « {name} » ")
+            ad.set_roles(guided=cfg.groups[g])
+            input("  Placé ? Entrée pour capturer (le groupe sera raidi sur place) ")
+            print("  ", sess.capture_pose(name, g))
+            ad.set_roles(driven=cfg.groups[g])
+    cal = sess.result(version=a.version)
+    print(f"\nCalibration {cal.version} : {len(cal.limits)} articulations, {len(cal.coupled)} contraintes couplées")
+    for j, (lo, hi) in cal.limits.items():
+        m = cal.measured[j]
+        print(f"  {j:15s} mesuré [{m['min']:+.3f}, {m['max']:+.3f}] usine {m['factory']} -> guardian [{lo:+.3f}, {hi:+.3f}]")
+    if _ask("Enregistrer cette calibration ? [o/N] ") != "o":
+        print("Non enregistrée.")
+        return 1
+    path = cal.save(cfg.root / "calibration" / f"{cal.version}.yaml")
+    print(f"Écrite : {path}")
+    if _ask("L'activer pour le guardian ? [o/N] ") == "o":
+        print("Active :", activate(cfg.root, path))
+    return 0
+
+
+def cmd_calibration_activate(a):
+    from .calibration import activate
+    from .config import load_config
+    cfg = load_config(a.config, use_calibration=False)
+    print("Active :", activate(cfg.root, a.file))
+    load_config(a.config)  # vérifie que poses et limites sont cohérentes
+
+
 def cmd_serve_inference(a):
     from .inference.server import serve
     serve(_wb(a, adapter="sim"), a.host, a.port)
@@ -207,6 +303,14 @@ def main(argv=None):
     s.add_argument("--group", required=True, choices=["left_arm", "right_arm", "head"])
     s.add_argument("--name", default="start", choices=["rest", "start"])
     s.add_argument("--adapter", default="sim", choices=["sim", "bridge"]); s.set_defaults(fn=cmd_capture_pose)
+    s = sub.add_parser("robot-info", help="identité, version NAOqi, limites d'usine (lecture seule)")
+    s.add_argument("--adapter", default="bridge", choices=["sim", "bridge"]); s.set_defaults(fn=cmd_robot_info)
+    s = sub.add_parser("calibrate", help="procédure de calibration du guardian (exploration guidée)")
+    s.add_argument("--adapter", default="bridge", choices=["sim", "bridge"])
+    s.add_argument("--version", help="nom de la calibration (défaut : <robot>-<date>)")
+    s.add_argument("--out", help="sim uniquement : fichier de sortie"); s.set_defaults(fn=cmd_calibrate)
+    s = sub.add_parser("calibration-activate", help="activer un fichier de configs/calibration/")
+    s.add_argument("file"); s.set_defaults(fn=cmd_calibration_activate)
     s = sub.add_parser("serve-inference", help="serveur HTTP d'inférence (génération sans exécution)")
     s.add_argument("--host", default="127.0.0.1"); s.add_argument("--port", type=int, default=8766)
     s.set_defaults(fn=cmd_serve_inference)

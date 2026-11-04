@@ -86,15 +86,28 @@ class Workbench:
                          "event": self.current_event().to_dict()}
         return self.rec_info
 
-    def prepare_head_take(self, arm_take_id, confirm=False):
-        arm = self.store.load(arm_take_id)
+    def prepare_head_take(self, arm_take_id=None, confirm=False, generated: Optional[dict] = None):
+        """Passage 2. `generated={"emotion", "intensity", "variation"?, "seed"?}` : le modèle
+        des bras existant (figé) produit le geste ; sinon `arm_take_id` : démonstration rejouée."""
         ev = self.current_event()
-        rec = HeadRecording(self.cfg, self.ctrl, arm, ev)
+        if generated is not None:
+            g = dict(generated)
+            self.cfg.emotion_index(g["emotion"])
+            eng = self.get_engine()
+            if getattr(eng, "arm_model", None) is None:
+                raise ControllerError("Aucun modèle des bras entraîné : entraîner les bras d'abord")
+            rec = HeadRecording.from_generated(self.cfg, self.ctrl, eng, g["emotion"], float(g["intensity"]), ev,
+                                               float(g.get("variation", 0.0)), g.get("seed"))
+            emotion, intensity, intention = g["emotion"], float(g["intensity"]), g.get("intention")
+        else:
+            arm = self.store.load(arm_take_id)
+            rec = HeadRecording.from_take(self.cfg, self.ctrl, arm, ev)
+            emotion, intensity, intention = arm.meta.emotion, arm.meta.intensity, arm.meta.intention
         rec.prepare(confirm=confirm)  # approche motorisée validée, contrôleur armé requis
         self.recording = rec
-        self.rec_info = {"kind": "head", "emotion": arm.meta.emotion, "intensity": arm.meta.intensity,
-                         "intention": arm.meta.intention, "arm_take_id": arm_take_id, "event": ev.to_dict()}
-        return self.rec_info
+        self.rec_info = {"kind": "head", "emotion": emotion, "intensity": intensity, "intention": intention,
+                         "event": ev.to_dict(), **rec.source}
+        return {k: v for k, v in self.rec_info.items()}
 
     def _sim_demonstrator(self, countdown_s):
         """En simulation, un démonstrateur synthétique remplace la main de l'opérateur."""
@@ -165,10 +178,13 @@ class Workbench:
             config_fingerprint=self.cfg.fingerprint(), adapter=self.adapter.name,
             sample_rate_hz=rec.rate, segment=seg, head_initial=r.head_initial,
             arm_take_id=info.get("arm_take_id"), intention=info.get("intention"),
+            arm_source=info.get("arm_source"), arm_gesture_id=info.get("arm_gesture_id"),
+            arm_generation=info.get("arm_generation"),
             synthetic=self.sim_demonstration if synthetic is None else synthetic, status=status,
             annotations={"notes": notes or ("" if r.complete else r.message), "tags": [] if r.complete else ["incomplete"]},
         )
-        self.store.save(meta, r.traj)
+        ref = rec.replay.shifted(r.segment[0]) if info["kind"] == "head" else None  # consigne, même horloge
+        self.store.save(meta, r.traj, reference=ref)
         self.recording = None
         return take_id
 

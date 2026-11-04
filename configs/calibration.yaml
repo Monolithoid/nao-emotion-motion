@@ -1,0 +1,18 @@
+# Procédure de calibration du guardian (voir README, section Calibration).
+# Ce fichier décrit COMMENT calibrer ; le résultat (limites mesurées sur un robot
+# donné) est écrit dans configs/calibration/<robot>-<date>.yaml, et le fichier
+# actif est désigné par configs/calibration/ACTIVE.
+schema_version: 1
+margin_rad: 0.05            # marge retirée de l'amplitude mesurée (en plus de celle du guardian)
+rate_hz: 50
+min_samples: 50             # en dessous, l'exploration d'un groupe est refusée
+min_range_rad: 0.2          # amplitude minimale explorée par articulation (sinon refus)
+max_hull_edges: 12          # simplification (conservatrice) des enveloppes couplées
+# Couples d'articulations dont l'enveloppe réellement atteignable est mesurée
+# pendant l'exploration (contraintes couplées dérivées de la calibration).
+pairs:
+  - [HeadYaw, HeadPitch]
+  - [LShoulderPitch, LShoulderRoll]
+  - [RShoulderPitch, RShoulderRoll]
+  - [LElbowYaw, LElbowRoll]
+  - [RElbowYaw, RElbowRoll]

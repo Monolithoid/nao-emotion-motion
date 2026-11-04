@@ -1,8 +1,7 @@
 # Positions de repos et de départ, par groupe. Radians, mêmes noms que joints.yaml.
-# VALEURS DE REMPLACEMENT : à remplacer par des poses capturées sur votre robot
-# (commande `nao-motion capture-pose`, qui lit les capteurs sans rien commander).
+# VALEURS DE REMPLACEMENT pour la simulation. Sur le robot réel, les poses sont
+# capturées pendant la calibration (`nao-motion calibrate`) et remplacent celles-ci.
 schema_version: 1
-calibrated: false
 rest:
   left_arm:  {LShoulderPitch: 1.45, LShoulderRoll: 0.15, LElbowYaw: -1.20, LElbowRoll: -0.50, LWristYaw: 0.0}
   right_arm: {RShoulderPitch: 1.45, RShoulderRoll: -0.15, RElbowYaw: 1.20, RElbowRoll: 0.50, RWristYaw: 0.0}

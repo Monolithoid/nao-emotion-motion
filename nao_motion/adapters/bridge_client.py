@@ -98,6 +98,11 @@ class BridgeAdapter(RobotAdapter):
     def capabilities(self) -> dict:
         return {"adapter": "bridge", **self.info}
 
+    def factory_limits(self, joints):
+        """Limites d'usine lues via ALMotion.getLimits (aucune commande)."""
+        lim = self._call("get_limits", joints=list(joints))
+        return {j: [float(x) for x in l] for j, l in zip(joints, lim)}
+
     def _read(self, joints):
         return np.array(self._call("read_angles", joints=joints), dtype=np.float64)
 

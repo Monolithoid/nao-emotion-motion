@@ -144,20 +144,50 @@ class ArmRecording(RecordingSession):
 
 
 class HeadRecording(RecordingSession):
-    def __init__(self, cfg, controller, arm_take: Take, event: EventContext,
+    """Passage 2. La trajectoire des bras exécutée pendant que l'opérateur guide la
+    tête provient soit d'une démonstration enregistrée (`from_take`), soit du
+    MODÈLE DES BRAS existant pour une émotion/intensité (`from_generated`).
+    Dans les deux cas, ce sont les bras MESURÉS pendant l'exécution qui sont
+    conservés et servent à l'apprentissage de la tête."""
+
+    def __init__(self, cfg, controller, replay: Trajectory, event: EventContext, source: dict,
                  pre_roll_s: float = 0.5, post_roll_s: float = 0.5):
         super().__init__(cfg, controller)
-        if arm_take.meta.kind != "arms":
-            raise ControllerError("La relecture exige une prise de bras")
-        self.arm_take = arm_take
+        if replay.joints != cfg.arm_joints:
+            raise ControllerError("La trajectoire des bras doit couvrir exactement les articulations des bras")
+        self.source = source  # {"arm_source": "take"|"generated", ...}
         self.event = event
         self.pre_roll = pre_roll_s
         self.post_roll = post_roll_s
-        self.replay = replay_trajectory(arm_take, cfg.arm_joints)
+        self.replay = replay.shifted(-replay.t[0])
         self.guided = cfg.head_joints
         self.driven = cfg.arm_joints
         self.approach_plan = None
         self.replay_report = None
+
+    @classmethod
+    def from_take(cls, cfg, controller, arm_take: Take, event: EventContext, **kw) -> "HeadRecording":
+        if arm_take.meta.kind != "arms":
+            raise ControllerError("La relecture exige une prise de bras")
+        rp = replay_trajectory(arm_take, cfg.arm_joints)
+        return cls(cfg, controller, rp, event, {"arm_source": "take", "arm_take_id": arm_take.meta.take_id,
+                                                "arm_gesture_id": arm_take.meta.take_id}, **kw)
+
+    @classmethod
+    def from_generated(cls, cfg, controller, engine, emotion: str, intensity: float, event: EventContext,
+                       variation: float = 0.0, seed=None, **kw) -> "HeadRecording":
+        """Le modèle des bras (figé) produit le geste ; il est validé puis exécuté."""
+        from ..data.representation import decode
+        import hashlib
+        arm_n, dur = engine.plan_arms(emotion, intensity, variation, seed)
+        ctrl = engine.arm_norm.inv(arm_n)
+        traj = decode(ctrl, dur, cfg.arm_joints, 50.0)
+        digest = getattr(engine.arm_model, "digest", None)
+        gid = "gen-" + hashlib.sha256(np.round(ctrl, 6).tobytes() + str(dur).encode()).hexdigest()[:12]
+        src = {"arm_source": "generated", "arm_take_id": None, "arm_gesture_id": gid,
+               "arm_generation": {"arm_checkpoint_digest": digest, "emotion": emotion, "intensity": float(intensity),
+                                  "variation": float(variation), "seed": seed, "duration_s": float(dur)}}
+        return cls(cfg, controller, traj, event, src, **kw)
 
     def plan_approach(self):
         """Valide la relecture et planifie l'approche repos/courant -> départ -> 1er point de la relecture."""

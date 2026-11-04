@@ -104,3 +104,39 @@ def test_metrics_report(trained):
     m = json.loads((Path(trained["arm_run"]) / "metrics.json").read_text())["metrics"]
     for k in ("train_rmse_rad", "val_rmse_rad", "val_baseline_label_mean_rmse_rad", "guardian", "n_val_groups"):
         assert k in m
+
+
+def test_head_collection_on_generated_arm_gesture(trained, cfg):
+    """Le modèle des bras joue l'émotion ; on enregistre (émotion/intensité, bras réalisés, tête)."""
+    from nao_motion.data.store import TakeError
+    wb = trained["wb"]
+    arm_path = Path(trained["arm_run"]) / "model.pt"
+    wb.engine = MotionEngine.from_paths(cfg, arm_path)  # modèle des bras de référence (figé)
+    wb.ctrl.acknowledge() if wb.ctrl.state.value != "idle" else None
+    wb.ctrl.hold(cfg.all_joints)
+    wb.ctrl.arm(confirm=True)
+    ids = []
+    for ev in (EventContext.none(), EventContext(True, -0.5, 0.0, source="test")):
+        wb.event = ev
+        info = wb.prepare_head_take(generated={"emotion": "surprise", "intensity": 0.8, "seed": 3})
+        assert info["arm_source"] == "generated"
+        wb.start_recording(countdown_s=0.2, background=False)
+        ids.append(wb.save_recording(status="accepted"))
+        wb.ctrl.hold(cfg.head_joints)
+    wb.ctrl.disarm()
+    m1, m2 = (wb.store.load_meta(i) for i in ids)
+    arm_digest = LoadedModel(arm_path, cfg, "arms").digest
+    assert m1.arm_generation["arm_checkpoint_digest"] == arm_digest
+    assert m1.arm_take_id is None and m1.emotion == "surprise"
+    assert wb.store.group_id(m1) == wb.store.group_id(m2)  # même geste => même groupe
+    ref = wb.store.load_reference(ids[0])
+    take = wb.store.load(ids[0])
+    tt = np.linspace(take.meta.segment[0], take.meta.segment[1], 40)
+    meas = take.traj.select(cfg.arm_joints).sample(tt)
+    assert np.abs(meas - ref.sample(tt)).max() < 0.05  # bras réalisés ≈ consigne générée
+    ex = head_examples(wb.store, cfg)
+    assert ids[0] in ex.take_ids
+    m1.arm_generation = {"emotion": "surprise"}
+    m1.take_id = m1.take_id + "-copie"
+    with pytest.raises(TakeError):
+        wb.store.save(m1, take.traj)

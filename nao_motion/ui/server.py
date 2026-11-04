@@ -38,6 +38,7 @@ class Api:
         return {"emotions": [{"id": e, "label": c.emotion_labels[e]} for e in c.emotions],
                 "intentions": c.intentions, "groups": c.groups, "limits": c.limits,
                 "calibration_version": c.calibration_version, "calibrated": c.calibrated,
+                "calibration_robot": (c.calibration.robot if c.calibration else None),
                 "poses_calibrated": c.poses_calibrated, "robot": c.robot.get("robot"),
                 "countdown_s": c.robot.get("recording", {}).get("countdown_s", 3)}
 
@@ -118,6 +119,8 @@ class Api:
 
     def post_record_prepare(self, d):
         if d.get("kind") == "head":
+            if d.get("generated"):
+                return self.wb.prepare_head_take(generated=d["generated"], confirm=bool(d.get("confirm")))
             return self.wb.prepare_head_take(d["arm_take_id"], confirm=bool(d.get("confirm")))
         return self.wb.prepare_arm_take(d["emotion"], float(d["intensity"]), d.get("intention") or None,
                                         confirm=bool(d.get("confirm")))

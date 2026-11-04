@@ -2,8 +2,8 @@
 
 Chaque exemple porte un identifiant de GROUPE servant au découpage
 entraînement/validation : une prise de bras forme son propre groupe ; toutes
-les prises de tête enregistrées sur une même prise de bras partagent le groupe
-de cette prise de bras. Aucune variante d'une même prise ne peut donc se
+les prises de tête enregistrées sur un même geste des bras (même prise
+rejouée, ou même geste généré) partagent ce groupe. Aucune variante d'une même prise ne peut donc se
 retrouver à la fois en entraînement et en validation.
 """
 from __future__ import annotations
@@ -81,7 +81,7 @@ def head_examples(store: TakeStore, cfg: Config, statuses: Sequence[str] = ("acc
         X.append(head_input(cfg.emotions, m.emotion, m.intensity, arm_norm, ld, hc, m.event_ctx))
         Y.append(hn.fwd(head_ctrl).ravel())
         D.append(np.log(dur))
-        G.append(m.arm_take_id); T.append(m.take_id); E.append(m.emotion); I.append(m.intensity)
+        G.append(store.group_id(m)); T.append(m.take_id); E.append(m.emotion); I.append(m.intensity)
     return _pack(X, Y, D, G, T, E, I, len(cfg.head_joints), K)
 
 
