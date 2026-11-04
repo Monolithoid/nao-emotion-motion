@@ -94,6 +94,34 @@ def hull_constraints(hull: np.ndarray, margin: float) -> List[Tuple[float, float
     return out
 
 
+def zone_polygon(constraints: Sequence[Tuple[float, float, float]],
+                 box: Tuple[float, float, float, float]) -> np.ndarray:
+    """Polygone de la zone retenue : demi-plans n·q <= b ∩ boîte (xmin, xmax, ymin, ymax).
+    Affichage seulement (Sutherland-Hodgman) ; vide si la zone est vide."""
+    x0, x1, y0, y1 = box
+    poly = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    for nx, ny, b in constraints:
+        out = []
+        for i in range(len(poly)):
+            p, q = poly[i], poly[(i + 1) % len(poly)]
+            fp, fq = nx * p[0] + ny * p[1] - b, nx * q[0] + ny * q[1] - b
+            if fp <= 0:
+                out.append(p)
+            if (fp <= 0) != (fq <= 0):
+                s = fp / (fp - fq)
+                out.append((p[0] + s * (q[0] - p[0]), p[1] + s * (q[1] - p[1])))
+        poly = out
+        if not poly:
+            break
+    return np.array(poly)
+
+
+def in_zone(pt, constraints, box) -> bool:
+    x, y = float(pt[0]), float(pt[1])
+    return (box[0] <= x <= box[1] and box[2] <= y <= box[3]
+            and all(nx * x + ny * y <= b + 1e-9 for nx, ny, b in constraints))
+
+
 # -- fichier de calibration --------------------------------------------------------
 @dataclass
 class Calibration:
@@ -305,9 +333,15 @@ class CalibrationSession:
             k += 1
             a.sleep(max(0.0, t0 + k / self.rate - a.now()))
         self.current = None
-        self.sweeps[group] = {"joints": joints, "q": np.array(qs)}
-        q = np.array(qs)
-        return {j: (float(q[:, i].min()), float(q[:, i].max())) for i, j in enumerate(joints)} if len(qs) else {}
+        q = np.array(qs).reshape(-1, len(joints))
+        prev = self.sweeps.get(group)
+        if prev is not None and len(prev["q"]):  # une nouvelle exploration complète la précédente
+            q = np.vstack([np.asarray(prev["q"]), q])
+        self.sweeps[group] = {"joints": joints, "q": q}
+        return {j: (float(q[:, i].min()), float(q[:, i].max())) for i, j in enumerate(joints)} if len(q) else {}
+
+    def clear_sweep(self, group: str):
+        self.sweeps.pop(group, None)
 
     def capture_pose(self, name: str, group: str, samples: int = 5, interval_s: float = 0.02) -> Dict[str, float]:
         """Moyenne de `samples` lectures capteurs (aucune commande)."""

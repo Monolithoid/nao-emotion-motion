@@ -138,3 +138,26 @@ def test_factory_limits_shown_during_calibration(ui, monkeypatch):
     st = api.get_calibration({})
     pair = next(p for p in st["pairs"] if p["joints"] == ["HeadYaw", "HeadPitch"])
     assert pair["limits"][1] == fac["HeadPitch"][:2]
+
+
+def test_pairs_show_zone_and_poses_and_sweep_accumulates(ui):
+    """Graphes des couples : zone retenue, poses capturées (départ dans / hors zone),
+    position actuelle ; une nouvelle exploration complète la précédente."""
+    wb, api = ui
+    api.post_calibration_open({})
+    cal = wb.require_calibration()
+    cal.sweep_start("head", max_duration_s=10, background=False)
+    n1 = len(cal.session.sweeps["head"]["q"])
+    cal.sweep_start("head", max_duration_s=10, background=False)
+    assert len(cal.session.sweeps["head"]["q"]) > n1
+    api.post_calibration_capture({"pose": "start", "group": "head"})
+    st = api.get_calibration({})
+    pair = next(p for p in st["pairs"] if p["joints"] == ["HeadYaw", "HeadPitch"])
+    assert len(pair["zone"]) >= 3 and pair["current"] is not None
+    assert "start" in pair["poses"] and isinstance(pair["poses"]["start"]["inside"], bool)
+    # un départ hors zone est signalé avant même le calcul
+    cal.session.poses["start"]["head"] = {"HeadYaw": 5.0, "HeadPitch": 5.0}
+    pair = next(p for p in api.get_calibration({})["pairs"] if p["joints"] == ["HeadYaw", "HeadPitch"])
+    assert pair["poses"]["start"]["inside"] is False
+    api.post_calibration_sweep_clear({"group": "head"})
+    assert "head" not in api.get_calibration({})["swept"]

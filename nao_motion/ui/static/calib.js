@@ -55,6 +55,7 @@
     const sweeping = !!CAL.sweeping;
     $("c-sweep").disabled = sweeping;
     $("c-sweep-stop").disabled = !sweeping;
+    $("c-sweep-clear").disabled = sweeping || !CAL.swept.includes(group);
     $("c-sweep-n").textContent = sweeping ? `${CAL.sweep_n} mesures…` : "";
     document.querySelectorAll("[data-cal]").forEach((b) => b.disabled = sweeping);
     const missing = CAL.missing_poses || [];
@@ -108,16 +109,25 @@
     const S = 220, P = 22;
     $("c-pairs").innerHTML = (CAL.pairs || []).filter((p) => (CAL.groups[group] || []).includes(p.joints[0])).map((p) => {
       const [la, lb] = p.limits;
-      const xs = p.points.map((q) => q[0]).concat(la), ys = p.points.map((q) => q[1]).concat(lb);
+      const extra = Object.values(p.poses || {}).map((o) => o.q).concat(p.current ? [p.current] : []);
+      const xs = p.points.map((q) => q[0]).concat(la, extra.map((q) => q[0])),
+        ys = p.points.map((q) => q[1]).concat(lb, extra.map((q) => q[1]));
       const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
       const X = (v) => P + (v - x0) / ((x1 - x0) || 1) * (S - 2 * P), Y = (v) => S - P - (v - y0) / ((y1 - y0) || 1) * (S - 2 * P);
       const dots = p.points.map((q) => `<circle cx="${X(q[0]).toFixed(1)}" cy="${Y(q[1]).toFixed(1)}" r="1.6" fill="var(--accent)" fill-opacity=".5"/>`).join("");
       const hull = p.hull.length >= 3 ? `<polygon points="${p.hull.map((q) => X(q[0]).toFixed(1) + "," + Y(q[1]).toFixed(1)).join(" ")}" fill="var(--accent)" fill-opacity=".08" stroke="var(--accent)" stroke-width="1.5"/>` : "";
+      const zone = (p.zone || []).length >= 3 ? `<polygon points="${p.zone.map((q) => X(q[0]).toFixed(1) + "," + Y(q[1]).toFixed(1)).join(" ")}" fill="var(--ok)" fill-opacity=".12" stroke="var(--ok)" stroke-width="1.5" stroke-dasharray="5 3"/>` : "";
+      const ps = p.poses || {};
+      const marks = (ps.rest ? `<rect x="${(X(ps.rest.q[0]) - 5).toFixed(1)}" y="${(Y(ps.rest.q[1]) - 5).toFixed(1)}" width="10" height="10" fill="var(--muted)" stroke="var(--card)"><title>repos (peut être hors zone)</title></rect>` : "") +
+        (ps.start ? `<circle cx="${X(ps.start.q[0]).toFixed(1)}" cy="${Y(ps.start.q[1]).toFixed(1)}" r="6" fill="${ps.start.inside ? "var(--ok)" : "var(--bad)"}" stroke="var(--card)" stroke-width="1.5"><title>départ</title></circle>` : "") +
+        (p.current ? `<g stroke="${p.current_inside ? "currentColor" : "var(--bad)"}" stroke-width="1.5"><line x1="${X(p.current[0]) - 7}" y1="${Y(p.current[1])}" x2="${X(p.current[0]) + 7}" y2="${Y(p.current[1])}"/><line x1="${X(p.current[0])}" y1="${Y(p.current[1]) - 7}" x2="${X(p.current[0])}" y2="${Y(p.current[1]) + 7}"/><title>position actuelle</title></g>` : "");
+      const verdict = ps.start ? (ps.start.inside ? '<span class="okc">départ dans la zone ✓</span>'
+        : '<span class="warn">départ HORS zone : explorer autour du point rouge</span>') : "";
       const frame = `<rect x="${X(la[0])}" y="${Y(lb[1])}" width="${X(la[1]) - X(la[0])}" height="${Y(lb[0]) - Y(lb[1])}" fill="none" stroke="var(--muted)" stroke-dasharray="4 3"/>`;
-      return `<figure><svg viewBox="0 0 ${S} ${S}">${frame}${hull}${dots}` +
+      return `<figure><svg viewBox="0 0 ${S} ${S}">${frame}${hull}${zone}${dots}${marks}` +
         `<text x="${S / 2}" y="${S - 5}" text-anchor="middle" font-size="11" fill="currentColor">${p.joints[0]}</text>` +
         `<text x="10" y="${S / 2}" font-size="11" fill="currentColor" transform="rotate(-90 10 ${S / 2})" text-anchor="middle">${p.joints[1]}</text></svg>` +
-        `<figcaption>${p.n} mesures</figcaption></figure>`;
+        `<figcaption>${p.n} mesures ${verdict}</figcaption></figure>`;
     }).join("") || '<span class="hint">Aucun couple exploré pour ce groupe.</span>';
   }
 
@@ -146,6 +156,7 @@
   $("c-close").onclick = () => window.confirm("Fermer sans enregistrer ? Les articulations restent dans leur état actuel.") && call("close");
   $("c-sweep").onclick = () => confirmRelease() && call("sweep_start", {group, confirm: true});
   $("c-sweep-stop").onclick = () => call("sweep_stop");
+  $("c-sweep-clear").onclick = () => window.confirm(`Effacer les mesures d'exploration du groupe « ${glabel(group)} » ?`) && call("sweep_clear", {group});
   document.querySelectorAll("[data-cal]").forEach((b) => b.onclick = () => {
     const op = b.dataset.cal;
     if (op === "release") return confirmRelease() && call("release", {group, confirm: true});

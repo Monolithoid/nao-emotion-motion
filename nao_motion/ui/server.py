@@ -213,6 +213,10 @@ class Api:
         self._cal().sweep_start(d["group"], confirm=bool(d.get("confirm")))
         return self._cal().state()
 
+    def post_calibration_sweep_clear(self, d):
+        self._cal().sweep_clear(d["group"])
+        return self._cal().state()
+
     def post_calibration_sweep_stop(self, d):
         self._cal().sweep_stop()
         return self._cal().state()
