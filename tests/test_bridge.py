@@ -156,3 +156,14 @@ def test_bridge_is_python27_compatible():
             assert n.module in allowed
         if isinstance(n, ast.ClassDef):
             assert n.bases, n.name
+
+
+def test_joint_names_are_native_str_on_python2(monkeypatch):
+    """NAOqi 2.1 (ALProxy, Python 2) refuse l'unicode pour getLimits(String) :
+    le pont convertit les chaînes JSON en str. Relevé sur le robot le 2026-11-04."""
+    import types
+    mod = _load_bridge_module()
+    assert mod.native_str("HeadYaw") == "HeadYaw"  # Python 3 : inchangé
+    monkeypatch.setattr(mod, "sys", types.SimpleNamespace(version_info=(2, 7, 3)))
+    assert mod.native_str(u"HeadYaw") == b"HeadYaw"
+    assert mod.native_str(1.5) == 1.5

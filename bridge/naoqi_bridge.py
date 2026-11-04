@@ -46,6 +46,14 @@ PROTOCOL_VERSION = 1
 HOST_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.?$|^[0-9A-Fa-f:]{2,39}$")
 
 
+def native_str(x):
+    """Python 2 : json donne des chaînes unicode, que NAOqi 2.1 (ALProxy) refuse pour
+    les paramètres String ; on les convertit en str (octets UTF-8). Python 3 : inchangé."""
+    if sys.version_info[0] < 3 and isinstance(x, type(u"")):
+        return x.encode("utf-8")
+    return x
+
+
 def valid_host(host):
     return isinstance(host, (str, type(u""))) and bool(HOST_RE.match(host))
 
@@ -221,7 +229,7 @@ class Bridge(object):
                     raise ValueError("adresse invalide : %r (IP ou nom DNS attendu)" % (host,))
                 if not 0 < port < 65536:
                     raise ValueError("port invalide")
-                self.backend = self.factory(host, port)
+                self.backend = self.factory(native_str(host), port)
                 self.robot_address = "%s:%d" % (host, port)
                 self.commanded = set()
                 info = self.backend.info()
@@ -229,7 +237,7 @@ class Bridge(object):
                 return info
             if self.backend is None:
                 raise ValueError("robot non connecte : indiquer son adresse (IP ou DNS) dans l'interface")
-            names = req.get("joints", [])
+            names = [native_str(n) for n in req.get("joints", [])]
             self.check_names(names)
             if cmd == "get_limits":
                 return self.backend.get_limits(names)
