@@ -170,8 +170,9 @@
             <div class="hint">Tenir le groupe. Au démarrage il est relâché (les autres sont raidis sur place) :
             amener lentement chaque articulation jusqu'à ses butées utiles et parcourir les combinaisons.
             À l'arrêt, le groupe est raidi sur place.</div>
-            <div class="row"><button id="c-sweep" class="ok">Démarrer l'exploration</button>
-              <button id="c-sweep-stop">Terminer l'exploration</button><span id="c-sweep-n" class="hint"></span></div></li>
+            <div class="row"><button id="c-sweep" class="ok">Démarrer / compléter l'exploration</button>
+              <button id="c-sweep-stop">Terminer l'exploration</button>
+              <button id="c-sweep-clear">Effacer l'exploration du groupe</button><span id="c-sweep-n" class="hint"></span></div></li>
           <li><div class="what">2. Pose de repos</div>
             <div class="hint">Relâcher, placer le groupe à la main en position de repos, capturer (moyenne de 5 lectures), raidir sur place.
             Le repos peut être hors de la zone de mouvement (bras posés sur les genoux) : il n'est borné que par les limites d'usine.
@@ -201,7 +202,7 @@
         <table id="c-table"></table>
         <h3>Couples explorés</h3>
         <p class="hint">Chaque point est une mesure ; le contour est l'enveloppe convexe d'où viennent les
-        contraintes couplées (marge retirée au calcul). Le cadre pointillé : limites d'usine lues sur le robot (ALMotion.getLimits), ou limites de remplacement si elles n'ont pas pu être lues (simulation).</p>
+        contraintes couplées. Zone verte en tirets : ce que retiendra le guardian (enveloppe simplifiée, moins la marge). Rond : pose de départ, vert si dans la zone, rouge sinon. Carré gris : repos (il peut être hors zone). Croix : position actuelle, pour explorer autour du départ. Le cadre pointillé : limites d'usine lues sur le robot (ALMotion.getLimits), ou limites de remplacement si elles n'ont pas pu être lues (simulation).</p>
         <div id="c-pairs" class="cal-pairs"></div>
       </div>
     </div>

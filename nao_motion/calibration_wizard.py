@@ -27,7 +27,7 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from .calibration import (Calibration, CalibrationError, CalibrationSession, activate, convex_hull,
-                          load_procedure, sim_sweeper)
+                          hull_constraints, in_zone, load_procedure, sim_sweeper, simplify_hull, zone_polygon)
 
 POSE_NAMES = ("rest", "start")
 POSE_LABEL = {"rest": "repos", "start": "départ"}
@@ -131,6 +131,14 @@ class CalibrationWizard:
             work()
             self._after_sweep(group)
 
+    def sweep_clear(self, group: str):
+        """Efface les mesures d'exploration d'un groupe (aucune commande)."""
+        self._not_sweeping()
+        self._joints(group)
+        self.session.clear_sweep(group)
+        self._invalidate()
+        self.message = f"Exploration du groupe {_g(group)} effacée."
+
     def sweep_stop(self):
         group = self.session.current
         self.session.request_stop()
@@ -201,6 +209,36 @@ class CalibrationWizard:
         f = (self.factory or {}).get(j)
         return [float(f[0]), float(f[1])] if f else list(self.cfg.limits[j])
 
+    def _zone(self, a: str, b: str, pts: np.ndarray, hull: np.ndarray) -> dict:
+        """Zone que retiendra le calcul pour ce couple (même règle que compute_calibration :
+        enveloppe simplifiée rétrécie de la marge, ∩ plages explorées ∩ usine, moins la marge)
+        et position des poses capturées par rapport à elle."""
+        m = float(self.proc.get("margin_rad", 0.05))
+        box = []
+        for k, j in enumerate((a, b)):
+            flo, fhi = self._frame(j) if self.factory else (-np.inf, np.inf)
+            box += [max(float(pts[:, k].min()), flo) + m, min(float(pts[:, k].max()), fhi) - m]
+        cons = []
+        if len(hull) >= 3:
+            cons = hull_constraints(simplify_hull(hull, int(self.proc.get("max_hull_edges", 12))), m)
+        poly = zone_polygon(cons, tuple(box)) if box[0] < box[1] and box[2] < box[3] else np.zeros((0, 2))
+        poses = {}
+        for name in POSE_NAMES:
+            flat = {j: v for gq in self.session.poses.get(name, {}).values() for j, v in gq.items()}
+            if a in flat and b in flat:
+                p = [flat[a], flat[b]]
+                # le repos peut être hors zone (contact) : seul le départ doit y être
+                poses[name] = {"q": [round(p[0], 4), round(p[1], 4)],
+                               "inside": bool(len(poly) and in_zone(p, cons, box))}
+        cur = None
+        try:
+            q = self.adapter.read_angles([a, b])
+            cur = [round(float(q[0]), 4), round(float(q[1]), 4)]
+        except Exception:
+            pass
+        return {"zone": np.round(poly, 4).tolist(), "poses": poses, "current": cur,
+                "current_inside": bool(cur is not None and len(poly) and in_zone(cur, cons, box))}
+
     def _pairs(self, group: Optional[str], live: Optional[np.ndarray], live_joints: List[str]) -> List[dict]:
         out = []
         for a, b in self.proc.get("pairs", []):
@@ -217,7 +255,7 @@ class CalibrationWizard:
             hull = convex_hull(pts) if len(pts) >= 3 else pts
             out.append({"joints": [a, b], "points": np.round(_downsample(pts), 4).tolist(),
                         "hull": np.round(hull, 4).tolist(), "n": int(len(pts)),
-                        "limits": [self._frame(a), self._frame(b)]})
+                        "limits": [self._frame(a), self._frame(b)], **self._zone(a, b, pts, hull)})
         return out
 
     def state(self) -> dict:
@@ -231,6 +269,8 @@ class CalibrationWizard:
                 angles = None
         live = np.array(list(s.live)) if self.sweeping and s.live else None
         live_joints = list(s.live_joints) if live is not None else []
+        if live is not None and s.current in s.sweeps and len(s.sweeps[s.current]["q"]):
+            live = np.vstack([np.asarray(s.sweeps[s.current]["q"]), live])  # complète l'exploration précédente
         ranges: Dict[str, dict] = {}
         for g, sw in s.sweeps.items():
             q = np.asarray(sw["q"])
