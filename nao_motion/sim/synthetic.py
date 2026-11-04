@@ -78,7 +78,8 @@ def arm_gesture(cfg: Config, emotion: str, intensity: float, rng: np.random.Gene
 def head_behaviour(cfg: Config, emotion: str, intensity: float, event: EventContext,
                    arm_fn: Callable[[float], Dict[str, float]], rng: np.random.Generator):
     """Politique de regard synthétique : regarder l'événement, suivre une main avec
-    retard, ou détourner le regard, selon l'émotion. Arbitraire, pour les tests."""
+    retard, ou détourner le regard, selon l'émotion. Un événement proche donne une
+    réaction plus rapide et un évitement plus marqué. Arbitraire, pour les tests."""
     start = dict(zip(cfg.head_joints, cfg.pose("start", cfg.head_joints)))
     lag = rng.uniform(0.1, 0.35)
     mode = {"joie": "event", "surprise": "event", "colere": "event",
@@ -86,6 +87,8 @@ def head_behaviour(cfg: Config, emotion: str, intensity: float, event: EventCont
     if mode == "event" and not event.present:
         mode = "hands" if emotion == "joie" else "front"
     m = cfg.guardian.limit_margin_rad + 0.02
+    close = 1.0 / (1.0 + event.distance_m) if event.present and event.distance_m else 0.4  # proximité
+    T = 1.6 - 1.2 * close  # 1,2 s à 1 m environ ; plus vite si proche
     lim = cfg.limits
 
     def clipped(y, p):
@@ -97,13 +100,14 @@ def head_behaviour(cfg: Config, emotion: str, intensity: float, event: EventCont
         return 10 * x**3 - 15 * x**4 + 6 * x**5
 
     def fn(t: float) -> Dict[str, float]:
-        r = float(ramp(t))
+        r = float(ramp(t, T))
         y0, p0 = start["HeadYaw"], start["HeadPitch"]
         if mode == "event":
             ty, tp = np.clip(event.azimuth_rad, -1.2, 1.2), -event.elevation_rad
             return clipped(y0 + r * (ty - y0) * (0.6 + 0.4 * intensity), p0 + r * (tp - p0))
         if mode == "avert":
-            away = -np.sign(event.azimuth_rad or 0.3) * 0.6 * intensity if event.present else 0.4 * intensity
+            away = (-np.sign(event.azimuth_rad or 0.3) * (0.3 + 0.75 * close) * intensity if event.present
+                    else 0.4 * intensity)
             return clipped(y0 + r * away, p0 + r * 0.3 * intensity)
         if mode == "hands":
             a = arm_fn(max(0.0, t - lag))

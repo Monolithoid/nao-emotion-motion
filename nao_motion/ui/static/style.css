@@ -22,3 +22,15 @@ tr.clickable:hover{background:rgba(127,127,127,.1);cursor:pointer}
 fieldset{border:1px solid var(--line);border-radius:6px}.legend{font-size:12px;color:var(--muted)}
 .tag{display:inline-block;padding:0 6px;border-radius:8px;font-size:12px;border:1px solid var(--line)}
 .accepted{color:var(--ok)}.rejected{color:var(--bad)}.pending{color:var(--muted)}
+.cal-status{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin:8px 0}
+.cal-status .err{color:var(--bad)}.cal-status .sim{color:var(--muted)}
+.cal-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+@media (max-width:900px){.cal-grid{grid-template-columns:minmax(0,1fr)}}
+.cal-steps{list-style:none;padding:0;margin:0}.cal-steps li{border-top:1px solid var(--line);padding:8px 0}
+.cal-steps .what{font-weight:600}
+button.sel{border-color:var(--accent);color:var(--accent);font-weight:600}
+td.live{color:var(--accent);font-variant-numeric:tabular-nums}td.num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.cal-pairs{display:flex;flex-wrap:wrap;gap:10px}.cal-pairs figure{margin:0}.cal-pairs svg{width:220px;height:220px;background:var(--card);border:1px solid var(--line);border-radius:6px}
+.cal-pairs figcaption{font-size:12px;color:var(--muted)}
+.done{color:var(--ok);font-size:12px}
+.fov svg{width:100%;max-width:640px;height:auto;cursor:crosshair;display:block}

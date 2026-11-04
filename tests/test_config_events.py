@@ -69,3 +69,27 @@ def test_event_roundtrip():
     e = EventContext(True, 0.3, -0.1, source="camera")
     assert EventContext.from_dict(e.to_dict()).features().tolist() == e.features().tolist()
     assert EventContext.from_dict(EventContext.none().to_dict()).present is False
+
+
+def test_event_distance_encoding():
+    far = EventContext(True, 0.0, 0.0, distance_m=3.0).features()
+    near = EventContext(True, 0.0, 0.0, distance_m=0.3).features()
+    unknown = EventContext(True, 0.0, 0.0).features()
+    assert unknown.tolist() == [1, 0, 1, 0, 0, 0]
+    assert near[4] == far[4] == 1 and near[5] > far[5] > 0
+    assert EventContext(True, 0.0, 0.0, distance_m=1.0).features()[5] == pytest.approx(0.5)
+    for bad in (0, -1, float("nan")):
+        with pytest.raises(EventError):
+            EventContext(True, 0.0, 0.0, distance_m=bad)
+    assert EventContext(False, distance_m=2.0).distance_m is None  # absent : aucune distance
+    e = EventContext.from_source(present=True, azimuth=30, elevation=5, unit="deg", distance="1.5")
+    assert e.distance_m == 1.5
+    back = EventContext.from_dict(e.to_dict())
+    assert back.distance_m == 1.5 and back.features().tolist() == e.features().tolist()
+    assert EventContext.from_dict({"present": True, "azimuth_rad": 0.1, "elevation_rad": 0}).distance_m is None
+
+
+def test_event_ranges_in_config(cfg):
+    ev = cfg.robot["events"]
+    assert ev["distance_m"][0] < ev["distance_m"][1]
+    assert ev["azimuth_deg"][0] < ev["azimuth_deg"][1] and ev["elevation_deg"][0] < ev["elevation_deg"][1]

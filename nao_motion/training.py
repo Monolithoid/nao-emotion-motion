@@ -19,7 +19,7 @@ import torch
 from .config import Config
 from .data.representation import bspline_basis, decode
 from .data.store import TakeStore
-from .events import EventContext
+from .events import EVENT_FEATURES, EventContext
 from .guardian import Guardian
 from .models.datasets import Examples, arm_examples, grouped_split, head_examples
 from .models.features import Norm, head_input_dim
@@ -181,9 +181,10 @@ def train_head(store: TakeStore, cfg: Config, runs_dir, arm_checkpoint, statuses
     meta = _meta(cfg, "head", cfg.head_joints, norm, K, ex, tr, va, tcfg)
     meta["synthetic_data"] = any(store.load_meta(t).synthetic for t in ex.take_ids)
     meta.update({"arm_joints": cfg.arm_joints, "arm_checkpoint": str(arm_checkpoint),
+                 "event_features": EVENT_FEATURES,
                  "arm_checkpoint_digest": arm.digest, "arm_input": source,
                  "inputs": ["emotion", "intensity", "arm_ctrl_norm", "arm_log_duration",
-                            "head_current_norm", "event[present,sin_az,cos_az,elev]"]})
+                            "head_current_norm", "event[present,sin_az,cos_az,elev,dist_known,proximity]"]})
     meta["metrics"] = metrics
     save_checkpoint(run / "model.pt", model, component="head", arch=arch, meta=meta)
     loaded = LoadedModel(run / "model.pt", cfg, "head")
@@ -210,7 +211,8 @@ def _guardian_sweep(cfg, arm_model, head_model=None, intensities=(0.2, 0.5, 0.8,
     from .engine import MotionEngine
     eng = MotionEngine(cfg, arm_model, head_model)
     g = Guardian(cfg)
-    events = [EventContext.none(), EventContext(True, 0.6, 0.1, source="test")] if head_model else [None]
+    events = ([EventContext.none(), EventContext(True, 0.6, 0.1, source="test"),
+               EventContext(True, -0.4, 0.0, source="test", distance_m=0.6)] if head_model else [None])
     total = ok = 0
     failures = {}
     for e in cfg.emotions:

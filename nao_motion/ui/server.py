@@ -41,6 +41,8 @@ class Api:
                 "calibration_robot": (c.calibration.robot if c.calibration else None),
                 "bridge": c.robot.get("bridge"),
                 "poses_calibrated": c.poses_calibrated, "robot": c.robot.get("robot"),
+                "events": {"distance_m": [0.3, 3.0], "azimuth_deg": [-90, 90], "elevation_deg": [-30, 45],
+                           **(c.robot.get("events") or {})},
                 "countdown_s": c.robot.get("recording", {}).get("countdown_s", 3)}
 
     def get_status(self, q):
@@ -84,11 +86,17 @@ class Api:
     def get_event(self, q):
         return self.wb.current_event().to_dict()
 
+    def get_calibration(self, q):
+        cal = self.wb.calibration
+        return cal.state() if cal is not None else {"active": False}
+
     # POST --------------------------------------------------------------------
     def post_connect(self, d):
         """{"mode": "sim"} ou {"mode": "robot", "robot_host": "nao.local" | "192.168.1.10",
         "robot_port": 9559, "bridge_host"?: ..., "bridge_port"?: ...}. Aucun mouvement."""
         mode = d.get("mode")
+        if self.wb.calibration is not None:
+            raise ValueError("Calibration ouverte : la fermer avant de changer de connexion")
         if mode == "robot":
             self.wb.connect_robot(d.get("robot_host"), int(d.get("robot_port") or 9559),
                                   d.get("bridge_host") or None, d.get("bridge_port") or None)
@@ -100,6 +108,7 @@ class Api:
 
     def post_arm(self, d):
         if d.get("armed"):
+            self.wb.check_no_calibration()
             self.wb.ctrl.arm(confirm=bool(d.get("confirm")))
         else:
             self.wb.ctrl.disarm()
@@ -178,6 +187,54 @@ class Api:
         if not d.get("confirm"):
             raise ValueError("Confirmation explicite requise")
         return self.wb.execute_plan(d["plan_id"])
+
+
+    # calibration du guardian (aucune route ne commande de mouvement) ----------
+    def post_calibration_open(self, d):
+        return self.wb.open_calibration()
+
+    def post_calibration_close(self, d):
+        self.wb.close_calibration()
+        return {"active": False}
+
+    def _cal(self):
+        return self.wb.require_calibration()
+
+    def post_calibration_release(self, d):
+        self._cal().release(d["group"], confirm=bool(d.get("confirm")))
+        return self._cal().state()
+
+    def post_calibration_hold(self, d):
+        self._cal().hold(d["group"])
+        return self._cal().state()
+
+    def post_calibration_sweep_start(self, d):
+        self._cal().sweep_start(d["group"], confirm=bool(d.get("confirm")))
+        return self._cal().state()
+
+    def post_calibration_sweep_stop(self, d):
+        self._cal().sweep_stop()
+        return self._cal().state()
+
+    def post_calibration_capture(self, d):
+        self._cal().capture(d["pose"], d["group"])
+        return self._cal().state()
+
+    def post_calibration_compute(self, d):
+        self._cal().compute(d.get("version") or None)
+        return self._cal().state()
+
+    def post_calibration_save(self, d):
+        self._cal().save()
+        return self._cal().state()
+
+    def post_calibration_activate(self, d):
+        if not d.get("confirm"):
+            raise ValueError("Confirmation explicite requise")
+        cal = self._cal()
+        cal.activate()
+        self.wb.reload_config()
+        return cal.state()
 
 
 def make_handler(api: Api):

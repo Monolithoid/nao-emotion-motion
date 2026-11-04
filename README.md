@@ -35,13 +35,13 @@ nao-motion ui                    # http://127.0.0.1:8765 (adaptateur simulé par
 nao-motion ui --adapter bridge   # vers le robot via le pont NAOqi (voir plus bas)
 ```
 
-L'interface écoute uniquement sur `127.0.0.1`. Elle a six onglets :
+L'interface écoute uniquement sur `127.0.0.1`. Elle a sept onglets :
 
-- **1 · Bras** : choisir l'émotion, l'intensité et éventuellement une intention. La consigne s'affiche en grand (« surprise — 0,8 »). Ensuite : *Préparer* (relâche les bras et maintient la tête), *Démarrer* (compte à rebours, puis enregistrement des angles **mesurés** et de leurs horodatages), *Arrêter*. Un aperçu des courbes s'affiche sans aucun mouvement, puis on choisit *Accepter*, *Garder en attente*, *Rejeter* ou *Recommencer*, avec une annotation possible.
-- **2 · Tête** : choisir la source du mouvement des bras. Par défaut, c'est un **geste généré par le modèle des bras** (émotion, intensité, variation, graine) ; une démonstration enregistrée peut aussi être rejouée. Définir ensuite le contexte événementiel (aucun événement, événement de test, ou dernier événement reçu du composant externe). *Préparer* valide le geste, fait une approche motorisée des bras vers son début, puis relâche la tête. *Démarrer* exécute les bras pendant que vous guidez la tête. On enregistre émotion/intensité, bras **réellement mesurés**, consigne envoyée et tête. Plusieurs contextes de regard peuvent être enregistrés pour un même geste (même graine).
+- **1 · Bras** : choisir l'émotion, l'intensité et éventuellement une intention (ou *Tirage aléatoire*). La consigne s'affiche en grand (« surprise — 0,8 »). Ensuite : *Préparer* (relâche les bras et maintient la tête), *Démarrer* (compte à rebours, puis enregistrement des angles **mesurés** et de leurs horodatages), *Arrêter*. Un aperçu des courbes s'affiche sans aucun mouvement, puis on choisit *Accepter*, *Garder en attente*, *Rejeter* ou *Recommencer*, avec une annotation possible.
+- **2 · Tête** : choisir la source du mouvement des bras. Par défaut, c'est un **geste généré par le modèle des bras** (émotion, intensité, variation, graine) ; une démonstration enregistrée peut aussi être rejouée. Définir ensuite l'événement dans le **champ de vision** : le point est placé selon l'azimut (gauche du robot à gauche) et l'élévation, et sa taille indique la proximité (plus gros = plus proche). On le place d'un clic ou en saisissant azimut, élévation et distance. La distance peut aussi rester inconnue. *Tirage aléatoire* tire ensemble une émotion, une intensité, un azimut, une élévation et une distance (log-uniforme, pour avoir autant de proches que de lointains), dans les plages de `robot.yaml` (`events`). On peut aussi inclure parfois l'absence d'événement. Le dernier événement reçu du composant externe s'affiche de la même façon. *Préparer* valide le geste, fait une approche motorisée des bras vers son début, puis relâche la tête. *Démarrer* exécute les bras pendant que vous guidez la tête. On enregistre émotion/intensité, bras **réellement mesurés**, consigne envoyée et tête. Plusieurs contextes de regard peuvent être enregistrés pour un même geste (même graine).
 - **Prises** : répartition par émotion × intensité (acceptées / total), liste filtrable, courbes, relecture virtuelle (curseur animé, relecture lissée superposée), statut et annotations.
 - **Entraînement** : lancer l'entraînement des bras ou de la tête et consulter les résultats (RMSE en entraînement et en validation, référence de comparaison, taux d'acceptation du guardian).
-- **Génération** : choisir une émotion, éventuellement un mélange de deux émotions, l'intensité, une variation et l'événement. On obtient les courbes, le rapport du guardian sur le geste et sur le cycle complet, et un bouton *Exécuter* (désactivé si le cycle est refusé).
+- **Génération** : choisir une émotion, éventuellement un mélange de deux émotions, l'intensité, une variation et l'événement (même champ de vision, même tirage aléatoire). On obtient les courbes, le rapport du guardian sur le geste et sur le cycle complet, et un bouton *Exécuter* (désactivé si le cycle est refusé).
 - **Robot** : *Connecter* (sans mouvement), *Acquitter*, *Raidir sur place*, *Retour au repos* (explicite), *Relâcher*.
 
 Le bouton **ARRÊT** interrompt l'enregistrement, la relecture et l'exécution. La posture est maintenue et le contrôleur est désarmé. Il n'y a **pas** de retour automatique au repos.
@@ -52,7 +52,7 @@ En simulation, un démonstrateur synthétique remplace votre main. Les prises qu
 
 | Route | Rôle |
 |---|---|
-| `POST /api/event` | Événement du composant caméra/micros : `{"present": true, "azimuth": 30, "elevation": 5, "unit": "deg", "frame": "torso" \| "head", "source": "camera"}`. Avec `frame: "head"`, joindre `head_yaw_rad` et `head_pitch_rad` au moment de la mesure, sinon ce sont les angles lus à la réception qui sont utilisés. `{"present": false}` signale l'absence d'événement. `ttl_s` est optionnel (au-delà, l'événement est considéré comme absent). |
+| `POST /api/event` | Événement du composant caméra/micros : `{"present": true, "azimuth": 30, "elevation": 5, "distance_m": 1.2, "unit": "deg", "frame": "torso" \| "head", "source": "camera"}` (`distance_m` en mètres, optionnelle). Avec `frame: "head"`, joindre `head_yaw_rad` et `head_pitch_rad` au moment de la mesure, sinon ce sont les angles lus à la réception qui sont utilisés. `{"present": false}` signale l'absence d'événement. `ttl_s` est optionnel (au-delà, l'événement est considéré comme absent). |
 | `POST /api/request` | Pour un LLM : `{"emotion": "joie", "intensity": 0.7}` ou `{"mix": {"joie": 0.5, "surprise": 0.5}, ...}`. La réponse contient la trajectoire, le rapport du guardian et un `plan_id`. **Rien n'est exécuté.** |
 | `POST /api/execute` | `{"plan_id": ..., "confirm": true}`, avec contrôleur armé : action de l'opérateur. |
 
@@ -63,7 +63,7 @@ nao-motion synth                        # remplit data/ de prises SYNTHÉTIQUES 
 nao-motion takes --stats                # liste et répartition des prises
 nao-motion train arms                   # entraîne les bras (prises « accepted »)
 nao-motion train head                   # entraîne la tête, modèle des bras figé (dernier run)
-nao-motion generate --emotion joie --intensity 0.7 --event-az 30 --out geste.json
+nao-motion generate --emotion joie --intensity 0.7 --event-az 30 --event-dist 1.2 --out geste.json
 nao-motion generate --mix '{"joie":0.6,"calme":0.4}' --intensity 0.5 --variation 0.03 --seed 1
 nao-motion generate --emotion peur --intensity 0.9 --simulate     # exécution sur le robot SIMULÉ
 nao-motion execute geste.json --adapter bridge --confirm          # seul chemin CLI vers un robot réel
@@ -106,7 +106,7 @@ Les données vont dans `data/`, les entraînements dans `runs/`. Ces deux dossie
 | | Entrées | Sortie |
 |---|---|---|
 | **Bras** | émotion (one-hot, ou mélange pondéré), intensité | 8 points de contrôle × 10 articulations + log(durée) |
-| **Tête** | émotion, intensité, **points de contrôle des bras prévus** + leur durée, orientation actuelle de la tête, événement `[présent, sin az, cos az, élévation]` | 8 points de contrôle × 2 articulations |
+| **Tête** | émotion, intensité, **points de contrôle des bras prévus** + leur durée, orientation actuelle de la tête, événement `[présent, sin az, cos az, élévation, distance connue, proximité 1/(1+d)]` | 8 points de contrôle × 2 articulations |
 
 La tête est exprimée sur la **même phase temporelle** que les bras, avec la même durée. Le réseau voit donc tout le déroulement prévu des bras et peut apprendre une anticipation ou un retard. Rien ne force la tête à suivre les mains : ce que montrent les démonstrations (regarder les mains, rester vers l'interlocuteur, détourner le regard) détermine son comportement.
 
@@ -151,7 +151,9 @@ Le découpage entraînement/validation se fait **par groupe** : une prise de bra
 - **Repère commun des événements** : `FRAME_TORSO` de NAOqi. x pointe vers l'avant, y vers la gauche du robot, z vers le haut.
   - azimut = atan2(y, x), **positif vers la gauche** ;
   - élévation = atan2(z, √(x²+y²)), **positive vers le haut**.
-- **Absence d'événement** : `present: false`, codée `[0, 0, 0, 0]`. Un azimut de 0 veut dire « devant » et se code `[1, 0, 1, 0]`. Les deux cas ne peuvent pas être confondus.
+- **Distance** (optionnelle) : en mètres, du torse à l'événement. Le modèle reçoit la proximité 1/(1+d), qui vaut 0,5 à 1 m et ne dépend d'aucune plage fixée à l'avance. Une distance inconnue est signalée explicitement, et non remplacée par une valeur arbitraire. Les plages de `robot.yaml` (`events`) ne servent qu'au tirage aléatoire et au champ de vision.
+- **Absence d'événement** : `present: false`, codée `[0, 0, 0, 0, 0, 0]`. Un azimut de 0 veut dire « devant » et se code `[1, 0, 1, 0, 0, 0]` si la distance est inconnue, ou `[1, 0, 1, 0, 1, 0.5]` à 1 m. Ces cas ne peuvent pas être confondus.
+- Un modèle de tête entraîné avant l'ajout de la distance (quatre entrées d'événement) est refusé au rechargement et doit être réentraîné. Le modèle des bras n'est pas concerné.
 - **Conversion depuis la caméra (repère tête)** : rotation `Rz(HeadYaw) · Ry(HeadPitch)` avec les angles de tête au moment de la mesure. La translation du cou est négligée, ce qui reste raisonnable au-delà d'environ 50 cm.
 - **Conventions NAOqi** : HeadYaw > 0 tourne la tête à gauche, HeadPitch > 0 la baisse. Regarder une élévation *e* correspond donc à peu près à HeadPitch = −*e*.
 - Les événements sont toujours stockés dans le repère commun, avec leur source et leur horodatage.
@@ -196,15 +198,20 @@ Le modèle **propose**, le contrôleur **encadre**.
 
 La calibration est une procédure à part entière, faite robot par robot. Son résultat est un fichier versionné, `configs/calibration/<robot>-<date>.yaml`. Le fichier actif est désigné par `configs/calibration/ACTIVE`, et une calibration n'est jamais écrasée.
 
+Elle se conduit dans l'**onglet Calibration** de l'interface (`nao-motion ui`), ou au terminal avec `nao-motion calibrate`. Les deux utilisent la même procédure et le même calcul.
+
 ```bash
-nao-motion calibrate            # interactive, via le pont ; rien n'est commandé
+nao-motion ui                   # onglet Robot : connecter le robot, puis onglet Calibration
+nao-motion calibrate            # la même procédure au terminal, via le pont ; rien n'est commandé
 ```
+
+Dans l'onglet Calibration, on choisit un groupe et on avance étape par étape, dans l'ordre qu'on veut. Le tableau affiche en direct les angles mesurés et les min/max qui s'élargissent pendant l'exploration, ainsi que les poses capturées. Pour chaque couple, un nuage de points avec son enveloppe convexe montre les zones pas encore explorées. Les boutons ne s'activent que lorsque l'étape est possible : le calcul attend que tous les groupes soient explorés et toutes les poses capturées, l'activation attend l'enregistrement. Ouvrir une calibration désarme le contrôleur, et la collecte, l'exécution et l'armement sont refusés tant qu'elle reste ouverte. Fermer ne remet rien au repos. En simulation, un démonstrateur synthétique fait l'exploration, et une calibration simulée ne peut pas être activée.
 
 1. **Identification** : nom du robot, version de NAOqi, configuration matérielle, et limites d'usine lues par `ALMotion.getLimits`.
 2. **Exploration guidée**, groupe par groupe (bras gauche, bras droit, tête). Le groupe exploré est relâché et seulement lu, les autres sont raidis sur place. Amenez lentement chaque articulation jusqu'à ses butées *utiles*, et parcourez les combinaisons (tête tournée **et** baissée, épaule levée **et** écartée, etc.).
-3. **Poses** de repos et de départ, capturées pour chaque groupe en plaçant le robot à la main.
+3. **Poses** de repos et de départ, capturées pour chaque groupe en plaçant le robot à la main (moyenne de 5 lectures).
 4. **Calcul** : les limites sont l'amplitude mesurée, intersectée avec les limites d'usine, moins une marge (`configs/calibration.yaml`). Les **contraintes couplées** viennent de l'enveloppe convexe de chaque couple exploré (`pairs`), simplifiée de façon conservatrice. La procédure est refusée si l'exploration est trop courte ou trop étroite, ou si une pose sort de l'enveloppe.
-5. **Relecture** du résumé, puis enregistrement et activation (`nao-motion calibration-activate`).
+5. **Relecture** du résumé, puis enregistrement et activation (bouton de l'onglet, ou `nao-motion calibration-activate`). Depuis l'interface, l'activation recharge la configuration sans redémarrer, et le contrôleur reste désarmé.
 
 Une calibration active remplace limites, poses et version de calibration dans toute la chaîne (guardian, prises, checkpoints). Les contraintes manuelles de `guardian.yaml` s'y ajoutent, notamment entre membres (bras ↔ tête, bras ↔ bras), qu'une exploration articulation par articulation ne mesure pas. L'enveloppe convexe suppose une zone atteignable convexe pour chaque couple ; une zone en L doit être découpée à la main.
 

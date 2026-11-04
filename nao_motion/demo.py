@@ -20,8 +20,9 @@ from .control.recording import replay_trajectory
 from .events import EventContext
 from .workbench import Workbench
 
-DEFAULT_CONTEXTS = [EventContext.none(), EventContext(True, 0.7, 0.1, source="test"),
-                    EventContext(True, -0.6, 0.0, source="test")]
+DEFAULT_CONTEXTS = [EventContext.none(), EventContext(True, 0.7, 0.1, source="test", distance_m=2.5),
+                    EventContext(True, -0.6, 0.0, source="test", distance_m=0.5),
+                    EventContext(True, 0.2, 0.2, source="test")]  # distance inconnue
 
 
 def collect_arms(wb: Workbench, reps=2, intensities=(0.3, 0.7, 1.0), log=print):
