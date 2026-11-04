@@ -265,6 +265,21 @@ def cmd_calibrate(a):
     return 0
 
 
+def cmd_export_guardian(a):
+    """Guardian autonome (guardian.json + nao_guardian.py) pour un autre projet, ex. ia-agent."""
+    from .config import load_config
+    from .guardian.export import ExportError, export_guardian
+    cfg = load_config(a.config)
+    try:
+        out = export_guardian(cfg, a.out, allow_uncalibrated=a.allow_uncalibrated)
+    except ExportError as e:
+        raise SystemExit(str(e))
+    print(json.dumps(out, indent=1, ensure_ascii=False))
+    if not out["calibrated"]:
+        print("ATTENTION : limites de remplacement (aucune calibration) ; à ne pas utiliser sur un robot réel.")
+    return 0
+
+
 def cmd_calibration_activate(a):
     from .calibration import activate
     from .config import load_config
@@ -329,6 +344,10 @@ def main(argv=None):
     s.add_argument("--robot", help="adresse du robot : IP ou nom DNS (défaut : NAO_IP)")
     s.add_argument("--version", help="nom de la calibration (défaut : <robot>-<date>)")
     s.add_argument("--out", help="sim uniquement : fichier de sortie"); s.set_defaults(fn=cmd_calibrate)
+    s = sub.add_parser("export-guardian", help="exporter le guardian autonome (guardian.json + nao_guardian.py)")
+    s.add_argument("--out", default="guardian_export", help="dossier de sortie")
+    s.add_argument("--allow-uncalibrated", action="store_true", help="exporter les limites de remplacement (essais)")
+    s.set_defaults(fn=cmd_export_guardian)
     s = sub.add_parser("calibration-activate", help="activer un fichier de configs/calibration/")
     s.add_argument("file"); s.set_defaults(fn=cmd_calibration_activate)
     s = sub.add_parser("serve-inference", help="serveur HTTP d'inférence (génération sans exécution)")

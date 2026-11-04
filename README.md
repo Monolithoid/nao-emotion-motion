@@ -73,6 +73,7 @@ nao-motion calibrate --adapter sim      # la même procédure sur le robot simul
 nao-motion calibration-activate configs/calibration/<fichier>.yaml
 nao-motion capture-pose --group left_arm --name start --adapter bridge   # lit les capteurs, n'envoie rien
 nao-motion serve-inference --port 8766  # inférence déportée (génère, n'exécute pas)
+nao-motion export-guardian --out guardian_export   # guardian autonome pour un autre projet (voir « Guardian autonome »)
 ```
 
 ---
@@ -214,6 +215,35 @@ Dans l'onglet Calibration, on choisit un groupe et on avance étape par étape, 
 5. **Relecture** du résumé, puis enregistrement et activation (bouton de l'onglet, ou `nao-motion calibration-activate`). Depuis l'interface, l'activation recharge la configuration sans redémarrer, et le contrôleur reste désarmé.
 
 Une calibration active remplace limites, poses et version de calibration dans toute la chaîne (guardian, prises, checkpoints). Les contraintes manuelles de `guardian.yaml` s'y ajoutent, notamment entre membres (bras ↔ tête, bras ↔ bras), qu'une exploration articulation par articulation ne mesure pas. L'enveloppe convexe suppose une zone atteignable convexe pour chaque couple ; une zone en L doit être découpée à la main.
+
+## Guardian autonome (export pour un autre projet)
+
+Le guardian peut être exporté en deux fichiers, pour servir de sécurité à un autre projet (par exemple le pont NAOqi d'ia-agent, en Python 2.7) sans dépendre de ce dépôt :
+
+```bash
+nao-motion export-guardian --out guardian_export
+#   guardian_export/guardian.json    limites, vitesses, contraintes couplées, poses (calibration active)
+#   guardian_export/nao_guardian.py  vérificateur Python 2.7 / 3, bibliothèque standard seulement
+```
+
+L'export est **refusé sans calibration active** : les limites de remplacement ne sont pas celles du robot. `--allow-uncalibrated` force un export de test, que le vérificateur refuse ensuite de charger sans `allow_uncalibrated=True`.
+
+`guardian.json` (`kind: nao_motion.guardian_export`, `schema_version: 1`, angles en radians, temps en secondes) contient : la source (version de calibration, robot, empreinte de la configuration), les groupes, les limites par articulation et la marge, les vitesses maximales (défaut et par articulation), l'accélération maximale, la fréquence de vérification, la plage de durée, la tolérance de départ, les contraintes couplées `somme(coef × angle) ≤ borne` (origine `calibration` ou `manual`), et les poses de repos et de départ. Les jambes sont refusées.
+
+```python
+from nao_guardian import Guardian
+g = Guardian.load("guardian.json")
+rep = g.check_pose({"HeadYaw": 0.3, "HeadPitch": -0.1})                 # une posture cible
+rep = g.check_move(posture_mesuree, cible, 1.5)                         # déplacement linéaire en 1,5 s
+d = g.min_duration(posture_mesuree, cible)                              # durée minimale admise
+rep = g.check_trajectory(t, joints, q, start_state=posture_mesuree)     # trajectoire complète
+if not rep.ok:
+    print(rep.summary())     # rep.violations : code, articulation, instant, valeur, limite
+```
+
+En ligne de commande : `python nao_guardian.py guardian.json geste.json` affiche le verdict et rend 0 (accepté), 1 (refusé) ou 2 (erreur d'usage). Le fichier du geste est au format de `nao-motion generate` (`{"joints", "t", "q"}`, éventuellement dans `{"trajectory": ...}`).
+
+Le vérificateur donne les mêmes verdicts que le guardian du projet (comparaison sur des trajectoires aléatoires dans les tests). Il ne fait que juger : il ne modifie ni ne ralentit aucun mouvement, et ne commande rien. La compatibilité Python 2.7 est contrôlée statiquement (syntaxe et imports) ; elle n'a pas encore été exécutée sur le Python 2.7.3 du robot. Après une nouvelle calibration, refaire l'export.
 
 ## Connecter le robot réel
 
