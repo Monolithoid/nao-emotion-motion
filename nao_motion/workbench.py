@@ -51,6 +51,57 @@ class Workbench:
         self.rng = np.random.default_rng(0)
         self.lock = threading.RLock()
 
+    # -- connexion au robot (adresse saisie dans l'interface) -------------------
+    def _busy(self) -> bool:
+        rec = self.recording
+        return self.ctrl.state == State.EXECUTING or (
+            rec is not None and rec.state in (RecState.COUNTDOWN, RecState.RECORDING))
+
+    def use_adapter(self, adapter):
+        """Remplace l'adaptateur (simulation <-> pont). Refusé pendant un mouvement ou un enregistrement."""
+        if self._busy():
+            raise ControllerError("Mouvement ou enregistrement en cours : arrêter d'abord")
+        try:
+            if self.adapter.is_connected():
+                self.adapter.disconnect()
+        except Exception:
+            pass
+        self.adapter = adapter
+        self.ctrl = Controller(self.cfg, adapter, self.guardian)
+        self.recording = None
+        self.engine = None
+        self.sim_demonstration = adapter.name == "sim"
+
+    def connect_robot(self, robot_host: str, robot_port: int = 9559, bridge_host: Optional[str] = None,
+                      bridge_port: Optional[int] = None) -> dict:
+        """Connexion au robot via le pont, à l'adresse (IP ou nom DNS) fournie par l'interface.
+        Ni mouvement, ni changement de raideur ; le contrôleur reste désarmé."""
+        from .adapters.bridge_client import BridgeAdapter
+        from .config.hosts import validate_host
+        host = validate_host(robot_host)
+        if bridge_host:
+            validate_host(bridge_host)
+        ad = BridgeAdapter(self.cfg, host=bridge_host, port=bridge_port)
+        if self._busy():
+            raise ControllerError("Mouvement ou enregistrement en cours : arrêter d'abord")
+        if self.adapter.name == "bridge" and self.adapter.is_connected():
+            self.adapter.disconnect()  # le pont n'accepte qu'un client à la fois
+        ad.connect()
+        try:
+            info = ad.connect_robot(host, int(robot_port or 9559))
+        except Exception:
+            ad.disconnect()
+            raise
+        self.use_adapter(ad)
+        self.ctrl.state = State.IDLE
+        self.ctrl._log(f"connecté au robot {host}:{robot_port} via le pont (aucun mouvement envoyé)")
+        return info
+
+    def use_simulation(self):
+        from .adapters.sim import SimAdapter
+        self.use_adapter(SimAdapter(self.cfg))
+        self.ctrl.connect()
+
     # -- événement extérieur ---------------------------------------------------
     def set_event(self, d: dict, ttl_s: Optional[float] = None) -> EventContext:
         """Reçoit un événement (composant caméra/micros, ou test manuel)."""
@@ -314,7 +365,10 @@ class Workbench:
         self.ctrl.stop()
 
     def status(self) -> dict:
+        info = getattr(self.adapter, "info", {}) or {}
         return {"adapter": self.adapter.name, "real_robot": bool(getattr(self.adapter, "is_real", False)),
+                "robot_address": info.get("robot_address"), "robot_name": info.get("robot_name"),
+                "naoqi_version": info.get("naoqi_version"),
                 "connected": self.adapter.is_connected(), "controller": self.ctrl.state.value,
                 "armed": self.ctrl.armed, "last_error": self.ctrl.last_error,
                 "recording": self.recording_status(), "event": self.current_event().to_dict(),

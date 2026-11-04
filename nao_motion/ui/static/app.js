@@ -44,7 +44,7 @@ const cols = (q) => q[0].map((_, j) => q.map((r) => r[j]));
 async function refreshStatus() {
   try { STATUS = await api("status"); } catch (e) { return; }
   const r = STATUS.recording;
-  $("status").textContent = `${STATUS.adapter}${STATUS.real_robot ? " (ROBOT RÉEL)" : " (simulation)"} · ${STATUS.connected ? "connecté" : "déconnecté"} · contrôleur : ${STATUS.controller}` +
+  $("status").textContent = `${STATUS.adapter}${STATUS.real_robot ? ` (ROBOT RÉEL ${STATUS.robot_name || ""} ${STATUS.robot_address || "— adresse non fournie"})` : " (simulation)"} · ${STATUS.connected ? "connecté" : "déconnecté"} · contrôleur : ${STATUS.controller}` +
     (STATUS.last_error ? ` · erreur : ${STATUS.last_error}` : "") +
     (STATUS.event.present ? ` · événement az ${(STATUS.event.azimuth_rad * 180 / Math.PI).toFixed(0)}° el ${(STATUS.event.elevation_rad * 180 / Math.PI).toFixed(0)}°` : " · aucun événement");
   $("armed").checked = STATUS.armed;
@@ -274,6 +274,18 @@ async function init() {
   $("g-exec").onclick = () => lastPlan && window.confirm(real() ? "Exécuter sur le ROBOT RÉEL ?" : "Exécuter sur le robot simulé ?") && api("execute", {plan_id: lastPlan, confirm: true});
   // robot
   $("r-connect").onclick = () => api("connect", {});
+  const stored = (() => { try { return JSON.parse(localStorage.getItem("nao-robot") || "{}"); } catch (e) { return {}; } })();
+  $("r-host").value = stored.host || (CFG.robot && CFG.robot.ip) || "";
+  $("r-port").value = stored.port || (CFG.robot && CFG.robot.port) || 9559;
+  $("r-bhost").value = stored.bhost || (CFG.bridge && CFG.bridge.host) || "127.0.0.1";
+  $("r-bport").value = stored.bport || (CFG.bridge && CFG.bridge.port) || 9600;
+  $("r-connect-robot").onclick = async () => {
+    const v = {host: $("r-host").value.trim(), port: parseInt($("r-port").value), bhost: $("r-bhost").value.trim(), bport: parseInt($("r-bport").value)};
+    if (!v.host) return alert("Indiquer l'adresse du robot (IP ou nom DNS)");
+    await api("connect", {mode: "robot", robot_host: v.host, robot_port: v.port, bridge_host: v.bhost, bridge_port: v.bport});
+    try { localStorage.setItem("nao-robot", JSON.stringify(v)); } catch (e) {}
+  };
+  $("r-sim").onclick = () => api("connect", {mode: "sim"});
   $("r-ack").onclick = () => api("acknowledge", {});
   $("r-hold-all").onclick = () => api("hold", {});
   $("r-rest").onclick = () => window.confirm("Retour motorisé au repos depuis la posture mesurée ?") && api("rest", {confirm: true});

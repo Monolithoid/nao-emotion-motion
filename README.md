@@ -222,15 +222,17 @@ python --version                         # Python embarqué
 
 Étapes :
 
-1. `cp .env.example .env`, puis renseigner **`NAO_IP`**, la seule valeur encore inconnue (`hostname -I` sur le robot, ou appui sur le bouton du torse). Le `.env` (non versionné) remplace les valeurs de `configs/robot.yaml`, et le pont le lit aussi.
+1. `cp .env.example .env` (non versionné) : identité attendue du robot, port du pont. Ces valeurs remplacent celles de `configs/robot.yaml`.
 2. **Installer le SDK Python NAOqi 2.1.4** (Python 2.7) sur la machine qui fera tourner le pont, ou lancer le pont directement sur le robot, qui a Python 2.7.3. Le pont essaie `import qi`, puis `from naoqi import ALProxy`.
 3. **Préparer la position du robot.** Les jambes restent hors périmètre et ne sont jamais commandées. Placez le robot dans une posture stable, par exemple assis ou accroupi. Gérez la vie autonome, la respiration et les mouvements d'attente depuis vos outils habituels : le pont n'y touche pas, car les désactiver peut faire bouger le robot selon les versions.
-4. **Lancer le pont**, qui n'envoie aucun mouvement au démarrage et lit `NAO_IP` et `NAO_BRIDGE_PORT` dans `.env` :
+4. **Lancer le pont**, qui n'envoie aucun mouvement au démarrage et attend l'adresse du robot :
    ```bash
-   python2 bridge/naoqi_bridge.py            # ou --robot-ip 192.168.1.10 --port 9600
+   python2 bridge/naoqi_bridge.py            # adresse fournie ensuite par l'interface
+   python2 bridge/naoqi_bridge.py --robot-ip nao.local   # ou dès le lancement
    ```
-   Pour tester le protocole sans robot : `python bridge/naoqi_bridge.py --fake`.
-5. `nao-motion robot-info` : vérifie la connexion et affiche identité, limites d'usine et posture mesurée, sans aucun mouvement.
+   Pour tester le protocole sans robot : `python bridge/naoqi_bridge.py --fake`. Le pont n'accepte qu'un client à la fois (interface **ou** commande).
+   Puis, dans `nao-motion ui --adapter bridge` → onglet **Robot**, saisir l'**adresse du robot (IP ou nom DNS)**, par exemple `192.168.1.10` ou `nao.local`, et cliquer sur *Connecter au robot*. Cette action n'envoie aucun mouvement et ne change aucune raideur. L'adresse est mémorisée dans le navigateur. En ligne de commande, `--robot <IP ou DNS>` joue le même rôle, avec `NAO_IP` comme valeur par défaut.
+5. `nao-motion robot-info --robot <IP ou DNS>` : vérifie la connexion et affiche identité, limites d'usine et posture mesurée, sans aucun mouvement.
 6. `nao-motion calibrate` (section précédente), puis `nao-motion check-config`.
 7. Ajuster vitesses, accélérations, raideurs (`robot.yaml` → `stiffness`) et contraintes manuelles entre membres (`guardian.yaml`).
 8. `nao-motion ui --adapter bridge`. Faites un premier essai avec des gestes lents, une main près du bouton ARRÊT, et un robot dans une posture où un relâchement ne le ferait pas tomber.

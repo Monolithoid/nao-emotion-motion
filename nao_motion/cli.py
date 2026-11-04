@@ -21,6 +21,20 @@ def _wb(a, **kw):
                      **kw)
 
 
+def _connect(ad, cfg, a):
+    """Connecte l'adaptateur ; pour le pont, transmet l'adresse du robot (IP ou DNS)."""
+    ad.connect()
+    _connect_robot(ad, cfg, a)
+
+
+def _connect_robot(ad, cfg, a):
+    if ad.name == "bridge" and not ad.info.get("robot_connected"):
+        host = getattr(a, "robot", None) or (cfg.robot.get("robot") or {}).get("ip")
+        if not host:
+            raise SystemExit("Adresse du robot inconnue : --robot <IP ou nom DNS> (ou NAO_IP dans .env)")
+        ad.connect_robot(host, int((cfg.robot.get("robot") or {}).get("port") or 9559))
+
+
 def cmd_check_config(a):
     from .config import load_config
     from .guardian import Guardian
@@ -140,6 +154,7 @@ def cmd_execute(a):
     wb = _wb(a, adapter=a.adapter)
     traj = Trajectory.from_dict(json.loads(Path(a.plan).read_text())["trajectory"])
     wb.ctrl.connect()
+    _connect_robot(wb.adapter, wb.cfg, a)
     plan = wb.ctrl.plan_cycle(traj, from_pose="rest")
     print(plan.report.summary())
     if not plan.report.ok:
@@ -159,7 +174,7 @@ def cmd_execute(a):
 def cmd_capture_pose(a):
     """Lit la posture mesurée (aucune commande) et affiche un extrait YAML pour poses.yaml."""
     wb = _wb(a, adapter=a.adapter)
-    wb.adapter.connect()
+    _connect(wb.adapter, wb.cfg, a)
     js = wb.cfg.groups[a.group]
     q = wb.adapter.read_angles(js)
     print(f"# {a.name}/{a.group} mesuré ({wb.adapter.name})")
@@ -172,7 +187,7 @@ def cmd_robot_info(a):
     from .config import load_config
     cfg = load_config(a.config)
     ad = make_adapter(cfg, a.adapter)
-    ad.connect()
+    _connect(ad, cfg, a)
     caps = ad.capabilities()
     print(json.dumps({k: v for k, v in caps.items()}, indent=1, ensure_ascii=False, default=str))
     fl = getattr(ad, "factory_limits", None)
@@ -209,7 +224,7 @@ def cmd_calibrate(a):
         print(f"Calibration SIMULÉE écrite dans {out} (aucune valeur réelle ; non activée).")
         return 0
     ad = make_adapter(cfg, a.adapter)
-    ad.connect()
+    _connect(ad, cfg, a)
     sess = CalibrationSession(cfg, ad, proc)
     print("Robot :", sess.robot_info())
     print("Rien ne sera commandé : chaque groupe exploré est relâché, les autres sont raidis sur place.")
@@ -298,15 +313,19 @@ def main(argv=None):
     s.set_defaults(fn=cmd_generate)
     s = sub.add_parser("execute", help="exécuter une trajectoire sauvegardée (robot réel possible)")
     s.add_argument("plan"); s.add_argument("--adapter", default="sim", choices=["sim", "bridge"])
+    s.add_argument("--robot", help="adresse du robot : IP ou nom DNS")
     s.add_argument("--confirm", action="store_true"); s.set_defaults(fn=cmd_execute)
     s = sub.add_parser("capture-pose", help="lire une posture mesurée (aucune commande)")
     s.add_argument("--group", required=True, choices=["left_arm", "right_arm", "head"])
     s.add_argument("--name", default="start", choices=["rest", "start"])
-    s.add_argument("--adapter", default="sim", choices=["sim", "bridge"]); s.set_defaults(fn=cmd_capture_pose)
+    s.add_argument("--adapter", default="sim", choices=["sim", "bridge"])
+    s.add_argument("--robot", help="adresse du robot : IP ou nom DNS"); s.set_defaults(fn=cmd_capture_pose)
     s = sub.add_parser("robot-info", help="identité, version NAOqi, limites d'usine (lecture seule)")
-    s.add_argument("--adapter", default="bridge", choices=["sim", "bridge"]); s.set_defaults(fn=cmd_robot_info)
+    s.add_argument("--adapter", default="bridge", choices=["sim", "bridge"])
+    s.add_argument("--robot", help="adresse du robot : IP ou nom DNS (défaut : NAO_IP)"); s.set_defaults(fn=cmd_robot_info)
     s = sub.add_parser("calibrate", help="procédure de calibration du guardian (exploration guidée)")
     s.add_argument("--adapter", default="bridge", choices=["sim", "bridge"])
+    s.add_argument("--robot", help="adresse du robot : IP ou nom DNS (défaut : NAO_IP)")
     s.add_argument("--version", help="nom de la calibration (défaut : <robot>-<date>)")
     s.add_argument("--out", help="sim uniquement : fichier de sortie"); s.set_defaults(fn=cmd_calibrate)
     s = sub.add_parser("calibration-activate", help="activer un fichier de configs/calibration/")

@@ -149,8 +149,19 @@
 </section>
 
 <section id="tab-robot" class="tab">
+  <fieldset>
+    <legend>Connexion (aucun mouvement, aucune raideur modifiée)</legend>
+    <div class="row">
+      <label>Adresse du robot (IP ou nom DNS) <input id="r-host" placeholder="192.168.1.10 ou nao.local" size="24"></label>
+      <label>Port NAOqi <input id="r-port" type="number" value="9559" class="num"></label>
+      <label>Pont <input id="r-bhost" placeholder="127.0.0.1" size="12">:<input id="r-bport" type="number" value="9600" class="num"></label>
+      <button id="r-connect-robot">Connecter au robot</button>
+      <button id="r-sim">Revenir à la simulation</button>
+    </div>
+    <p class="hint">Le pont (bridge/naoqi_bridge.py) doit tourner ; il se connecte à NAOqi à l'adresse indiquée ici.</p>
+  </fieldset>
   <div class="row">
-    <button id="r-connect">Connecter (aucun mouvement)</button>
+    <button id="r-connect">Reconnecter (aucun mouvement)</button>
     <button id="r-ack">Acquitter l'état</button>
     <button id="r-hold-all">Raidir tout sur place</button>
     <button id="r-rest">Retour au repos (explicite)</button>
