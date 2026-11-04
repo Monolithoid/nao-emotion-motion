@@ -1,4 +1,4 @@
-Fichiers de calibration produits par `nao-motion calibrate` (un par robot et par
-séance). `ACTIVE` contient le nom du fichier utilisé par le guardian.
-Sans fichier actif, seules les valeurs de remplacement de joints.yaml existent
-et l'exécution sur robot réel est refusée.
+Calibration files produced by `nao-motion calibrate` (one per robot and per
+session). `ACTIVE` contains the name of the file used by the guardian.
+Without an active file, only the fallback values from joints.yaml exist
+and execution on the real robot is refused.

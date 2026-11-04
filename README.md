@@ -1,79 +1,82 @@
 # nao-emotion-motion
 
-Apprentissage et génération de mouvements expressifs des **bras** et de la **tête** de NAO, à partir de démonstrations physiques, conditionnés par une **émotion** et une **intensité** (0 à 1).
+Learning and generating expressive **arm** and **head** movements for NAO from physical demonstrations, conditioned on an **emotion** and an **intensity** (0 to 1).
 
-Le composant moteur n'est pas un LLM. C'est un petit modèle neuronal supervisé (PyTorch) dont l'inférence est légère et qui peut aussi tourner en numpy seul. Un LLM extérieur peut fournir l'émotion et l'intensité, mais n'obtient qu'une **proposition** de mouvement : l'exécution reste une action explicite de l'opérateur.
+The motion component is not an LLM. It is a small supervised neural model (PyTorch) with lightweight inference that can also run on numpy alone. An external LLM can supply the emotion and intensity, but it only ever gets a movement **proposal**: execution remains an explicit operator action.
 
-> **État : premier socle, validé en simulation uniquement.** Les données synthétiques servent à vérifier la chaîne technique. Elles ne disent rien de l'expressivité. Rien n'a encore été testé sur un robot réel.
+> **Status: first foundation, validated in simulation only.** The synthetic data is there to check the technical pipeline. It says nothing about expressiveness. Nothing has been tested on a real robot yet.
+
+> **Note on language:** the web interface and the emotion/intention identifiers are in French. Labels from the interface are quoted as they appear, with an English gloss. Emotion IDs: `joie` (joy), `tristesse` (sadness), `colere` (anger), `peur` (fear), `surprise` (surprise), `calme` (calm).
 
 ---
 
-## Démarrage rapide (sans robot)
+## Quick start (no robot)
 
 ```bash
 pip install -e ".[dev]"          # numpy, pyyaml, torch (+ pytest)
-nao-motion check-config          # vérifie configs/ et liste ce qui manque pour le robot réel
-nao-motion demo                  # parcours complet en simulation (~15 s), dans ./demo_sim
-cp .env.example .env             # identité et adresse du robot (lue par la config et par le pont)
+nao-motion check-config          # checks configs/ and lists what is missing for the real robot
+nao-motion demo                  # full walkthrough in simulation (~15 s), in ./demo_sim
+cp .env.example .env             # robot identity and address (read by the config and by the bridge)
 pytest                           # tests
 ```
 
-`nao-motion demo` déroule les étapes du premier résultat :
+`nao-motion demo` runs through the steps of the first result:
 
-0. procédure de calibration exercée sur le robot simulé (sans portée réelle, non activée) ;
-1. collecte et sauvegarde de démonstrations des bras (démonstrateur synthétique, adaptateur simulé) ;
-2. consultation d'une prise et relecture virtuelle validée par le guardian ;
-3. entraînement du modèle des bras ;
-4. génération, validation, puis exécution du cycle complet sur le robot simulé ;
-5. collecte tête : le **modèle des bras** joue chaque émotion/intensité pendant que la tête est guidée (ici par un démonstrateur simulé), avec plusieurs contextes de regard par geste ;
-6. entraînement de la tête avec le modèle des bras figé, puis exécution simulée avec un événement.
+0. calibration procedure exercised on the simulated robot (no real effect, not activated);
+1. collection and storage of arm demonstrations (synthetic demonstrator, simulated adapter);
+2. inspection of a take and virtual replay validated by the guardian;
+3. training of the arm model;
+4. generation, validation, then execution of the full cycle on the simulated robot;
+5. head collection: the **arm model** plays each emotion/intensity while the head is guided (here by a simulated demonstrator), with several gaze contexts per gesture;
+6. head training with the arm model frozen, then simulated execution with an event.
 
-## Interface locale de collecte
+## Local collection interface
 
 ```bash
-nao-motion ui                    # http://127.0.0.1:8765 (adaptateur simulé par défaut)
-nao-motion ui --adapter bridge   # vers le robot via le pont NAOqi (voir plus bas)
+nao-motion ui                    # http://127.0.0.1:8765 (simulated adapter by default)
+nao-motion ui --adapter bridge   # to the robot through the NAOqi bridge (see below)
 ```
 
-L'interface écoute uniquement sur `127.0.0.1`. Elle a sept onglets :
+The interface listens on `127.0.0.1` only. It has seven tabs:
 
-- **1 · Bras** : choisir l'émotion, l'intensité et éventuellement une intention (ou *Tirage aléatoire*). La consigne s'affiche en grand (« surprise — 0,8 »). Ensuite : *Préparer* (relâche les bras et maintient la tête), *Démarrer* (compte à rebours, puis enregistrement des angles **mesurés** et de leurs horodatages), *Arrêter*. Un aperçu des courbes s'affiche sans aucun mouvement, puis on choisit *Accepter*, *Garder en attente*, *Rejeter* ou *Recommencer*, avec une annotation possible.
-- **2 · Tête** : choisir la source du mouvement des bras. Par défaut, c'est un **geste généré par le modèle des bras** (émotion, intensité, variation, graine) ; une démonstration enregistrée peut aussi être rejouée. Définir ensuite l'événement dans le **champ de vision** : le point est placé selon l'azimut (gauche du robot à gauche) et l'élévation, et sa taille indique la proximité (plus gros = plus proche). On le place d'un clic ou en saisissant azimut, élévation et distance. La distance peut aussi rester inconnue. *Tirage aléatoire* tire ensemble une émotion, une intensité, un azimut, une élévation et une distance (log-uniforme, pour avoir autant de proches que de lointains), dans les plages de `robot.yaml` (`events`). On peut aussi inclure parfois l'absence d'événement. Le dernier événement reçu du composant externe s'affiche de la même façon. *Préparer* valide le geste, fait une approche motorisée des bras vers son début, puis relâche la tête. *Démarrer* exécute les bras pendant que vous guidez la tête. On enregistre émotion/intensité, bras **réellement mesurés**, consigne envoyée et tête. Plusieurs contextes de regard peuvent être enregistrés pour un même geste (même graine).
-- **Prises** : répartition par émotion × intensité (acceptées / total), liste filtrable, courbes, relecture virtuelle (curseur animé, relecture lissée superposée), statut et annotations.
-- **Entraînement** : lancer l'entraînement des bras ou de la tête et consulter les résultats (RMSE en entraînement et en validation, référence de comparaison, taux d'acceptation du guardian).
-- **Génération** : choisir une émotion, éventuellement un mélange de deux émotions, l'intensité, une variation et l'événement (même champ de vision, même tirage aléatoire). On obtient les courbes, le rapport du guardian sur le geste et sur le cycle complet, et un bouton *Exécuter* (désactivé si le cycle est refusé).
-- **Robot** : *Connecter* (sans mouvement), *Acquitter*, *Raidir sur place*, *Retour au repos* (explicite), *Relâcher*.
+- **1 · Bras** (arms): choose the emotion, the intensity and optionally an intention (or *Tirage aléatoire*, random draw). The instruction is shown in large type (“surprise — 0,8”). Then: *Préparer* (prepare: releases the arms and holds the head), *Démarrer* (start: countdown, then recording of the **measured** angles and their timestamps), *Arrêter* (stop). A preview of the curves is shown without any movement, then you choose *Accepter* (accept), *Garder en attente* (keep pending), *Rejeter* (reject) or *Recommencer* (retry), with an optional annotation.
+- **2 · Tête** (head): choose the source of the arm movement. By default it is a **gesture generated by the arm model** (emotion, intensity, variation, seed); a recorded demonstration can also be replayed. Then define the event in the **field of view**: the dot is placed by azimuth (robot's left on the left) and elevation, and its size shows proximity (bigger = closer). Place it with a click or by typing azimuth, elevation and distance. The distance may also stay unknown. *Tirage aléatoire* (random draw) draws an emotion, an intensity, an azimuth, an elevation and a distance together (log-uniform, so there are as many near events as far ones), within the ranges in `robot.yaml` (`events`). You can also sometimes include the absence of an event. The last event received from the external component is displayed the same way. *Préparer* (prepare) validates the gesture, makes a motorised approach of the arms to its start, then releases the head. *Démarrer* (start) runs the arms while you guide the head. What is recorded: emotion/intensity, **actually measured** arms, command sent, and head. Several gaze contexts can be recorded for the same gesture (same seed).
+- **Prises** (takes): distribution by emotion × intensity (accepted / total), filterable list, curves, virtual replay (animated cursor, smoothed replay overlaid), status and annotations.
+- **Entraînement** (training): start arm or head training and view the results (training and validation RMSE, comparison baseline, guardian acceptance rate).
+- **Génération** (generation): choose an emotion, optionally a blend of two emotions, the intensity, a variation and the event (same field of view, same random draw). You get the curves, the guardian report on the gesture and on the full cycle, and an *Exécuter* (execute) button (disabled if the cycle is rejected).
+- **Robot**: *Connecter* (connect, no movement), *Acquitter* (acknowledge), *Raidir sur place* (stiffen in place), *Retour au repos* (return to rest, explicit), *Relâcher* (release).
+- **Calibration**: see “Guardian calibration” below.
 
-Le bouton **ARRÊT** interrompt l'enregistrement, la relecture et l'exécution. La posture est maintenue et le contrôleur est désarmé. Il n'y a **pas** de retour automatique au repos.
+The **ARRÊT** (stop) button interrupts recording, replay and execution. The posture is held and the controller is disarmed. There is **no** automatic return to rest.
 
-En simulation, un démonstrateur synthétique remplace votre main. Les prises qu'il produit sont marquées `synthetic: true`.
+In simulation, a synthetic demonstrator replaces your hand. The takes it produces are marked `synthetic: true`.
 
-### Points d'entrée externes (HTTP JSON)
+### External entry points (HTTP JSON)
 
-| Route | Rôle |
+| Route | Purpose |
 |---|---|
-| `POST /api/event` | Événement du composant caméra/micros : `{"present": true, "azimuth": 30, "elevation": 5, "distance_m": 1.2, "unit": "deg", "frame": "torso" \| "head", "source": "camera"}` (`distance_m` en mètres, optionnelle). Avec `frame: "head"`, joindre `head_yaw_rad` et `head_pitch_rad` au moment de la mesure, sinon ce sont les angles lus à la réception qui sont utilisés. `{"present": false}` signale l'absence d'événement. `ttl_s` est optionnel (au-delà, l'événement est considéré comme absent). |
-| `POST /api/request` | Pour un LLM : `{"emotion": "joie", "intensity": 0.7}` ou `{"mix": {"joie": 0.5, "surprise": 0.5}, ...}`. La réponse contient la trajectoire, le rapport du guardian et un `plan_id`. **Rien n'est exécuté.** |
-| `POST /api/execute` | `{"plan_id": ..., "confirm": true}`, avec contrôleur armé : action de l'opérateur. |
+| `POST /api/event` | Event from the camera/microphone component: `{"present": true, "azimuth": 30, "elevation": 5, "distance_m": 1.2, "unit": "deg", "frame": "torso" \| "head", "source": "camera"}` (`distance_m` in metres, optional). With `frame: "head"`, include `head_yaw_rad` and `head_pitch_rad` at measurement time; otherwise the angles read on reception are used. `{"present": false}` signals that there is no event. `ttl_s` is optional (past it, the event is treated as absent). |
+| `POST /api/request` | For an LLM: `{"emotion": "joie", "intensity": 0.7}` or `{"mix": {"joie": 0.5, "surprise": 0.5}, ...}`. The response contains the trajectory, the guardian report and a `plan_id`. **Nothing is executed.** |
+| `POST /api/execute` | `{"plan_id": ..., "confirm": true}`, with the controller armed: operator action. |
 
-## Ligne de commande
+## Command line
 
 ```bash
-nao-motion synth                        # remplit data/ de prises SYNTHÉTIQUES (tests techniques)
-nao-motion takes --stats                # liste et répartition des prises
-nao-motion train arms                   # entraîne les bras (prises « accepted »)
-nao-motion train head                   # entraîne la tête, modèle des bras figé (dernier run)
-nao-motion generate --emotion joie --intensity 0.7 --event-az 30 --event-dist 1.2 --out geste.json
+nao-motion synth                        # fills data/ with SYNTHETIC takes (technical tests)
+nao-motion takes --stats                # list and distribution of takes
+nao-motion train arms                   # trains the arms ("accepted" takes)
+nao-motion train head                   # trains the head, arm model frozen (latest run)
+nao-motion generate --emotion joie --intensity 0.7 --event-az 30 --event-dist 1.2 --out gesture.json
 nao-motion generate --mix '{"joie":0.6,"calme":0.4}' --intensity 0.5 --variation 0.03 --seed 1
-nao-motion generate --emotion peur --intensity 0.9 --simulate     # exécution sur le robot SIMULÉ
-nao-motion execute geste.json --adapter bridge --confirm          # seul chemin CLI vers un robot réel
-nao-motion robot-info                   # identité, NAOqi, limites d'usine, posture mesurée (lecture seule, via le pont)
-nao-motion calibrate                    # procédure de calibration du guardian (voir « Calibration »)
-nao-motion calibrate --adapter sim      # la même procédure sur le robot simulé
-nao-motion calibration-activate configs/calibration/<fichier>.yaml
-nao-motion capture-pose --group left_arm --name start --adapter bridge   # lit les capteurs, n'envoie rien
-nao-motion serve-inference --port 8766  # inférence déportée (génère, n'exécute pas)
-nao-motion export-guardian --out guardian_export   # guardian autonome pour un autre projet (voir « Guardian autonome »)
+nao-motion generate --emotion peur --intensity 0.9 --simulate     # execution on the SIMULATED robot
+nao-motion execute gesture.json --adapter bridge --confirm        # the only CLI path to a real robot
+nao-motion robot-info                   # identity, NAOqi, factory limits, measured posture (read-only, via the bridge)
+nao-motion calibrate                    # guardian calibration procedure (see "Calibration")
+nao-motion calibrate --adapter sim      # the same procedure on the simulated robot
+nao-motion calibration-activate configs/calibration/<file>.yaml
+nao-motion capture-pose --group left_arm --name start --adapter bridge   # reads the sensors, sends nothing
+nao-motion serve-inference --port 8766  # remote inference (generates, does not execute)
+nao-motion export-guardian --out guardian_export   # standalone guardian for another project (see "Standalone guardian")
 ```
 
 ---
@@ -81,210 +84,210 @@ nao-motion export-guardian --out guardian_export   # guardian autonome pour un a
 ## Architecture
 
 ```
-configs/                YAML versionnés : articulations + limites, poses, émotions, guardian, robot, modèle
-bridge/naoqi_bridge.py  pont NAOqi (Python 2.7 ou 3), seul fichier dépendant du SDK
+configs/                versioned YAML: joints + limits, poses, emotions, guardian, robot, model
+bridge/naoqi_bridge.py  NAOqi bridge (Python 2.7 or 3), the only file depending on the SDK
 nao_motion/
-  config/               chargement et validation des configurations
-  events.py             contexte événementiel, repères, conversions
-  trajectory.py         trajectoire horodatée (s, rad)
-  data/                 stockage des prises, représentation (B-spline), rééchantillonnage
-  models/               features, MLP PyTorch, checkpoints, export numpy, jeux d'apprentissage
-  training.py           entraînement bras / tête, métriques, découpage par groupes
-  engine.py             génération bras puis tête (propose, n'exécute pas)
-  guardian/             validation indépendante du trajet complet
-  control/              contrôleur (cycle, exécution, arrêt), enregistrement en deux passages
-  adapters/             interface commune, simulation, client du pont NAOqi
-  inference/            serveur et client d'inférence déportée
-  ui/                   interface web locale (bibliothèque standard + HTML/JS)
-  workbench.py          couche de service commune à l'UI, la CLI et la démo
-  sim/synthetic.py      démonstrateurs synthétiques (simulation uniquement)
+  config/               loading and validation of configurations
+  events.py             event context, frames, conversions
+  trajectory.py         timestamped trajectory (s, rad)
+  data/                 take storage, representation (B-spline), resampling
+  models/               features, PyTorch MLP, checkpoints, numpy export, training sets
+  training.py           arm / head training, metrics, group-wise split
+  engine.py             arm then head generation (proposes, does not execute)
+  guardian/             independent validation of the full path
+  control/              controller (cycle, execution, stop), two-pass recording
+  adapters/             common interface, simulation, NAOqi bridge client
+  inference/            remote inference server and client
+  ui/                   local web interface (standard library + HTML/JS)
+  workbench.py          service layer shared by the UI, the CLI and the demo
+  sim/synthetic.py      synthetic demonstrators (simulation only)
 ```
 
-Les données vont dans `data/`, les entraînements dans `runs/`. Ces deux dossiers sont ignorés par git.
+Data goes into `data/`, training runs into `runs/`. Both folders are ignored by git.
 
-### Deux modèles, un moteur
+### Two models, one engine
 
-| | Entrées | Sortie |
+| | Inputs | Output |
 |---|---|---|
-| **Bras** | émotion (one-hot, ou mélange pondéré), intensité | 8 points de contrôle × 10 articulations + log(durée) |
-| **Tête** | émotion, intensité, **points de contrôle des bras prévus** + leur durée, orientation actuelle de la tête, événement `[présent, sin az, cos az, élévation, distance connue, proximité 1/(1+d)]` | 8 points de contrôle × 2 articulations |
+| **Arms** | emotion (one-hot, or weighted blend), intensity | 8 control points × 10 joints + log(duration) |
+| **Head** | emotion, intensity, **planned arm control points** + their duration, current head orientation, event `[present, sin az, cos az, elevation, distance known, proximity 1/(1+d)]` | 8 control points × 2 joints |
 
-La tête est exprimée sur la **même phase temporelle** que les bras, avec la même durée. Le réseau voit donc tout le déroulement prévu des bras et peut apprendre une anticipation ou un retard. Rien ne force la tête à suivre les mains : ce que montrent les démonstrations (regarder les mains, rester vers l'interlocuteur, détourner le regard) détermine son comportement.
+The head is expressed on the **same time phase** as the arms, with the same duration. The network therefore sees the whole planned arm motion and can learn anticipation or delay. Nothing forces the head to follow the hands: what the demonstrations show (looking at the hands, staying towards the interlocutor, looking away) determines its behaviour.
 
-**Collecte et entraînement de la tête.** Le modèle des bras déjà entraîné reçoit une émotion et une intensité. Le geste qu'il produit est validé par le guardian, puis exécuté par les bras pendant que l'opérateur guide uniquement la tête. Chaque prise donne un exemple (émotion/intensité, bras réalisés, tête enregistrée, événement). On peut aussi rejouer une démonstration de bras enregistrée.
+**Head collection and training.** The already-trained arm model receives an emotion and an intensity. The gesture it produces is validated by the guardian, then executed by the arms while the operator guides only the head. Each take yields one example (emotion/intensity, executed arms, recorded head, event). A recorded arm demonstration can also be replayed.
 
-« Bras figés » veut dire que les poids du modèle des bras ne changent pas pendant l'entraînement de la tête. Il est chargé sans gradient, et l'empreinte de son checkpoint est enregistrée dans celui de la tête et dans chaque prise de tête générée. Par défaut (`head_model.arm_input: recorded`), l'entrée « bras » d'un exemple est la trajectoire des bras **mesurée** pendant la prise, c'est-à-dire le mouvement réellement exécuté. L'option `predicted` utilise plutôt la sortie du modèle des bras.
+“Frozen arms” means the arm model's weights do not change during head training. It is loaded without gradients, and its checkpoint fingerprint is stored in the head checkpoint and in every generated head take. By default (`head_model.arm_input: recorded`), the “arms” input of an example is the arm trajectory **measured** during the take, i.e. the movement actually executed. The `predicted` option uses the arm model's output instead.
 
-### Représentation des mouvements
+### Motion representation
 
-- Les prises **brutes** (angles mesurés, horodatages réels) ne sont jamais modifiées.
-- Chaque prise a un **segment utile**. Pour une prise de bras, il est proposé automatiquement en retirant l'immobilité du début et de la fin, et il reste modifiable. Pour une prise de tête, c'est la fenêtre exacte de relecture des bras.
-- Le segment est ramené à une **phase** u ∈ [0, 1] par rééchantillonnage linéaire sur 100 points, puis projeté sur **8 points de contrôle B-spline cubique** par articulation. La **durée** est apprise à part, en log.
+- **Raw** takes (measured angles, real timestamps) are never modified.
+- Each take has a **useful segment**. For an arm take, it is proposed automatically by trimming the stillness at the start and end, and it remains editable. For a head take, it is the exact arm replay window.
+- The segment is mapped to a **phase** u ∈ [0, 1] by linear resampling over 100 points, then projected onto **8 cubic B-spline control points** per joint. The **duration** is learned separately, in log.
 
-Pourquoi ce choix : avec peu de données, il faut peu de paramètres de sortie. Les courbes obtenues sont lisses (vitesse et accélération continues, ce qui aide le guardian). La relation entre paramètres et trajectoire est linéaire, donc interpoler entre exemples ou entre émotions reste cohérent. Cet alignement linéaire ne recale pas les sous-phases d'un geste (pas de DTW) ; c'est une évolution possible.
+Why this choice: with little data, you need few output parameters. The resulting curves are smooth (continuous velocity and acceleration, which helps the guardian). The mapping between parameters and trajectory is linear, so interpolating between examples or between emotions stays consistent. This linear alignment does not register the sub-phases of a gesture (no DTW); that is a possible future improvement.
 
-### Moyenne des gestes et variantes
+### Averaging of gestures and variants
 
-Le premier modèle est une **régression déterministe**. Si « joie » a été démontrée de deux façons différentes, il apprend la **moyenne** des deux, qui peut être un geste jamais montré. Le démonstrateur synthétique contient volontairement un tel cas. Pour le premier prototype, les variantes sont obtenues ainsi :
+The first model is a **deterministic regression**. If “joie” (joy) has been demonstrated in two different ways, it learns the **average** of the two, which may be a gesture never shown. The synthetic demonstrator deliberately contains such a case. For the first prototype, variants are obtained as follows:
 
-- **interpolation** : intensité continue et mélange pondéré d'émotions (`--mix`) ;
-- **variation** : un bruit lisse et reproductible (`--variation`, `--seed`) sur les points de contrôle intérieurs, non appris.
+- **interpolation**: continuous intensity and weighted blend of emotions (`--mix`);
+- **variation**: smooth, reproducible noise (`--variation`, `--seed`) on the inner control points, not learned.
 
-Évolution prévue sans changer l'interface : les MLP acceptent déjà une entrée latente `latent_dim` (0 par défaut). Elle permettra un CVAE ou un mélange de prototypes, qui produiront des variantes **apprises** à partir de démonstrations multiples.
+Planned evolution without changing the interface: the MLPs already accept a latent input `latent_dim` (0 by default). It will allow a CVAE or a mixture of prototypes, producing **learned** variants from multiple demonstrations.
 
-### Mesurer plutôt qu'imposer un nombre de prises
+### Measure rather than impose a number of takes
 
-Chaque entraînement écrit dans `runs/<run>/metrics.json` :
+Each training run writes to `runs/<run>/metrics.json`:
 
-- la RMSE (rad) sur trajectoires denses en entraînement et en validation, au total et par articulation ;
-- une **référence** de comparaison : la moyenne des prises de même émotion et d'intensité voisine. Si le modèle ne fait pas mieux, il faut le voir ;
-- l'erreur de durée ;
-- le taux de trajectoires générées acceptées par le guardian sur une grille émotion × intensité (× événement pour la tête) ;
-- un avertissement quand les données ne permettent pas de validation (moins de deux groupes).
+- the RMSE (rad) on dense trajectories in training and validation, overall and per joint;
+- a comparison **baseline**: the average of takes with the same emotion and a nearby intensity. If the model does no better, it should be visible;
+- the duration error;
+- the rate of generated trajectories accepted by the guardian over an emotion × intensity grid (× event for the head);
+- a warning when the data does not allow validation (fewer than two groups).
 
-Le découpage entraînement/validation se fait **par groupe** : une prise de bras et toutes les prises de tête enregistrées sur elle restent du même côté. Aucune variante d'une même prise ne peut fuiter.
-
----
-
-## Unités, axes et repères
-
-- **Angles** : radians. **Temps** : secondes. Noms d'articulations : ceux de NAOqi.
-- **Repère commun des événements** : `FRAME_TORSO` de NAOqi. x pointe vers l'avant, y vers la gauche du robot, z vers le haut.
-  - azimut = atan2(y, x), **positif vers la gauche** ;
-  - élévation = atan2(z, √(x²+y²)), **positive vers le haut**.
-- **Distance** (optionnelle) : en mètres, du torse à l'événement. Le modèle reçoit la proximité 1/(1+d), qui vaut 0,5 à 1 m et ne dépend d'aucune plage fixée à l'avance. Une distance inconnue est signalée explicitement, et non remplacée par une valeur arbitraire. Les plages de `robot.yaml` (`events`) ne servent qu'au tirage aléatoire et au champ de vision.
-- **Absence d'événement** : `present: false`, codée `[0, 0, 0, 0, 0, 0]`. Un azimut de 0 veut dire « devant » et se code `[1, 0, 1, 0, 0, 0]` si la distance est inconnue, ou `[1, 0, 1, 0, 1, 0.5]` à 1 m. Ces cas ne peuvent pas être confondus.
-- Un modèle de tête entraîné avant l'ajout de la distance (quatre entrées d'événement) est refusé au rechargement et doit être réentraîné. Le modèle des bras n'est pas concerné.
-- **Conversion depuis la caméra (repère tête)** : rotation `Rz(HeadYaw) · Ry(HeadPitch)` avec les angles de tête au moment de la mesure. La translation du cou est négligée, ce qui reste raisonnable au-delà d'environ 50 cm.
-- **Conventions NAOqi** : HeadYaw > 0 tourne la tête à gauche, HeadPitch > 0 la baisse. Regarder une élévation *e* correspond donc à peu près à HeadPitch = −*e*.
-- Les événements sont toujours stockés dans le repère commun, avec leur source et leur horodatage.
-
-## Format des données
-
-Chaque prise est stockée dans `data/takes/<take_id>/` :
-
-- `samples.npz` : `t` (N,) en s depuis le début de l'enregistrement, `q` (N, J) en rad **mesurés**, `joints` ; pour une prise de tête, aussi la consigne envoyée aux bras (`ref_t`, `ref_q`, `ref_joints`) sur la même horloge ;
-- `meta.json` : `take_id`, `session_id`, `kind` (`arms` | `head`), `emotion`, `intensity`, `intention` (optionnelle), `joints`, `unit`, `time_unit`, `guided_joints`, `driven_joints`, `event` (repère torse), `event_frame`, `segment`, `head_initial`, `arm_source` (`take` | `generated`), `arm_take_id` (démonstration rejouée), `arm_generation` (émotion, intensité, variation, graine, empreinte du modèle des bras), `arm_gesture_id` (groupe de découpage), `calibration_version`, `config_fingerprint`, `adapter`, `sample_rate_hz`, `synthetic`, `status` (`pending` | `accepted` | `rejected`), `annotations` (`notes`, `tags`), `created_at` et `format_version`.
-
-Les données sont refusées à l'enregistrement si une valeur n'est pas finie, si les horodatages ne sont pas strictement croissants, si l'émotion est inconnue, si l'intensité sort de [0, 1], si les unités ne sont pas celles attendues, si une articulation est à la fois guidée et pilotée, ou si une prise de tête n'a pas de prise de bras valide.
-
-Les checkpoints (`runs/<run>/model.pt`) contiennent l'architecture, les poids, les articulations, la liste d'émotions, la normalisation, la représentation, la version de calibration, l'empreinte de configuration, les prises d'entraînement et de validation, les hyperparamètres et les métriques. Pour la tête, ils contiennent aussi la référence et l'empreinte du modèle des bras. Au rechargement, un modèle est **refusé** si ses émotions ou ses articulations diffèrent de la configuration courante, et un avertissement est émis si la calibration a changé. `model_numpy.npz` permet une inférence sans PyTorch.
-
-L'emplacement de l'inférence se règle dans `configs/robot.yaml` → `inference` : `location: local | remote`, `backend: torch | numpy`, `remote_url`. Une trajectoire calculée à distance est toujours revalidée localement par le guardian.
+The training/validation split is done **by group**: an arm take and all head takes recorded on it stay on the same side. No variant of a given take can leak.
 
 ---
 
-## Guardian et exécution
+## Units, axes and frames
 
-Le modèle **propose**, le contrôleur **encadre**.
+- **Angles**: radians. **Time**: seconds. Joint names: those of NAOqi.
+- **Common event frame**: NAOqi `FRAME_TORSO`. x points forward, y to the robot's left, z up.
+  - azimuth = atan2(y, x), **positive to the left**;
+  - elevation = atan2(z, √(x²+y²)), **positive upward**.
+- **Distance** (optional): in metres, from the torso to the event. The model receives the proximity 1/(1+d), which is 0.5 at 1 m and does not depend on any range fixed in advance. An unknown distance is flagged explicitly, not replaced by an arbitrary value. The ranges in `robot.yaml` (`events`) are only used for the random draw and the field of view.
+- **No event**: `present: false`, encoded `[0, 0, 0, 0, 0, 0]`. An azimuth of 0 means “straight ahead” and is encoded `[1, 0, 1, 0, 0, 0]` if the distance is unknown, or `[1, 0, 1, 0, 1, 0.5]` at 1 m. These cases cannot be confused.
+- A head model trained before distance was added (four event inputs) is rejected on reload and must be retrained. The arm model is not affected.
+- **Conversion from the camera (head frame)**: rotation `Rz(HeadYaw) · Ry(HeadPitch)` with the head angles at measurement time. The neck translation is neglected, which remains reasonable beyond about 50 cm.
+- **NAOqi conventions**: HeadYaw > 0 turns the head left, HeadPitch > 0 lowers it. Looking at an elevation *e* therefore corresponds roughly to HeadPitch = −*e*.
+- Events are always stored in the common frame, with their source and timestamp.
 
-- **Limites du guardian** : elles viennent uniquement d'une **calibration** mesurée sur le robot (section suivante). Les valeurs de `joints.yaml` et `poses.yaml` ne servent qu'à la simulation.
-- **Guardian** (`nao_motion/guardian`) : il accepte ou refuse, sans jamais corriger. Il refuse les formats invalides, les valeurs non finies, les articulations inconnues ou celles des jambes, les jeux d'articulations incompatibles et les durées hors bornes. Il vérifie les **limites min/max avec marge** et les **contraintes couplées** linéaires (`guardian.yaml`, y compris tête ↔ bras) sur le **trajet complet** échantillonné à 100 Hz, et pas seulement aux extrémités. Il limite la **vitesse** et l'**accélération** par articulation et contrôle l'écart entre le premier point et l'état mesuré. En cas de dépassement de vitesse, il indique le ralentissement qui suffirait, sans l'appliquer.
-- Des min/max indépendants et quelques contraintes linéaires **ne garantissent pas l'absence de collision**. Les contraintes fournies sont des exemples, à remplacer par des zones mesurées sur votre robot.
-- **Cycle nominal** construit par le contrôleur, non appris : repos → départ → geste → départ → repos. Les transitions repos ↔ départ ont un jerk minimal. Les transitions départ ↔ geste sont quintiques et raccordées en vitesse et en accélération. Le **cycle entier** est validé avant le premier envoi, puis revalidé contre l'état mesuré juste avant l'exécution. Il est refusé si le robot n'est pas mesuré au repos (sauf choix explicite `from_pose="current"`).
-- **Exécution en streaming** (setAngles à 25 Hz). À chaque pas, le contrôleur vérifie l'arrêt demandé, la connexion (battement) et l'écart de suivi entre consigne et mesure.
-- **Rôles articulaires** : une articulation est *guidée* (raideur nulle, uniquement lue), *pilotée* (raide, commandée) ou laissée telle quelle. Une commande vers une articulation guidée est refusée avant d'atteindre le robot : on ne suppose jamais qu'un axe relâché suit une consigne.
-- **Arrêt et erreurs** :
-  - *ARRÊT* : l'exécution s'interrompt, la posture **mesurée** est maintenue et le contrôleur est désarmé.
-  - *Erreur pendant l'exécution* : le contrôleur tente de maintenir la posture, passe en `FAULT` et attend que l'opérateur acquitte.
-  - *Perte de connexion* : plus rien ne peut être envoyé depuis le PC. Le **chien de garde du pont**, côté robot, arrête alors les tâches et maintient la posture si aucun battement n'arrive pendant 0,6 s ou si le client se déconnecte.
-  - Il n'y a **jamais** de retour motorisé automatique au repos ni de relâchement automatique. *Retour au repos* et *Relâcher* sont des actions explicites, parce que la bonne réaction dépend de l'état réel du robot.
-- **Aucun mouvement automatique** au démarrage, pendant les tests ou à la fin d'un entraînement. Le contrôleur démarre désarmé, et chaque mouvement exige l'armement puis une action explicite. Plusieurs tests le vérifient.
-- **Robot réel** : l'armement est refusé sans calibration active, ou si le robot connecté ne porte pas le nom de la calibration ou du `.env`.
-- **Redémarrages observés pendant certains mouvements** : leur cause n'est pas établie ici. Le guardian **ne les corrige pas** et ne doit pas être présenté comme une protection contre eux. Pour les étudier, il faudrait journaliser les mouvements concernés (trajectoire, vitesses, températures et courant si disponibles) et comparer.
+## Data format
+
+Each take is stored in `data/takes/<take_id>/`:
+
+- `samples.npz`: `t` (N,) in s since the start of recording, `q` (N, J) in **measured** rad, `joints`; for a head take, also the command sent to the arms (`ref_t`, `ref_q`, `ref_joints`) on the same clock;
+- `meta.json`: `take_id`, `session_id`, `kind` (`arms` | `head`), `emotion`, `intensity`, `intention` (optional), `joints`, `unit`, `time_unit`, `guided_joints`, `driven_joints`, `event` (torso frame), `event_frame`, `segment`, `head_initial`, `arm_source` (`take` | `generated`), `arm_take_id` (replayed demonstration), `arm_generation` (emotion, intensity, variation, seed, arm model fingerprint), `arm_gesture_id` (split group), `calibration_version`, `config_fingerprint`, `adapter`, `sample_rate_hz`, `synthetic`, `status` (`pending` | `accepted` | `rejected`), `annotations` (`notes`, `tags`), `created_at` and `format_version`.
+
+Data is rejected at save time if a value is not finite, if timestamps are not strictly increasing, if the emotion is unknown, if the intensity is outside [0, 1], if the units are not the expected ones, if a joint is both guided and driven, or if a head take has no valid arm take.
+
+Checkpoints (`runs/<run>/model.pt`) contain the architecture, weights, joints, emotion list, normalisation, representation, calibration version, configuration fingerprint, training and validation takes, hyperparameters and metrics. For the head, they also contain the reference and fingerprint of the arm model. On reload, a model is **rejected** if its emotions or joints differ from the current configuration, and a warning is issued if the calibration has changed. `model_numpy.npz` allows inference without PyTorch.
+
+Where inference runs is set in `configs/robot.yaml` → `inference`: `location: local | remote`, `backend: torch | numpy`, `remote_url`. A trajectory computed remotely is always revalidated locally by the guardian.
 
 ---
 
-## Calibration du guardian
+## Guardian and execution
 
-La calibration est une procédure à part entière, faite robot par robot. Son résultat est un fichier versionné, `configs/calibration/<robot>-<date>.yaml`. Le fichier actif est désigné par `configs/calibration/ACTIVE`, et une calibration n'est jamais écrasée.
+The model **proposes**, the controller **supervises**.
 
-Elle se conduit dans l'**onglet Calibration** de l'interface (`nao-motion ui`), ou au terminal avec `nao-motion calibrate`. Les deux utilisent la même procédure et le même calcul.
+- **Guardian limits**: they come only from a **calibration** measured on the robot (next section). The values in `joints.yaml` and `poses.yaml` are only used for simulation.
+- **Guardian** (`nao_motion/guardian`): it accepts or rejects, never corrects. It rejects invalid formats, non-finite values, unknown joints or leg joints, incompatible joint sets and out-of-range durations. It checks **min/max limits with margin** and linear **coupled constraints** (`guardian.yaml`, including head ↔ arms) along the **full path** sampled at 100 Hz, not just at the endpoints. It limits **velocity** and **acceleration** per joint and checks the gap between the first point and the measured state. When velocity is exceeded, it reports the slowdown that would suffice, without applying it.
+- Independent min/max limits and a few linear constraints **do not guarantee the absence of collisions**. The supplied constraints are examples, to be replaced by zones measured on your robot.
+- **Nominal cycle** built by the controller, not learned: rest → start → gesture → start → rest. The rest ↔ start transitions are minimum-jerk. The start ↔ gesture transitions are quintic and matched in velocity and acceleration. The **entire cycle** is validated before the first command is sent, then revalidated against the measured state just before execution. It is rejected if the robot is not measured at rest (unless `from_pose="current"` is explicitly chosen).
+- **Streaming execution** (setAngles at 25 Hz). At each step, the controller checks for a stop request, the connection (heartbeat) and the tracking error between command and measurement.
+- **Joint roles**: a joint is *guided* (zero stiffness, read only), *driven* (stiff, commanded) or left as is. A command to a guided joint is rejected before reaching the robot: a released axis is never assumed to follow a command.
+- **Stop and errors**:
+  - *ARRÊT* (stop): execution is interrupted, the **measured** posture is held and the controller is disarmed.
+  - *Error during execution*: the controller tries to hold the posture, goes into `FAULT` and waits for the operator to acknowledge.
+  - *Connection loss*: nothing more can be sent from the PC. The **bridge watchdog**, on the robot side, then stops tasks and holds the posture if no heartbeat arrives for 0.6 s or if the client disconnects.
+  - There is **never** an automatic motorised return to rest nor an automatic release. *Retour au repos* (return to rest) and *Relâcher* (release) are explicit actions, because the right reaction depends on the actual state of the robot.
+- **No automatic movement** at startup, during tests or at the end of training. The controller starts disarmed, and every movement requires arming followed by an explicit action. Several tests check this.
+- **Real robot**: arming is refused without an active calibration, or if the connected robot does not carry the name from the calibration or from `.env`.
+- **Reboots observed during some movements**: their cause is not established here. The guardian **does not fix them** and must not be presented as a protection against them. To study them, the movements involved should be logged (trajectory, velocities, temperatures and current if available) and compared.
+
+---
+
+## Guardian calibration
+
+Calibration is a procedure in its own right, done robot by robot. Its result is a versioned file, `configs/calibration/<robot>-<date>.yaml`. The active file is designated by `configs/calibration/ACTIVE`, and a calibration is never overwritten.
+
+It is run from the **Calibration tab** of the interface (`nao-motion ui`), or in the terminal with `nao-motion calibrate`. Both use the same procedure and the same computation.
 
 ```bash
-nao-motion ui                   # onglet Robot : connecter le robot, puis onglet Calibration
-nao-motion calibrate            # la même procédure au terminal, via le pont ; rien n'est commandé
+nao-motion ui                   # Robot tab: connect the robot, then Calibration tab
+nao-motion calibrate            # the same procedure in the terminal, via the bridge; nothing is commanded
 ```
 
-Dans l'onglet Calibration, on choisit un groupe et on avance étape par étape, dans l'ordre qu'on veut. Le tableau affiche en direct les angles mesurés et les min/max qui s'élargissent pendant l'exploration, ainsi que les poses capturées. Pour chaque couple, un nuage de points avec son enveloppe convexe montre les zones pas encore explorées. Les boutons ne s'activent que lorsque l'étape est possible : le calcul attend que tous les groupes soient explorés et toutes les poses capturées, l'activation attend l'enregistrement. Ouvrir une calibration désarme le contrôleur, et la collecte, l'exécution et l'armement sont refusés tant qu'elle reste ouverte. Fermer ne remet rien au repos. En simulation, un démonstrateur synthétique fait l'exploration, et une calibration simulée ne peut pas être activée.
+In the Calibration tab, you choose a group and proceed step by step, in any order. The table shows, live, the measured angles and the min/max widening during exploration, as well as the captured poses. For each joint pair, a scatter plot with its convex hull shows the areas not yet explored. Buttons are enabled only when the step is possible: computation waits until all groups are explored and all poses captured, activation waits for saving. Opening a calibration disarms the controller, and collection, execution and arming are refused while it remains open. Closing does not return anything to rest. In simulation, a synthetic demonstrator does the exploration, and a simulated calibration cannot be activated.
 
-1. **Identification** : nom du robot, version de NAOqi, configuration matérielle, et limites d'usine lues par `ALMotion.getLimits`.
-2. **Exploration guidée**, groupe par groupe (bras gauche, bras droit, tête). Le groupe exploré est relâché et seulement lu, les autres sont raidis sur place. Amenez lentement chaque articulation jusqu'à ses butées *utiles*, et parcourez les combinaisons (tête tournée **et** baissée, épaule levée **et** écartée, etc.).
-3. **Poses** de repos et de départ, capturées pour chaque groupe en plaçant le robot à la main (moyenne de 5 lectures).
-4. **Calcul** : les limites sont l'amplitude mesurée, intersectée avec les limites d'usine, moins une marge (`configs/calibration.yaml`). Les **contraintes couplées** viennent de l'enveloppe convexe de chaque couple exploré (`pairs`), simplifiée de façon conservatrice. La procédure est refusée si l'exploration est trop courte ou trop étroite, ou si une pose sort de l'enveloppe.
-5. **Relecture** du résumé, puis enregistrement et activation (bouton de l'onglet, ou `nao-motion calibration-activate`). Depuis l'interface, l'activation recharge la configuration sans redémarrer, et le contrôleur reste désarmé.
+1. **Identification**: robot name, NAOqi version, hardware configuration, and factory limits read by `ALMotion.getLimits`.
+2. **Guided exploration**, group by group (left arm, right arm, head). The group being explored is released and only read; the others are stiffened in place. Slowly bring each joint to its *useful* end stops, and go through the combinations (head turned **and** lowered, shoulder raised **and** spread, etc.).
+3. **Rest and start poses**, captured for each group by placing the robot by hand (average of 5 readings).
+4. **Computation**: the limits are the measured range, intersected with the factory limits, minus a margin (`configs/calibration.yaml`). The **coupled constraints** come from the convex hull of each explored pair (`pairs`), simplified conservatively. The procedure is rejected if the exploration is too short or too narrow, or if a pose falls outside the hull.
+5. **Review** of the summary, then save and activate (tab button, or `nao-motion calibration-activate`). From the interface, activation reloads the configuration without restarting, and the controller stays disarmed.
 
-Une calibration active remplace limites, poses et version de calibration dans toute la chaîne (guardian, prises, checkpoints). Les contraintes manuelles de `guardian.yaml` s'y ajoutent, notamment entre membres (bras ↔ tête, bras ↔ bras), qu'une exploration articulation par articulation ne mesure pas. L'enveloppe convexe suppose une zone atteignable convexe pour chaque couple ; une zone en L doit être découpée à la main.
+An active calibration replaces limits, poses and calibration version throughout the pipeline (guardian, takes, checkpoints). The manual constraints in `guardian.yaml` are added to it, in particular between limbs (arms ↔ head, arm ↔ arm), which a joint-by-joint exploration does not measure. The convex hull assumes a convex reachable region for each pair; an L-shaped region must be split by hand.
 
-## Guardian autonome (export pour un autre projet)
+## Standalone guardian (export for another project)
 
-Le guardian peut être exporté en deux fichiers, pour servir de sécurité à un autre projet (par exemple le pont NAOqi d'ia-agent, en Python 2.7) sans dépendre de ce dépôt :
+The guardian can be exported as two files, to act as a safety layer for another project (for example the NAOqi bridge of ia-agent, in Python 2.7) without depending on this repository:
 
 ```bash
 nao-motion export-guardian --out guardian_export
-#   guardian_export/guardian.json    limites, vitesses, contraintes couplées, poses (calibration active)
-#   guardian_export/nao_guardian.py  vérificateur Python 2.7 / 3, bibliothèque standard seulement
+#   guardian_export/guardian.json    limits, velocities, coupled constraints, poses (active calibration)
+#   guardian_export/nao_guardian.py  Python 2.7 / 3 checker, standard library only
 ```
 
-L'export est **refusé sans calibration active** : les limites de remplacement ne sont pas celles du robot. `--allow-uncalibrated` force un export de test, que le vérificateur refuse ensuite de charger sans `allow_uncalibrated=True`.
+The export is **refused without an active calibration**: the fallback limits are not those of the robot. `--allow-uncalibrated` forces a test export, which the checker then refuses to load without `allow_uncalibrated=True`.
 
-`guardian.json` (`kind: nao_motion.guardian_export`, `schema_version: 1`, angles en radians, temps en secondes) contient : la source (version de calibration, robot, empreinte de la configuration), les groupes, les limites par articulation et la marge, les vitesses maximales (défaut et par articulation), l'accélération maximale, la fréquence de vérification, la plage de durée, la tolérance de départ, les contraintes couplées `somme(coef × angle) ≤ borne` (origine `calibration` ou `manual`), et les poses de repos et de départ. Les jambes sont refusées.
+`guardian.json` (`kind: nao_motion.guardian_export`, `schema_version: 1`, angles in radians, time in seconds) contains: the source (calibration version, robot, configuration fingerprint), the groups, per-joint limits and the margin, maximum velocities (default and per joint), maximum acceleration, check frequency, duration range, start tolerance, coupled constraints `sum(coef × angle) ≤ bound` (origin `calibration` or `manual`), and the rest and start poses. Legs are rejected.
 
 ```python
 from nao_guardian import Guardian
 g = Guardian.load("guardian.json")
-rep = g.check_pose({"HeadYaw": 0.3, "HeadPitch": -0.1})                 # une posture cible
-rep = g.check_move(posture_mesuree, cible, 1.5)                         # déplacement linéaire en 1,5 s
-d = g.min_duration(posture_mesuree, cible)                              # durée minimale admise
-rep = g.check_trajectory(t, joints, q, start_state=posture_mesuree)     # trajectoire complète
+rep = g.check_pose({"HeadYaw": 0.3, "HeadPitch": -0.1})                 # a target posture
+rep = g.check_move(measured_posture, target, 1.5)                       # linear move in 1.5 s
+d = g.min_duration(measured_posture, target)                            # minimum allowed duration
+rep = g.check_trajectory(t, joints, q, start_state=measured_posture)    # full trajectory
 if not rep.ok:
-    print(rep.summary())     # rep.violations : code, articulation, instant, valeur, limite
+    print(rep.summary())     # rep.violations: code, joint, time, value, limit
 ```
 
-En ligne de commande : `python nao_guardian.py guardian.json geste.json` affiche le verdict et rend 0 (accepté), 1 (refusé) ou 2 (erreur d'usage). Le fichier du geste est au format de `nao-motion generate` (`{"joints", "t", "q"}`, éventuellement dans `{"trajectory": ...}`).
+On the command line: `python nao_guardian.py guardian.json gesture.json` prints the verdict and returns 0 (accepted), 1 (rejected) or 2 (usage error). The gesture file uses the `nao-motion generate` format (`{"joints", "t", "q"}`, optionally inside `{"trajectory": ...}`).
 
-Le vérificateur donne les mêmes verdicts que le guardian du projet (comparaison sur des trajectoires aléatoires dans les tests). Il ne fait que juger : il ne modifie ni ne ralentit aucun mouvement, et ne commande rien. La compatibilité Python 2.7 est contrôlée statiquement (syntaxe et imports) ; elle n'a pas encore été exécutée sur le Python 2.7.3 du robot. Après une nouvelle calibration, refaire l'export.
+The checker gives the same verdicts as the project's guardian (compared on random trajectories in the tests). It only judges: it neither modifies nor slows down any movement, and commands nothing. Python 2.7 compatibility is checked statically (syntax and imports); it has not yet been run on the robot's Python 2.7.3. After a new calibration, redo the export.
 
-## Connecter le robot réel
+## Connecting the real robot
 
-Identité relevée sur le NAO de Joachim (dans `.env.example`) : **naoH25, tête/corps/bras VERSION_40 (NAO V4), NAOqi 2.1.4.13, Python 2.7.3, nom « nao »**. Pour la relever ou la vérifier sur un autre robot, en SSH (`ssh nao@<IP>`) :
+Identity recorded on Joachim's NAO (in `.env.example`): **naoH25, head/body/arms VERSION_40 (NAO V4), NAOqi 2.1.4.13, Python 2.7.3, name “nao”**. To record or check it on another robot, over SSH (`ssh nao@<IP>`):
 
 ```bash
-qicli call ALSystem.systemVersion        # version NAOqi
-qicli call ALSystem.robotName            # nom (lié à la calibration)
-qicli call ALMotion.getRobotConfig       # modèle et versions tête/corps/bras
-qicli call ALMotion.getLimits HeadPitch  # [min, max, vitesse max, couple max], par articulation
-python --version                         # Python embarqué
+qicli call ALSystem.systemVersion        # NAOqi version
+qicli call ALSystem.robotName            # name (tied to the calibration)
+qicli call ALMotion.getRobotConfig       # model and head/body/arm versions
+qicli call ALMotion.getLimits HeadPitch  # [min, max, max velocity, max torque], per joint
+python --version                         # embedded Python
 ```
 
-Étapes :
+Steps:
 
-1. `cp .env.example .env` (non versionné) : identité attendue du robot, port du pont. Ces valeurs remplacent celles de `configs/robot.yaml`.
-2. **Installer le SDK Python NAOqi 2.1.4** (Python 2.7) sur la machine qui fera tourner le pont, ou lancer le pont directement sur le robot, qui a Python 2.7.3. Le pont essaie `import qi`, puis `from naoqi import ALProxy`.
-3. **Préparer la position du robot.** Les jambes restent hors périmètre et ne sont jamais commandées. Placez le robot dans une posture stable, par exemple assis ou accroupi. Gérez la vie autonome, la respiration et les mouvements d'attente depuis vos outils habituels : le pont n'y touche pas, car les désactiver peut faire bouger le robot selon les versions.
-4. **Lancer le pont**, qui n'envoie aucun mouvement au démarrage et attend l'adresse du robot :
+1. `cp .env.example .env` (not versioned): expected robot identity, bridge port. These values override those in `configs/robot.yaml`.
+2. **Install the NAOqi 2.1.4 Python SDK** (Python 2.7) on the machine that will run the bridge, or run the bridge directly on the robot, which has Python 2.7.3. The bridge tries `import qi`, then `from naoqi import ALProxy`.
+3. **Prepare the robot's position.** The legs stay out of scope and are never commanded. Put the robot in a stable posture, for example sitting or crouching. Handle autonomous life, breathing and idle movements from your usual tools: the bridge does not touch them, because disabling them can make the robot move depending on the version.
+4. **Start the bridge**, which sends no movement at startup and waits for the robot address:
    ```bash
-   python2 bridge/naoqi_bridge.py            # adresse fournie ensuite par l'interface
-   python2 bridge/naoqi_bridge.py --robot-ip nao.local   # ou dès le lancement
+   python2 bridge/naoqi_bridge.py            # address supplied later by the interface
+   python2 bridge/naoqi_bridge.py --robot-ip nao.local   # or right at launch
    ```
-   Pour tester le protocole sans robot : `python bridge/naoqi_bridge.py --fake`. Le pont n'accepte qu'un client à la fois (interface **ou** commande).
-   Puis, dans `nao-motion ui --adapter bridge` → onglet **Robot**, saisir l'**adresse du robot (IP ou nom DNS)**, par exemple `192.168.1.10` ou `nao.local`, et cliquer sur *Connecter au robot*. Cette action n'envoie aucun mouvement et ne change aucune raideur. L'adresse est mémorisée dans le navigateur. En ligne de commande, `--robot <IP ou DNS>` joue le même rôle, avec `NAO_IP` comme valeur par défaut.
-5. `nao-motion robot-info --robot <IP ou DNS>` : vérifie la connexion et affiche identité, limites d'usine et posture mesurée, sans aucun mouvement.
-6. `nao-motion calibrate` (section précédente), puis `nao-motion check-config`.
-7. Ajuster vitesses, accélérations, raideurs (`robot.yaml` → `stiffness`) et contraintes manuelles entre membres (`guardian.yaml`).
-8. `nao-motion ui --adapter bridge`. Faites un premier essai avec des gestes lents, une main près du bouton ARRÊT, et un robot dans une posture où un relâchement ne le ferait pas tomber.
+   To test the protocol without a robot: `python bridge/naoqi_bridge.py --fake`. The bridge accepts only one client at a time (interface **or** command).
+   Then, in `nao-motion ui --adapter bridge` → **Robot** tab, enter the **robot address (IP or DNS name)**, for example `192.168.1.10` or `nao.local`, and click *Connecter au robot* (connect to robot). This action sends no movement and changes no stiffness. The address is remembered in the browser. On the command line, `--robot <IP or DNS>` plays the same role, with `NAO_IP` as the default.
+5. `nao-motion robot-info --robot <IP or DNS>`: checks the connection and shows identity, factory limits and measured posture, without any movement.
+6. `nao-motion calibrate` (previous section), then `nao-motion check-config`.
+7. Adjust velocities, accelerations, stiffness (`robot.yaml` → `stiffness`) and manual constraints between limbs (`guardian.yaml`).
+8. `nao-motion ui --adapter bridge`. Make a first attempt with slow gestures, a hand near the ARRÊT (stop) button, and the robot in a posture where a release would not make it fall.
 
-Points à vérifier sur NAOqi 2.1.4, que ce dépôt ne présume pas : le comportement de `setAngles` / `killTasksUsingResources` en maintien, la raideur minimale qui permet un guidage confortable, et la latence réelle du streaming à 25 Hz.
+Things to check on NAOqi 2.1.4 that this repository does not assume: the behaviour of `setAngles` / `killTasksUsingResources` when holding, the minimum stiffness that allows comfortable guiding, and the actual latency of 25 Hz streaming.
 
 ---
 
-## Émotions et intentions
+## Emotions and intentions
 
-`configs/emotions.yaml` propose une liste **courte et modifiable** : joie, tristesse, colère, peur, surprise, calme. Ce ne sont pas des catégories scientifiques figées, juste des étiquettes de travail. Les **intentions** (accueillir, refuser, saluer, montrer) sont séparées des émotions : on peut accueillir avec joie ou avec calme. Elles sont enregistrées comme annotation des prises mais ne conditionnent pas encore les modèles. Modifier la liste d'émotions rend les anciens checkpoints incompatibles, et ils sont refusés explicitement.
+`configs/emotions.yaml` provides a **short, editable** list: `joie` (joy), `tristesse` (sadness), `colere` (anger), `peur` (fear), `surprise`, `calme` (calm). These are not fixed scientific categories, just working labels. **Intentions** (`accueillir` welcome, `refuser` refuse, `saluer` greet, `montrer` show) are separate from emotions: you can welcome with joy or with calm. They are recorded as take annotations but do not condition the models yet. Changing the emotion list makes old checkpoints incompatible, and they are explicitly rejected.
 
-## Limites connues de ce socle
+## Known limitations of this foundation
 
-- Les données et les démonstrateurs sont synthétiques. Aucune mesure d'expressivité réelle.
-- Le pont NAOqi et l'adaptateur `bridge` sont testés uniquement contre un backend factice.
-- L'alignement temporel est linéaire (pas de DTW). Les variantes ne sont pas encore apprises.
-- Les contraintes de collision sont linéaires et indicatives. Pas de modèle géométrique du robot.
+- The data and demonstrators are synthetic. No real expressiveness measurement.
+- The NAOqi bridge and the `bridge` adapter are tested only against a fake backend.
+- Temporal alignment is linear (no DTW). Variants are not learned yet.
+- Collision constraints are linear and indicative. No geometric model of the robot.
