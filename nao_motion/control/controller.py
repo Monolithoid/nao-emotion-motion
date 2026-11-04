@@ -141,6 +141,36 @@ class Controller:
         g = self.cfg.guardian
         return min_jerk(q0, q1, joints, g.transition_velocity_rad_s, g.max_acceleration_rad_s2 * 0.5)
 
+    def _rest_transition(self, q0, q1, joints):
+        g = self.cfg.guardian
+        return min_jerk(q0, q1, joints, g.rest_velocity_rad_s * 0.8, g.max_acceleration_rad_s2 * 0.25)
+
+    def _validate_segments(self, segs, rest_names, start_state, ctx) -> Report:
+        """Segments repos <-> départ : validate_rest_transition (le repos peut être hors
+        de la zone de mouvement) ; tout le reste : validation complète sur le trajet
+        continu qu'ils forment."""
+        t, reports, main, main_t0 = 0.0, [], [], None
+        for name, s in segs:
+            if name in rest_names:
+                reports.append(self.guardian.validate_rest_transition(
+                    s, start_state=start_state if t == 0 else None, time_offset=t))
+            else:
+                main_t0 = t if main_t0 is None else main_t0
+                main.append(s)
+            t += s.duration
+        if main:
+            r = self.guardian.validate(Trajectory.concat(main), check_duration=False, context_pose=ctx,
+                                       start_state=start_state if main_t0 == 0 else None)
+            for x in r.violations:
+                if x.time_s is not None:
+                    x.time_s += main_t0
+            reports.insert(0, r)
+        rep = reports[0]
+        for r in reports[1:]:
+            rep.ok = rep.ok and r.ok
+            rep.violations += r.violations
+        return rep
+
     # -- planification -----------------------------------------------------
     def plan_cycle(self, motion: Trajectory, from_pose: str = "rest", to_pose: str = "rest",
                    current: Optional[Dict[str, float]] = None) -> Plan:
@@ -170,12 +200,16 @@ class Controller:
         v1, a1 = boundary_derivatives(motion, at_end=True)
         z = np.zeros(len(joints))
         vlim, alim = g.max_velocity_rad_s * 0.8, g.max_acceleration_rad_s2 * 0.8
-        segs = [("vers_depart", self._transition(q_cur, start, joints)),
-                ("depart_vers_geste", quintic_matched(start, z, z, motion.q[0], v0, a0, joints, vlim, alim)),
-                ("geste", motion),
-                ("geste_vers_depart", quintic_matched(motion.q[-1], v1, a1, start, z, z, joints, vlim, alim))]
+        if from_pose == "rest":
+            # le repos peut être hors zone (contact) : segment vérifié à part
+            segs = [("repos_vers_depart", self._rest_transition(q_cur, start, joints))]
+        else:
+            segs = [("vers_depart", self._transition(q_cur, start, joints))]
+        segs += [("depart_vers_geste", quintic_matched(start, z, z, motion.q[0], v0, a0, joints, vlim, alim)),
+                 ("geste", motion),
+                 ("geste_vers_depart", quintic_matched(motion.q[-1], v1, a1, start, z, z, joints, vlim, alim))]
         if to_pose == "rest":
-            segs.append(("depart_vers_repos", self._transition(start, rest, joints)))
+            segs.append(("depart_vers_repos", self._rest_transition(start, rest, joints)))
         segments, t = [], 0.0
         for name, s in segs:
             segments.append((name, round(t, 4), round(t + s.duration, 4)))
@@ -184,7 +218,9 @@ class Controller:
         others = [j for j in self.cfg.all_joints if j not in joints]
         ctx = self.measured(others) if others and current is None else {}
         motion_report = self.guardian.validate(motion, context_pose=ctx)
-        rep = self.guardian.validate(full, start_state=cur, check_duration=False, context_pose=ctx)
+        rep = self._validate_segments(segs, {"repos_vers_depart", "depart_vers_repos"}, cur, ctx)
+        notes.append("Segments repos <-> départ : limites d'usine et vitesse réduite seulement (le repos peut être "
+                     "hors zone) ; leur absence de heurt relève de la calibration.")
         if not motion_report.ok:
             rep.ok = False
             rep.violations = motion_report.violations + rep.violations
@@ -197,9 +233,15 @@ class Controller:
         q = np.array([cur[j] for j in joints])
         start = np.array(self.cfg.pose("start", joints))
         rest = np.array(self.cfg.pose("rest", joints))
-        full = Trajectory.concat([self._transition(q, start, joints), self._transition(start, rest, joints)])
-        rep = self.guardian.validate(full, start_state=cur, check_duration=False)
-        return Plan(full, [("vers_depart", 0, None), ("vers_repos", None, full.duration)], rep)
+        segs = [("vers_depart", self._transition(q, start, joints)),
+                ("depart_vers_repos", self._rest_transition(start, rest, joints))]
+        full = Trajectory.concat([s for _, s in segs])
+        rep = self._validate_segments(segs, {"depart_vers_repos"}, cur, {})
+        segments, t = [], 0.0
+        for name, s in segs:
+            segments.append((name, round(t, 4), round(t + s.duration, 4)))
+            t += s.duration
+        return Plan(full, segments, rep)
 
     # -- exécution -----------------------------------------------------------
     def execute(self, plan: Plan, on_tick: Optional[Callable[[float, np.ndarray], None]] = None) -> str:

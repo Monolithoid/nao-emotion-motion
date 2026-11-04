@@ -38,7 +38,7 @@ def test_full_cycle_returns_to_rest(wb, cfg):
     wb.ctrl.arm(confirm=True)
     plan = wb.ctrl.plan_cycle(gesture(cfg))
     names = [s[0] for s in plan.segments]
-    assert names == ["vers_depart", "depart_vers_geste", "geste", "geste_vers_depart", "depart_vers_repos"]
+    assert names == ["repos_vers_depart", "depart_vers_geste", "geste", "geste_vers_depart", "depart_vers_repos"]
     assert wb.ctrl.execute(plan) == "done"
     q = wb.adapter.read_angles(cfg.all_joints)
     assert np.abs(q - np.array(cfg.pose("rest", cfg.all_joints))).max() < 0.05
@@ -150,3 +150,38 @@ def test_refused_plan_is_never_executed(wb, cfg):
     with pytest.raises(GuardianRejection):
         wb.ctrl.execute(plan)
     assert wb.adapter.command_log == []
+
+
+def test_rest_outside_motion_zone_is_allowed(tmp_path):
+    """Repos hors zone de mouvement (bras posés sur les genoux : contact). Seuls les
+    segments repos <-> départ le quittent, vérifiés sur les limites d'usine et la
+    vitesse réduite ; le geste reste soumis au guardian complet."""
+    import copy
+    from nao_motion.config import load_config
+    from .conftest import make_wb
+    cfg = copy.deepcopy(load_config())
+    j = "LShoulderPitch"
+    lo, hi = cfg.limits[j]
+    cfg.rest_limits[j] = (lo, hi + 0.4)           # « usine » plus large que la zone calibrée
+    cfg.poses["rest"]["left_arm"][j] = hi + 0.2   # repos hors zone, dans l'usine
+    wb = make_wb(tmp_path, cfg)
+    wb.adapter.q[j] = wb.adapter.target[j] = hi + 0.2
+    plan = wb.ctrl.plan_cycle(gesture(cfg))
+    assert plan.report.ok, plan.report.to_dict()
+    assert [s[0] for s in plan.segments][0] == "repos_vers_depart"
+    # segment repos <-> départ trop rapide : refusé
+    cfg.guardian.rest_velocity_rad_s = 0.01
+    rep = wb.ctrl.guardian.validate_rest_transition(wb.ctrl._transition(
+        np.array(cfg.pose("rest", cfg.all_joints)), np.array(cfg.pose("start", cfg.all_joints)), cfg.all_joints))
+    assert not rep.ok and any(v.code == "rest_velocity" for v in rep.violations)
+    cfg.guardian.rest_velocity_rad_s = 0.3
+    # repos au-delà des limites d'usine : refusé
+    cfg.poses["rest"]["left_arm"][j] = hi + 0.5
+    wb.adapter.q[j] = wb.adapter.target[j] = hi + 0.5
+    plan = wb.ctrl.plan_cycle(gesture(cfg))
+    assert not plan.report.ok and any(v.code == "rest_limit" for v in plan.report.violations)
+    # le geste lui-même reste vérifié par le guardian complet
+    cfg.poses["rest"]["left_arm"][j] = hi + 0.2
+    wb.adapter.q[j] = wb.adapter.target[j] = hi + 0.2
+    plan = wb.ctrl.plan_cycle(gesture(cfg, amp=1.5))
+    assert not plan.report.ok and any(v.code == "limit" for v in plan.report.violations)

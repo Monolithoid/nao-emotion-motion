@@ -173,7 +173,9 @@
             <div class="row"><button id="c-sweep" class="ok">Démarrer l'exploration</button>
               <button id="c-sweep-stop">Terminer l'exploration</button><span id="c-sweep-n" class="hint"></span></div></li>
           <li><div class="what">2. Pose de repos</div>
-            <div class="hint">Relâcher, placer le groupe à la main en position de repos, capturer (moyenne de 5 lectures), raidir sur place.</div>
+            <div class="hint">Relâcher, placer le groupe à la main en position de repos, capturer (moyenne de 5 lectures), raidir sur place.
+            Le repos peut être hors de la zone de mouvement (bras posés sur les genoux) : il n'est borné que par les limites d'usine.
+            <b>Vérifier que la pose de départ est accessible sans heurt depuis le repos</b> : ce trajet direct n'est contrôlé que sur les limites d'usine et la vitesse.</div>
             <div class="row"><button data-cal="release">Relâcher le groupe</button>
               <button data-cal="capture" data-pose="rest" class="ok">Capturer le repos</button>
               <button data-cal="hold">Raidir sur place</button></div></li>
@@ -199,7 +201,7 @@
         <table id="c-table"></table>
         <h3>Couples explorés</h3>
         <p class="hint">Chaque point est une mesure ; le contour est l'enveloppe convexe d'où viennent les
-        contraintes couplées (marge retirée au calcul). Le cadre pointillé : limites de remplacement.</p>
+        contraintes couplées (marge retirée au calcul). Le cadre pointillé : limites d'usine lues sur le robot (ALMotion.getLimits), ou limites de remplacement si elles n'ont pas pu être lues (simulation).</p>
         <div id="c-pairs" class="cal-pairs"></div>
       </div>
     </div>

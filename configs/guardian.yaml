@@ -11,6 +11,11 @@ min_duration_s: 0.3
 max_duration_s: 15.0
 start_tolerance_rad: 0.05       # écart toléré entre l'état mesuré et le début d'un segment
 transition_velocity_rad_s: 0.5  # vitesse max des transitions repos <-> départ <-> geste
+# Le repos peut être hors de la zone de mouvement calibrée (bras posés sur les genoux :
+# contact). Les segments repos <-> départ sont donc vérifiés sur les limites d'usine,
+# la vitesse ci-dessous et l'accélération, sans marge ni contraintes couplées. Que le
+# départ soit accessible sans heurt depuis le repos reste à la charge de qui calibre.
+rest_velocity_rad_s: 0.3
 
 # Contraintes couplées linéaires : sum(coef_i * q_i) <= bound (radians).
 # Elles complètent les min/max indépendants, qui ne garantissent PAS l'absence

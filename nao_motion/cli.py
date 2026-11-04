@@ -65,8 +65,10 @@ def cmd_check_config(a):
     ok = True
     for name in ("rest", "start"):
         q = np.array(cfg.pose(name, cfg.all_joints))
-        rep = g.validate(Trajectory(cfg.all_joints, [0, 1], [q, q]), check_duration=False)
-        print(f"  pose {name} : {rep.summary()}")
+        tr = Trajectory(cfg.all_joints, [0, 1], [q, q])
+        # le repos peut être hors zone de mouvement (contact) : limites d'usine seulement
+        rep = g.validate_rest_transition(tr) if name == "rest" else g.validate(tr, check_duration=False)
+        print(f"  pose {name} : {rep.summary()}" + (" (repos : limites d'usine)" if name == "rest" else ""))
         for v in rep.violations:
             print("    -", v.to_dict())
         ok &= rep.ok
@@ -272,6 +274,8 @@ def cmd_calibrate(a):
     for j, (lo, hi) in cal.limits.items():
         m = cal.measured[j]
         print(f"  {j:15s} mesuré [{m['min']:+.3f}, {m['max']:+.3f}] usine {m['factory']} -> guardian [{lo:+.3f}, {hi:+.3f}]")
+    for w in cal.warnings:
+        print("  ATTENTION :", w)
     if _ask("Enregistrer cette calibration ? [o/N] ") != "o":
         print("Non enregistrée.")
         return 1

@@ -106,13 +106,15 @@ class Calibration:
     margin_rad: float = 0.05
     created_at: str = field(default_factory=lambda: _dt.datetime.now().isoformat(timespec="seconds"))
     notes: str = ""
+    warnings: List[str] = field(default_factory=list)
     path: Optional[Path] = None
 
     def to_dict(self) -> dict:
         return {"schema_version": 1, "kind": CAL_KIND, "version": self.version, "created_at": self.created_at,
                 "robot": self.robot, "margin_rad": self.margin_rad, "unit": "rad", "notes": self.notes,
                 "limits": {j: [float(a), float(b)] for j, (a, b) in self.limits.items()},
-                "measured": self.measured, "poses": self.poses, "coupled_constraints": self.coupled}
+                "measured": self.measured, "poses": self.poses, "coupled_constraints": self.coupled,
+                "warnings": list(self.warnings)}
 
     def save(self, path) -> Path:
         path = Path(path)
@@ -138,7 +140,8 @@ class Calibration:
         return cls(version=str(d["version"]), robot=d.get("robot") or {}, limits=lim,
                    measured=d.get("measured") or {}, poses=d.get("poses") or {},
                    coupled=d.get("coupled_constraints") or [], margin_rad=float(d.get("margin_rad", 0)),
-                   created_at=str(d.get("created_at", "")), notes=d.get("notes", ""), path=path)
+                   created_at=str(d.get("created_at", "")), notes=d.get("notes", ""),
+                   warnings=list(d.get("warnings") or []), path=path)
 
 
 def active_calibration_path(config_root) -> Optional[Path]:
@@ -184,19 +187,30 @@ def compute_calibration(sweeps: Dict[str, Dict[str, np.ndarray]], joints: Sequen
     missing = [j for j in joints if j not in samples]
     if missing:
         raise CalibrationError(f"Articulations non explorées : {missing}")
-    limits, measured = {}, {}
+    tol = float(proc.get("factory_tolerance_rad", 0.005))  # bruit capteur
+    limits, measured, warnings = {}, {}, []
     for j in joints:
         lo, hi = float(samples[j].min()), float(samples[j].max())
         if hi - lo < min_range:
             raise CalibrationError(f"{j} : amplitude explorée {hi - lo:.2f} rad < {min_range} rad. "
                                    "Explorer toute l'amplitude utile.")
         flo, fhi = (factory or {}).get(j, (lo, hi))[:2]
-        a, b = max(lo, float(flo)) + margin, min(hi, float(fhi)) - margin
+        flo, fhi = float(flo), float(fhi)
+        # Exploration au-delà d'une limite d'usine : on ne refuse pas, on garde la limite
+        # d'usine (intersection) et on le signale.
+        beyond = []
+        if lo < flo - tol:
+            beyond.append(f"min exploré {lo:.3f} < limite d'usine {flo:.3f}")
+        if hi > fhi + tol:
+            beyond.append(f"max exploré {hi:.3f} > limite d'usine {fhi:.3f}")
+        if beyond:
+            warnings.append(f"{j} : {' ; '.join(beyond)} rad. Limite d'usine retenue.")
+        a, b = max(lo, flo) + margin, min(hi, fhi) - margin
         if not a < b:
             raise CalibrationError(f"{j} : amplitude nulle après marge")
         limits[j] = (a, b)
         measured[j] = {"min": lo, "max": hi, "factory": [float(flo), float(fhi)] if factory and j in factory else None,
-                       "n": int(samples[j].size)}
+                       "n": int(samples[j].size), "beyond_factory": bool(beyond)}
     coupled = []
     for a, b in proc.get("pairs", []):
         if a not in samples or b not in samples or len(samples[a]) != len(samples[b]):
@@ -207,14 +221,26 @@ def compute_calibration(sweeps: Dict[str, Dict[str, np.ndarray]], joints: Sequen
             coupled.append({"name": f"calib:{a}-{b}:{k}", "terms": {a: round(na, 6), b: round(nb, 6)},
                             "bound": round(bound, 6), "description": f"enveloppe mesurée {a}/{b}"})
     if poses:
+        # Le repos peut être hors de la zone de mouvement (ex. bras posés sur les genoux :
+        # contact) : il n'est borné que par les limites d'usine. Que le départ soit
+        # accessible sans heurt depuis le repos est à la charge de qui calibre.
         for name, groups in poses.items():
             for g, jq in groups.items():
                 for j, v in jq.items():
+                    if name == "rest":
+                        m = measured[j]
+                        flo, fhi = m["factory"] if m.get("factory") else (min(m["min"], limits[j][0]),
+                                                                          max(m["max"], limits[j][1]))
+                        if not flo - tol <= v <= fhi + tol:
+                            raise CalibrationError(f"Pose rest/{j}={v:.3f} hors des limites d'usine [{flo:.3f}, {fhi:.3f}]")
+                        continue
                     lo, hi = limits[j]
                     if not lo <= v <= hi:
                         raise CalibrationError(f"Pose {name}/{j}={v:.3f} hors des limites calibrées [{lo:.3f}, {hi:.3f}]")
         for c in coupled:
             for name, groups in poses.items():
+                if name == "rest":
+                    continue
                 flat = {j: v for jq in groups.values() for j, v in jq.items()}
                 if all(j in flat for j in c["terms"]):
                     val = sum(k * flat[j] for j, k in c["terms"].items())
@@ -224,7 +250,7 @@ def compute_calibration(sweeps: Dict[str, Dict[str, np.ndarray]], joints: Sequen
     robot = robot or {}
     version = version or f"{robot.get('name') or 'nao'}-{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
     return Calibration(version=version, robot=robot, limits=limits, measured=measured, poses=poses or {},
-                       coupled=coupled, margin_rad=margin)
+                       coupled=coupled, margin_rad=margin, warnings=warnings)
 
 
 # -- procédure sur le robot ------------------------------------------------------------

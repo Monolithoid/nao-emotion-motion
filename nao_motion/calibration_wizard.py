@@ -54,6 +54,11 @@ class CalibrationWizard:
         self.proc = load_procedure(self.cfg.root)
         self.session = CalibrationSession(self.cfg, self.adapter, self.proc)
         self.robot = self.session.robot_info()
+        # limites d'usine (ALMotion.getLimits), lues une fois à l'ouverture : affichage seulement
+        try:
+            self.factory = self.session.factory_limits()
+        except Exception:
+            self.factory = None
         self.sim = self.adapter.name == "sim"
         self.thread: Optional[threading.Thread] = None
         self.sweep_error: Optional[str] = None
@@ -192,6 +197,10 @@ class CalibrationWizard:
             self.adapter.set_demonstrator(None)
 
     # -- état pour la page -------------------------------------------------------------
+    def _frame(self, j: str) -> List[float]:
+        f = (self.factory or {}).get(j)
+        return [float(f[0]), float(f[1])] if f else list(self.cfg.limits[j])
+
     def _pairs(self, group: Optional[str], live: Optional[np.ndarray], live_joints: List[str]) -> List[dict]:
         out = []
         for a, b in self.proc.get("pairs", []):
@@ -208,7 +217,7 @@ class CalibrationWizard:
             hull = convex_hull(pts) if len(pts) >= 3 else pts
             out.append({"joints": [a, b], "points": np.round(_downsample(pts), 4).tolist(),
                         "hull": np.round(hull, 4).tolist(), "n": int(len(pts)),
-                        "limits": [list(self.cfg.limits[a]), list(self.cfg.limits[b])]})
+                        "limits": [self._frame(a), self._frame(b)]})
         return out
 
     def state(self) -> dict:
@@ -237,12 +246,15 @@ class CalibrationWizard:
         if self.result is not None:
             r = self.result
             res = {"version": r.version, "limits": {j: list(v) for j, v in r.limits.items()},
-                   "measured": r.measured, "coupled": len(r.coupled), "margin_rad": r.margin_rad}
+                   "measured": r.measured, "coupled": len(r.coupled), "margin_rad": r.margin_rad,
+                   "warnings": list(r.warnings)}
         missing = [f"{n}/{g}" for n in POSE_NAMES for g in self.cfg.groups if g not in s.poses.get(n, {})]
         return {"active": True, "sim": self.sim, "robot": self.robot, "groups": self.cfg.groups,
                 "sweeping": s.current if self.sweeping else None, "sweep_n": s.n if self.sweeping else 0,
                 "swept": sorted(s.sweeps), "angles": angles, "roles": dict(self.adapter.roles),
-                "ranges": ranges, "poses": s.poses, "missing_poses": missing,
+                "ranges": ranges, "poses": s.poses,
+                "factory": ({j: [round(float(v[0]), 4), round(float(v[1]), 4)] for j, v in self.factory.items()}
+                            if self.factory else None), "missing_poses": missing,
                 "pairs": self._pairs(s.current, live, live_joints),
                 "procedure": {k: self.proc.get(k) for k in ("margin_rad", "min_samples", "min_range_rad", "rate_hz")},
                 "result": res, "saved": self.saved_path.name if self.saved_path else None,

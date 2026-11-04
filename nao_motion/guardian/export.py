@@ -55,6 +55,10 @@ def guardian_dict(cfg: Config, allow_uncalibrated: bool = False) -> dict:
         "duration_s": [g.min_duration_s, g.max_duration_s],
         "start_tolerance_rad": g.start_tolerance_rad,
         "transition_velocity_rad_s": g.transition_velocity_rad_s,
+        # le repos peut être hors zone (contact) : segments repos <-> départ bornés par
+        # ces limites (usine) et cette vitesse, sans contraintes couplées
+        "rest_limits": {j: [float(lo), float(hi)] for j, (lo, hi) in cfg.rest_limits.items()},
+        "rest_velocity_rad_s": g.rest_velocity_rad_s,
         "coupled_constraints": [{"name": c.name, "terms": dict(c.terms), "bound": c.bound,
                                  "description": c.description,
                                  "origin": "calibration" if c.name in calib_names else "manual"}

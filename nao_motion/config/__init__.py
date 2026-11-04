@@ -40,6 +40,7 @@ class GuardianConfig:
     start_tolerance_rad: float
     transition_velocity_rad_s: float
     coupled_constraints: List[CoupledConstraint]
+    rest_velocity_rad_s: float = 0.3  # segments repos <-> départ (repos hors zone de mouvement)
 
     def velocity_limit(self, joint: str) -> float:
         return float(self.per_joint_velocity_rad_s.get(joint, self.max_velocity_rad_s))
@@ -62,6 +63,11 @@ class Config:
     model: dict
     raw: dict = field(default_factory=dict, repr=False)
     calibration: Optional[object] = None  # nao_motion.calibration.Calibration si une calibration est active
+    # Le repos peut être hors de la zone de mouvement (ex. bras posés sur les genoux :
+    # contact). Il est borné par rest_limits (limites d'usine si connues), et seuls les
+    # segments repos <-> départ peuvent quitter la zone. Que le départ soit accessible
+    # sans heurt depuis le repos est à la charge de l'opérateur qui calibre.
+    rest_limits: Dict[str, Tuple[float, float]] = field(default_factory=dict)
 
     # -- accès pratiques -------------------------------------------------
     @property
@@ -156,21 +162,31 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
             poses = dict(poses, rest=cal_poses["rest"], start=cal_poses["start"])
             poses_from_cal = True
 
-    pose_d = {}
-    for name in ("rest", "start"):
-        pose_d[name] = {}
-        for g, js in groups.items():
-            gp = poses[name].get(g) or {}
-            missing = [j for j in js if j not in gp]
-            if missing:
-                raise ConfigError(f"poses.yaml : {name}/{g} incomplet : {missing}")
-            for j in js:
-                lo, hi = limits[j]
-                if not lo <= float(gp[j]) <= hi:
-                    raise ConfigError(f"pose {name}/{j}={gp[j]} hors limites [{lo}, {hi}]"
-                                      + (" (limites calibrées : capturer les poses pendant la calibration)"
-                                         if calibration else ""))
-            pose_d[name][g] = {j: float(gp[j]) for j in js}
+    # limites du repos et des segments repos <-> départ : limites d'usine mesurées si
+    # connues, sinon limites de la configuration
+    rest_limits = dict(limits)
+    if calibration is not None:
+        for j, m in (calibration.measured or {}).items():
+            f = (m or {}).get("factory")
+            if j in rest_limits and f:
+                rest_limits[j] = (min(float(f[0]), limits[j][0]), max(float(f[1]), limits[j][1]))
+
+    def _check(name, g, gp, lims, hint=""):
+        missing = [j for j in groups[g] if j not in gp]
+        if missing:
+            raise ConfigError(f"poses : {name}/{g} incomplet : {missing}")
+        for j in groups[g]:
+            lo, hi = lims[j]
+            if not lo <= float(gp[j]) <= hi:
+                raise ConfigError(f"pose {name}/{j}={gp[j]} hors limites [{lo}, {hi}]" + hint)
+        return {j: float(gp[j]) for j in groups[g]}
+
+    hint = " (limites calibrées : capturer les poses pendant la calibration)" if calibration else ""
+    pose_d = {"rest": {}, "start": {}}
+    for g in groups:
+        pose_d["start"][g] = _check("start", g, poses["start"].get(g) or {}, limits, hint)
+        # le repos peut sortir de la zone de mouvement (contact), pas des limites d'usine
+        pose_d["rest"][g] = _check("rest", g, poses["rest"].get(g) or {}, rest_limits, " (limites d'usine)")
 
     emotions = [e["id"] for e in emos["emotions"]]
     if len(set(emotions)) != len(emotions) or not emotions:
@@ -199,6 +215,7 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
         start_tolerance_rad=float(guard["start_tolerance_rad"]),
         transition_velocity_rad_s=float(guard["transition_velocity_rad_s"]),
         coupled_constraints=cc,
+        rest_velocity_rad_s=float(guard.get("rest_velocity_rad_s", 0.3)),
     )
     return Config(
         root=root, groups=groups, limits=limits,
@@ -210,4 +227,5 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
         guardian=gcfg, robot=robot, model=model,
         raw={"joints": joints, "poses": poses, "emotions": emos, "guardian": guard},
         calibration=calibration,
+        rest_limits=rest_limits,
     )
