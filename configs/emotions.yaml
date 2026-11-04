@@ -1,0 +1,21 @@
+# Liste initiale, courte et MODIFIABLE. Ce n'est pas une taxonomie scientifique :
+# ce sont des étiquettes de travail pour organiser les démonstrations.
+# Ajouter/retirer une émotion change la dimension d'entrée des modèles :
+# les checkpoints mémorisent la liste utilisée et refusent une liste différente.
+schema_version: 1
+emotions:
+  - {id: joie,      label: "joie"}
+  - {id: tristesse, label: "tristesse"}
+  - {id: colere,    label: "colère"}
+  - {id: peur,      label: "peur"}
+  - {id: surprise,  label: "surprise"}
+  - {id: calme,     label: "calme"}
+
+# Intentions expressives : distinctes des émotions (on peut accueillir avec joie
+# ou avec calme). Elles sont enregistrées comme annotation optionnelle des prises
+# mais ne conditionnent pas encore les modèles.
+intentions:
+  - {id: accueillir, label: "accueillir"}
+  - {id: refuser,    label: "refuser"}
+  - {id: saluer,     label: "saluer"}
+  - {id: montrer,    label: "montrer / désigner"}

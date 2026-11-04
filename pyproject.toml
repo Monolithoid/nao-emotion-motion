@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nao-emotion-motion"
+version = "0.1.0"
+description = "Apprentissage et génération de mouvements expressifs (bras + tête) pour NAO, conditionnés par émotion et intensité"
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.22", "pyyaml>=6", "torch>=2.1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+nao-motion = "nao_motion.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["nao_motion*"]
+
+[tool.setuptools.package-data]
+"nao_motion.ui" = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

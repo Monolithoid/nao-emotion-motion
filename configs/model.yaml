@@ -1,0 +1,19 @@
+schema_version: 1
+representation:
+  n_control_points: 8       # points de contrôle B-spline cubique par articulation
+  n_eval_samples: 100       # échantillons de phase utilisés pour l'ajustement et les métriques
+arm_model:
+  hidden: [64, 64]
+  dropout: 0.0
+head_model:
+  hidden: [96, 64]
+  dropout: 0.0
+  arm_input: recorded       # recorded (bras mesurés pendant la relecture) | predicted (modèle bras figé)
+training:
+  epochs: 800
+  lr: 0.01
+  weight_decay: 0.0001
+  val_fraction: 0.25
+  seed: 0
+  smoothness_weight: 0.01
+  duration_weight: 0.05     # poids de l erreur sur log(durée) (bras)
