@@ -91,7 +91,7 @@ def cmd_takes(a):
     st = TakeStore(a.data, load_config(a.config))
     for m in st.list(kind=a.kind):
         ev = m.event_ctx
-        evs = "aucun" if not ev.present else f"az={np.degrees(ev.azimuth_rad):.0f}° el={np.degrees(ev.elevation_rad):.0f}°"
+        evs = "aucun" if not ev.present else f"az={np.degrees(ev.azimuth_rad):.0f}° el={np.degrees(ev.elevation_rad):.0f}°" + (f" d={ev.distance_m:.2f}m" if ev.distance_m else "")
         print(f"{m.take_id}  {m.kind:4s} {m.emotion:10s} {m.intensity:.2f} {m.status:8s} {m.duration_s:5.2f}s "
               f"évt:{evs} {'bras:' + m.arm_take_id if m.arm_take_id else ''} {'[synth]' if m.synthetic else ''}")
     if a.stats:
@@ -115,7 +115,7 @@ def _event_from_args(a):
     if a.event_az is None:
         return {"present": False, "source": "cli"}
     return {"present": True, "azimuth": a.event_az, "elevation": a.event_el or 0.0, "unit": "deg",
-            "frame": a.event_frame, "source": "cli"}
+            "frame": a.event_frame, "source": "cli", "distance_m": a.event_dist}
 
 
 def cmd_generate(a):
@@ -306,6 +306,7 @@ def main(argv=None):
     s.add_argument("--emotion", default="joie"); s.add_argument("--mix", help='mélange JSON ex. {"joie":0.5,"surprise":0.5}')
     s.add_argument("--intensity", type=float, default=0.7)
     s.add_argument("--event-az", type=float, help="azimut en degrés (gauche positif) ; absent = pas d'événement")
+    s.add_argument("--event-dist", type=float, default=None, help="distance de l'événement en mètres (optionnelle)")
     s.add_argument("--event-el", type=float, default=0.0); s.add_argument("--event-frame", default="torso",
                                                                          choices=["torso", "head"])
     s.add_argument("--variation", type=float, default=0.0); s.add_argument("--seed", type=int)

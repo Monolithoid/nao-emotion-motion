@@ -46,7 +46,8 @@ async function refreshStatus() {
   const r = STATUS.recording;
   $("status").textContent = `${STATUS.adapter}${STATUS.real_robot ? ` (ROBOT RÉEL ${STATUS.robot_name || ""} ${STATUS.robot_address || "— adresse non fournie"})` : " (simulation)"} · ${STATUS.connected ? "connecté" : "déconnecté"} · contrôleur : ${STATUS.controller}` +
     (STATUS.last_error ? ` · erreur : ${STATUS.last_error}` : "") +
-    (STATUS.event.present ? ` · événement az ${(STATUS.event.azimuth_rad * 180 / Math.PI).toFixed(0)}° el ${(STATUS.event.elevation_rad * 180 / Math.PI).toFixed(0)}°` : " · aucun événement");
+    (STATUS.event.present ? ` · événement az ${(STATUS.event.azimuth_rad * 180 / Math.PI).toFixed(0)}° el ${(STATUS.event.elevation_rad * 180 / Math.PI).toFixed(0)}°` +
+      (STATUS.event.distance_m != null ? ` à ${(+STATUS.event.distance_m).toFixed(2)} m` : "") : " · aucun événement");
   $("armed").checked = STATUS.armed;
   const w = [];
   if (!STATUS.calibrated || !STATUS.poses_calibrated) w.push("Aucune calibration active (onglet Calibration) : limites de remplacement, exécution réelle refusée.");
@@ -58,6 +59,7 @@ async function refreshStatus() {
   if (r.state !== "none") (r.kind === "head" ? $("h-rec") : $("a-rec")).textContent = txt;
   if (r.state === "done") showDraft(r.kind);
   $("r-status").textContent = JSON.stringify(STATUS, null, 1);
+  if (window.FOV) window.FOV.sync(STATUS.event);
 }
 
 let draftShown = null;
@@ -227,14 +229,6 @@ async function init() {
   $("a-retry").onclick = async () => { await saveDraft("arms", "rejected"); $("a-prepare").onclick(); };
   // tête
   $("h-arm").onchange = showArmForHead;
-  $("h-setev").onclick = async () => {
-    const mode = document.querySelector("input[name=evmode]:checked").value;
-    let ev;
-    if (mode === "none") ev = await api("event", {present: false, source: "manuel"});
-    else if (mode === "test") ev = await api("event", {present: true, azimuth: parseFloat($("h-az").value), elevation: parseFloat($("h-el").value), unit: "deg", frame: "torso", source: "test"});
-    else ev = await api("event");
-    $("h-ev").textContent = ev.present ? `actif : az ${(ev.azimuth_rad * 180 / Math.PI).toFixed(0)}°, el ${(ev.elevation_rad * 180 / Math.PI).toFixed(0)}° (${ev.source})` : `aucun événement (${ev.source})`;
-  };
   $("h-prepare").onclick = () => confirmReal("Les bras vont se déplacer (motorisés) vers le début de la relecture, puis la tête sera RELÂCHÉE. Continuer ?") &&
     api("record/prepare", document.querySelector("input[name=hsrc]:checked").value === "generated"
       ? {kind: "head", confirm: true, generated: {emotion: $("h-emotion").value, intensity: parseFloat($("h-intensity").value),

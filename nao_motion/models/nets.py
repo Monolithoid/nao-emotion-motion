@@ -28,6 +28,7 @@ from torch import nn
 
 from .. import __version__
 from ..config import Config
+from ..events import EVENT_FEATURES
 
 CKPT_FORMAT = "nao_motion.checkpoint"
 CKPT_VERSION = 1
@@ -116,6 +117,8 @@ class LoadedModel:
             raise CheckpointError("Articulations du modèle différentes de la configuration")
         if self.component == "head" and m["arm_joints"] != cfg.arm_joints:
             raise CheckpointError("Articulations des bras du modèle tête différentes de la configuration")
+        if self.component == "head" and m.get("event_features", 4) != EVENT_FEATURES:
+            raise CheckpointError("Encodage de l'événement différent (distance ajoutée) : réentraîner le modèle de la tête")
         if m["calibration_version"] != cfg.calibration_version:
             self.warnings.append(f"Calibration différente : modèle {m['calibration_version']}, "
                                  f"config {cfg.calibration_version}")

@@ -154,3 +154,23 @@ def test_head_collection_on_generated_arm_gesture(trained, cfg):
     m1.take_id = m1.take_id + "-copie"
     with pytest.raises(TakeError):
         wb.store.save(m1, take.traj)
+
+
+def test_head_model_with_old_event_encoding_is_refused(trained, cfg, tmp_path):
+    """Un modèle de tête entraîné sans la distance (4 entrées d'événement) doit être réentraîné."""
+    run = Path(trained["head_run"])
+    head = LoadedModel(run / "model.pt", cfg, "head")
+    assert head.meta["event_features"] == 6
+    ck = torch.load(run / "model.pt", map_location="cpu", weights_only=True)
+    ck["meta"]["event_features"] = 4
+    old = tmp_path / "old.pt"
+    torch.save(ck, old)
+    with pytest.raises(CheckpointError, match="distance"):
+        LoadedModel(old, cfg, "head")
+
+
+def test_distance_changes_generated_head(trained, cfg):
+    eng = MotionEngine.from_paths(cfg, Path(trained["arm_run"]) / "model.pt", Path(trained["head_run"]) / "model.pt")
+    near = eng.generate("peur", 0.9, EventContext(True, 0.5, 0.0, distance_m=0.3), None, 0.0, 0)
+    far = eng.generate("peur", 0.9, EventContext(True, 0.5, 0.0, distance_m=3.0), None, 0.0, 0)
+    assert not np.allclose(near.combined.q, far.combined.q)

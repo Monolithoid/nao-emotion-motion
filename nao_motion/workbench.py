@@ -163,7 +163,7 @@ class Workbench:
                                       elevation=d.get("elevation"), frame=d.get("frame", "torso"),
                                       unit=d.get("unit", "rad"), head_yaw_rad=d.get("head_yaw_rad"),
                                       head_pitch_rad=d.get("head_pitch_rad"), source=d.get("source", "external"),
-                                      confidence=d.get("confidence"))
+                                      confidence=d.get("confidence"), distance=d.get("distance_m", d.get("distance")))
         self.event, self.event_ttl_s = ev, ttl_s
         return ev
 

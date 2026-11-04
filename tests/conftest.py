@@ -31,7 +31,8 @@ def trained(tmp_path_factory, cfg):
     wb = make_wb(tmp, cfg, sensor_noise_rad=0.002)
     arm_ids, head_ids = collect_synthetic(
         wb, reps=1, intensities=(0.3, 1.0), head_per_arm=6,
-        head_contexts=[EventContext.none(), EventContext(True, 0.6, 0.1, source="test")], log=lambda *a: None)
+        head_contexts=[EventContext.none(), EventContext(True, 0.6, 0.1, source="test", distance_m=0.4),
+                       EventContext(True, 0.6, 0.1, source="test", distance_m=2.5)], log=lambda *a: None)
     ja = wb.train("arms", epochs=300, background=False)
     assert ja["state"] == "done", ja["error"]
     jh = wb.train("head", epochs=60, background=False)

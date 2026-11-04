@@ -41,6 +41,8 @@ class Api:
                 "calibration_robot": (c.calibration.robot if c.calibration else None),
                 "bridge": c.robot.get("bridge"),
                 "poses_calibrated": c.poses_calibrated, "robot": c.robot.get("robot"),
+                "events": {"distance_m": [0.3, 3.0], "azimuth_deg": [-90, 90], "elevation_deg": [-30, 45],
+                           **(c.robot.get("events") or {})},
                 "countdown_s": c.robot.get("recording", {}).get("countdown_s", 3)}
 
     def get_status(self, q):

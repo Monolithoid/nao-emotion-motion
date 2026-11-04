@@ -29,6 +29,7 @@
     <label>Émotion <select id="a-emotion"></select></label>
     <label>Intensité <input type="range" id="a-intensity" min="0" max="1" step="0.05" value="0.7"> <span id="a-int-val"></span></label>
     <label>Intention (optionnelle) <select id="a-intention"><option value="">—</option></select></label>
+    <button id="a-random" title="Tire une émotion et une intensité au hasard">Tirage aléatoire</button>
   </div>
   <div class="consigne" id="a-consigne"></div>
   <p class="hint">Passage 1 : les bras sont relâchés (tenez-les) et seuls leurs capteurs sont lus ; la tête reste raide sur place.</p>
@@ -67,14 +68,12 @@
   </fieldset>
   <div class="plot" id="h-arm-plot"></div>
   <fieldset>
-    <legend>Contexte événementiel (repère torse : azimut + à gauche, élévation + en haut)</legend>
-    <label><input type="radio" name="evmode" value="none" checked> Aucun événement</label>
-    <label><input type="radio" name="evmode" value="test"> Événement de test :
-      azimut <input type="number" id="h-az" value="30" step="5" class="num">°
-      élévation <input type="number" id="h-el" value="0" step="5" class="num">°</label>
-    <label><input type="radio" name="evmode" value="external"> Dernier événement du composant externe</label>
-    <button id="h-setev">Appliquer</button>
-    <span id="h-ev"></span>
+    <legend>Événement (repère torse : azimut + à gauche, élévation + en haut, distance en mètres)</legend>
+    <div class="row">
+      <button id="h-random" class="ok" title="Tire émotion, intensité, angle et distance au hasard (geste généré)">Tirage aléatoire</button>
+      <label><input type="checkbox" id="h-random-none"> parfois sans événement</label>
+    </div>
+    <div id="h-fov"></div>
   </fieldset>
   <div class="consigne" id="h-consigne"></div>
   <div class="row">
@@ -141,9 +140,11 @@
     <label>part <input type="range" id="g-mix" min="0" max="1" step="0.05" value="0.5"></label>
     <label>Intensité <input type="range" id="g-intensity" min="0" max="1" step="0.05" value="0.7"> <span id="g-int-val"></span></label>
     <label>Variation <input type="number" id="g-var" value="0" step="0.02" min="0" class="num"></label>
-    <label><input type="checkbox" id="g-event" checked> utiliser l'événement courant</label>
+    <label><input type="checkbox" id="g-event" checked> utiliser l'événement</label>
+    <button id="g-random" title="Tire émotion, intensité, angle et distance au hasard">Tirage aléatoire</button>
     <button id="g-go">Générer et valider</button>
   </div>
+  <details open><summary>Événement</summary><div id="g-fov"></div></details>
   <div class="plot" id="g-plot"></div>
   <div id="g-report" class="mono"></div>
   <div class="row"><button id="g-exec" disabled>Exécuter le cycle (repos → départ → geste → départ → repos)</button></div>
@@ -230,6 +231,7 @@
 </section>
 </main>
 <script src="app.js"></script>
+<script src="fov.js"></script>
 <script src="calib.js"></script>
 </body>
 </html>
