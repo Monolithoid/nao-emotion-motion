@@ -115,10 +115,24 @@ def test_head_collection_on_generated_arm_gesture(trained, cfg):
     wb.ctrl.acknowledge() if wb.ctrl.state.value != "idle" else None
     wb.ctrl.hold(cfg.all_joints)
     wb.ctrl.arm(confirm=True)
+    # le modèle de test est peu entraîné : on retient un geste que le guardian accepte
+    # (un geste refusé n'est jamais exécuté, ce qui est testé ailleurs)
+    from nao_motion.data.representation import decode
+    gesture = None
+    for emo in cfg.emotions:
+        for inten in (0.3, 0.6, 1.0):
+            n, d = wb.engine.plan_arms(emo, inten)
+            tr = decode(wb.engine.arm_norm.inv(n), d, cfg.arm_joints, 50)
+            if wb.guardian.validate(tr, context_pose=dict(zip(cfg.head_joints, cfg.pose("start", cfg.head_joints)))).ok:
+                gesture = {"emotion": emo, "intensity": inten, "seed": 3}
+                break
+        if gesture:
+            break
+    assert gesture is not None
     ids = []
     for ev in (EventContext.none(), EventContext(True, -0.5, 0.0, source="test")):
         wb.event = ev
-        info = wb.prepare_head_take(generated={"emotion": "surprise", "intensity": 0.8, "seed": 3})
+        info = wb.prepare_head_take(generated=gesture)
         assert info["arm_source"] == "generated"
         wb.start_recording(countdown_s=0.2, background=False)
         ids.append(wb.save_recording(status="accepted"))
@@ -127,7 +141,7 @@ def test_head_collection_on_generated_arm_gesture(trained, cfg):
     m1, m2 = (wb.store.load_meta(i) for i in ids)
     arm_digest = LoadedModel(arm_path, cfg, "arms").digest
     assert m1.arm_generation["arm_checkpoint_digest"] == arm_digest
-    assert m1.arm_take_id is None and m1.emotion == "surprise"
+    assert m1.arm_take_id is None and m1.emotion == gesture["emotion"]
     assert wb.store.group_id(m1) == wb.store.group_id(m2)  # même geste => même groupe
     ref = wb.store.load_reference(ids[0])
     take = wb.store.load(ids[0])
@@ -136,7 +150,7 @@ def test_head_collection_on_generated_arm_gesture(trained, cfg):
     assert np.abs(meas - ref.sample(tt)).max() < 0.05  # bras réalisés ≈ consigne générée
     ex = head_examples(wb.store, cfg)
     assert ids[0] in ex.take_ids
-    m1.arm_generation = {"emotion": "surprise"}
+    m1.arm_generation = {"emotion": gesture["emotion"]}
     m1.take_id = m1.take_id + "-copie"
     with pytest.raises(TakeError):
         wb.store.save(m1, take.traj)
