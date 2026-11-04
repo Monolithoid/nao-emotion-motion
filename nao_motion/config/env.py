@@ -19,6 +19,7 @@ MAPPING = {
     "NAO_BODY_VERSION": (("robot", "body_version"), str),
     "NAOQI_VERSION": (("robot", "naoqi_version"), str),
     "NAO_PYTHON": (("robot", "python"), str),
+    "NAO_BRIDGE_LOCATION": (("bridge", "location"), str),
     "NAO_BRIDGE_HOST": (("bridge", "host"), str),
     "NAO_BRIDGE_PORT": (("bridge", "port"), int),
     "NAO_BRIDGE_WATCHDOG_S": (("bridge", "watchdog_s"), float),

@@ -6,7 +6,13 @@ f-strings, pas d'annotations), car le SDK Python de NAOqi pour NAO est
 souvent limité à Python 2.7 selon la version. Il ne dépend que de la
 bibliothèque standard et du SDK NAOqi.
 
-Il peut tourner sur le PC (connexion au robot par IP) ou sur le robot.
+Deux emplacements possibles :
+  - SUR LE ROBOT (recommandé) : le module `naoqi` est déjà présent dans le
+    Python 2.7 du NAO, rien à installer. `python naoqi_bridge.py --on-robot`
+    se connecte à NAOqi en local (127.0.0.1) et écoute sur le réseau (port 9600).
+    C'est aussi le choix d'ia-agent (nao_ws_bridge.py embarqué).
+  - sur le PC : demande le SDK Python NAOqi (pynaoqi, Python 2.7), devenu
+    difficile à trouver et à installer.
 
 Protocole : TCP, une requête JSON par ligne -> une réponse JSON par ligne.
     {"cmd": "read_angles", "joints": [...]} -> {"ok": true, "result": [...]}
@@ -20,7 +26,8 @@ Sécurité :
   - Les jambes sont refusées.
 
 Usage :
-    python naoqi_bridge.py                     # l'adresse du robot est donnée par l'interface
+    python naoqi_bridge.py --on-robot          # sur le NAO (recommandé)
+    python naoqi_bridge.py                     # sur le PC : l'adresse du robot est donnée par l'interface
     python naoqi_bridge.py --robot-ip nao.local  # ou fournie au lancement (IP ou nom DNS)
     python naoqi_bridge.py --fake              # sans robot (tests du protocole)
 """
@@ -83,27 +90,37 @@ class FakeBackend(object):
 class NaoqiBackend(object):
     real = True
 
-    def __init__(self, ip, port):
+    def __init__(self, ip, port, api="auto"):
         self.motion = None
         self.system = None
-        try:
-            import qi  # NAOqi 2.x (libqi)
-            session = qi.Session()
-            session.connect("tcp://%s:%d" % (ip, port))
-            self.motion = session.service("ALMotion")
+        # Ordre : `naoqi` (ALProxy) d'abord, présent sur le robot pour NAOqi 2.1 et
+        # utilisé par ia-agent sur ce même robot ; `qi` (libqi) en repli.
+        order = {"auto": ("naoqi", "qi"), "naoqi": ("naoqi",), "qi": ("qi",)}[api]
+        last = None
+        for name in order:
             try:
-                self.system = session.service("ALSystem")
-            except Exception:
-                self.system = None
-            self.api = "qi"
-        except ImportError:
-            from naoqi import ALProxy  # SDK historique
-            self.motion = ALProxy("ALMotion", ip, port)
-            try:
-                self.system = ALProxy("ALSystem", ip, port)
-            except Exception:
-                self.system = None
-            self.api = "naoqi"
+                if name == "naoqi":
+                    from naoqi import ALProxy  # SDK historique
+                    self.motion = ALProxy("ALMotion", ip, port)
+                    try:
+                        self.system = ALProxy("ALSystem", ip, port)
+                    except Exception:
+                        self.system = None
+                else:
+                    import qi  # libqi
+                    session = qi.Session()
+                    session.connect("tcp://%s:%d" % (ip, port))
+                    self.motion = session.service("ALMotion")
+                    try:
+                        self.system = session.service("ALSystem")
+                    except Exception:
+                        self.system = None
+                self.api = name
+                return
+            except ImportError as e:
+                last = e
+        raise RuntimeError("aucun module NAOqi (naoqi ou qi) dans ce Python : %s. "
+                           "Lancer le pont sur le robot (--on-robot)." % last)
 
     def info(self):
         version = None
@@ -146,6 +163,7 @@ class NaoqiBackend(object):
     def angle_interpolation(self, names, angles, times):
         # non bloquant ; interrompu par stop()
         if self.api == "qi":
+            # repli libqi : `_async` n'existe que sur les versions récentes de qi
             self.motion.angleInterpolation(names, angles, times, True, _async=True)
         else:
             self.motion.post.angleInterpolation(names, angles, times, True)
@@ -323,9 +341,16 @@ def main():
     p.add_argument("--host", default=env.get("NAO_BRIDGE_HOST") or "127.0.0.1")
     p.add_argument("--port", type=int, default=int(env.get("NAO_BRIDGE_PORT") or 9600))
     p.add_argument("--watchdog", type=float, default=float(env.get("NAO_BRIDGE_WATCHDOG_S") or 0.6))
+    p.add_argument("--api", choices=("auto", "naoqi", "qi"), default=env.get("NAO_BRIDGE_API") or "auto")
+    p.add_argument("--on-robot", action="store_true",
+                   help="pont lance sur le NAO : NAOqi en local (127.0.0.1), ecoute sur le reseau (0.0.0.0)")
     p.add_argument("--fake", action="store_true")
     a = p.parse_args()
-    factory = (lambda host, port: FakeBackend()) if a.fake else None
+    if a.on_robot:
+        a.robot_ip = a.robot_ip or "127.0.0.1"
+        if a.host == "127.0.0.1":
+            a.host = "0.0.0.0"
+    factory = (lambda host, port: FakeBackend()) if a.fake else (lambda host, port: NaoqiBackend(host, port, a.api))
     bridge = Bridge(None, a.watchdog, factory)
     if a.robot_ip:  # optionnel : sinon l'adresse est donnée par l'interface
         bridge.handle({"cmd": "connect_robot", "host": a.robot_ip, "port": a.robot_port})

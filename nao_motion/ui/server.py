@@ -99,7 +99,8 @@ class Api:
             raise ValueError("Calibration ouverte : la fermer avant de changer de connexion")
         if mode == "robot":
             self.wb.connect_robot(d.get("robot_host"), int(d.get("robot_port") or 9559),
-                                  d.get("bridge_host") or None, d.get("bridge_port") or None)
+                                  d.get("bridge_host") or None, d.get("bridge_port") or None,
+                                  d.get("bridge_on_robot"))
         elif mode == "sim":
             self.wb.use_simulation()
         else:
