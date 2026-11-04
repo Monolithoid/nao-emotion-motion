@@ -9,9 +9,15 @@ les métadonnées (statut, annotations, segment utile) peuvent évoluer.
 
 Une prise de bras (kind="arms") contient les articulations des deux bras
 guidées à la main. Une prise de tête (kind="head") contient TOUTES les
-articulations mesurées pendant la relecture : bras pilotés (relecture de
-`arm_take_id`) et tête guidée. `segment` y désigne la fenêtre de relecture,
-sur laquelle bras et tête partagent la même phase.
+articulations mesurées pendant l'exécution des bras : bras pilotés et tête
+guidée. La trajectoire des bras vient soit d'une démonstration enregistrée
+(`arm_source="take"`, `arm_take_id`), soit du modèle des bras
+(`arm_source="generated"`, `arm_generation` : émotion, intensité, empreinte du
+checkpoint, variation, graine). La consigne envoyée aux bras est conservée dans
+samples.npz (`ref_t`, `ref_q`), à côté des mesures. `segment` désigne la
+fenêtre d'exécution, sur laquelle bras et tête partagent la même phase.
+`arm_gesture_id` identifie le geste des bras (même geste => même groupe pour le
+découpage entraînement/validation).
 """
 from __future__ import annotations
 
@@ -60,6 +66,9 @@ class TakeMeta:
     segment: Tuple[float, float]
     head_initial: Optional[List[float]] = None   # [HeadYaw, HeadPitch] au début du segment
     arm_take_id: Optional[str] = None
+    arm_source: Optional[str] = None          # "take" | "generated" (prises de tête)
+    arm_gesture_id: Optional[str] = None
+    arm_generation: Optional[dict] = None
     intention: Optional[str] = None
     synthetic: bool = False
     status: str = "pending"
@@ -148,18 +157,32 @@ class TakeStore:
         else:
             if set(c.all_joints) - set(meta.joints):
                 raise TakeError("Une prise de tête doit contenir bras (relecture mesurée) et tête")
-            if not meta.arm_take_id or not self.exists(meta.arm_take_id):
-                raise TakeError("Prise de tête : arm_take_id manquant ou introuvable")
+            src = meta.arm_source or "take"
+            if src == "take":
+                if not meta.arm_take_id or not self.exists(meta.arm_take_id):
+                    raise TakeError("Prise de tête : arm_take_id manquant ou introuvable")
+                if self.load_meta(meta.arm_take_id).kind != "arms":
+                    raise TakeError("arm_take_id doit désigner une prise de bras")
+            elif src == "generated":
+                g = meta.arm_generation or {}
+                if g.get("emotion") not in c.emotions or not g.get("arm_checkpoint_digest"):
+                    raise TakeError("Prise de tête sur geste généré : arm_generation incomplet")
+            else:
+                raise TakeError(f"arm_source inconnu : {src}")
             if set(meta.guided_joints) != set(c.head_joints):
                 raise TakeError("Prise de tête : seules les articulations de la tête sont guidées")
-            if self.load_meta(meta.arm_take_id).kind != "arms":
-                raise TakeError("arm_take_id doit désigner une prise de bras")
 
     # -- E/S ----------------------------------------------------------------
     def exists(self, take_id: str) -> bool:
         return (self.dir / take_id / "meta.json").exists()
 
-    def save(self, meta: TakeMeta, traj: Trajectory) -> str:
+    def group_id(self, meta: TakeMeta) -> str:
+        """Identifiant du geste des bras (groupe de découpage entraînement/validation)."""
+        if meta.kind == "arms":
+            return meta.take_id
+        return meta.arm_gesture_id or meta.arm_take_id or meta.take_id
+
+    def save(self, meta: TakeMeta, traj: Trajectory, reference: Optional[Trajectory] = None) -> str:
         meta.n_samples = int(traj.t.shape[0])
         meta.duration_s = float(traj.t[-1] - traj.t[0])
         self.validate(meta, traj)
@@ -167,7 +190,10 @@ class TakeStore:
         if d.exists():
             raise TakeError(f"La prise {meta.take_id} existe déjà")
         d.mkdir(parents=True)
-        np.savez(d / "samples.npz", t=traj.t, q=traj.q, joints=np.array(traj.joints))
+        extra = {}
+        if reference is not None:
+            extra = {"ref_t": reference.t, "ref_q": reference.q, "ref_joints": np.array(reference.joints)}
+        np.savez(d / "samples.npz", t=traj.t, q=traj.q, joints=np.array(traj.joints), **extra)
         self._write_meta(meta)
         return meta.take_id
 
@@ -223,6 +249,13 @@ class TakeStore:
     def head_takes_for(self, arm_take_id: str) -> List[TakeMeta]:
         return [m for m in self.list(kind="head") if m.arm_take_id == arm_take_id]
 
+    def load_reference(self, take_id: str) -> Optional[Trajectory]:
+        """Consigne des bras envoyée pendant une prise de tête (None si absente)."""
+        with np.load(self.dir / take_id / "samples.npz", allow_pickle=False) as z:
+            if "ref_t" not in z.files:
+                return None
+            return Trajectory([str(j) for j in z["ref_joints"]], z["ref_t"], z["ref_q"])
+
     def stats(self, bins=(0.0, 0.34, 0.67, 1.0001)) -> dict:
         """Répartition des prises par type, émotion, tranche d'intensité et statut."""
         labels = [f"{bins[i]:.2f}-{min(bins[i+1], 1.0):.2f}" for i in range(len(bins) - 1)]
@@ -235,9 +268,9 @@ class TakeStore:
             table[m.kind][m.emotion][b][m.status] += 1
             if m.kind == "head":
                 ev = m.event_ctx
-                contexts[m.arm_take_id]["avec_evenement" if ev.present else "sans_evenement"] += 1
+                contexts[self.group_id(m)]["avec_evenement" if ev.present else "sans_evenement"] += 1
         return {
             "bins": labels,
             "table": {k: {e: {b: dict(c) for b, c in v.items()} for e, v in t.items()} for k, t in table.items()},
-            "head_contexts_per_arm_take": {k: dict(v) for k, v in contexts.items()},
+            "head_contexts_per_arm_gesture": {k: dict(v) for k, v in contexts.items()},
         }

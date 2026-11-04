@@ -149,7 +149,7 @@ def train_arms(store: TakeStore, cfg: Config, runs_dir, statuses=("accepted",), 
     loaded.export_numpy(run / "model_numpy.npz")
     metrics["guardian"] = _guardian_sweep(cfg, arm_model=loaded)
     _write_report(run, metrics, hist, meta)
-    (Path(runs_dir) / "latest_arms.txt").write_text(str(run / "model.pt"))
+    (Path(runs_dir) / "latest_arms.txt").write_text(run.name)
     return run
 
 
@@ -190,7 +190,7 @@ def train_head(store: TakeStore, cfg: Config, runs_dir, arm_checkpoint, statuses
     loaded.export_numpy(run / "model_numpy.npz")
     metrics["guardian"] = _guardian_sweep(cfg, arm_model=arm, head_model=loaded)
     _write_report(run, metrics, hist, meta)
-    (Path(runs_dir) / "latest_head.txt").write_text(str(run / "model.pt"))
+    (Path(runs_dir) / "latest_head.txt").write_text(run.name)
     return run
 
 
@@ -236,7 +236,10 @@ def _write_report(run, metrics, hist, meta):
 def latest(runs_dir, component) -> Optional[Path]:
     p = Path(runs_dir) / f"latest_{component}.txt"
     if p.exists():
-        q = Path(p.read_text().strip())
-        if q.exists():
-            return q
+        name = Path(p.read_text().strip())
+        # nom du run relatif au dossier runs/ (indépendant du dossier courant)
+        run_name = name.parent.name if name.name == "model.pt" else name.name
+        for q in (Path(runs_dir) / run_name / "model.pt", name):
+            if q.exists():
+                return q
     return None

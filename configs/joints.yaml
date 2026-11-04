@@ -3,15 +3,14 @@
 # Les jambes ne figurent pas ici : elles restent hors du périmètre d'apprentissage
 # et ne sont jamais commandées par ce logiciel.
 #
-# IMPORTANT : les limites ci-dessous sont des VALEURS DE REMPLACEMENT, déduites
-# prudemment des plages nominales publiées pour NAO et resserrées. Elles ne sont
-# pas calibrées sur votre robot. Tant que `calibration.calibrated` vaut false,
-# l'exécution sur le robot réel est refusée.
+# IMPORTANT : les limites ci-dessous sont des VALEURS DE REMPLACEMENT pour la
+# simulation, déduites prudemment des plages nominales publiées pour NAO.
+# Les limites réelles du guardian viennent UNIQUEMENT d'une calibration mesurée
+# sur le robot (`nao-motion calibrate`, fichier actif dans configs/calibration/).
+# Sans calibration active, l'exécution sur le robot réel est refusée.
 schema_version: 1
 calibration:
-  version: placeholder-0
-  calibrated: false
-  notes: "Remplacer par les limites min/max mesurées sur le robot, puis passer calibrated à true et changer version."
+  version: placeholder-0      # nom affiché quand aucune calibration n'est active
 
 groups:
   left_arm:  [LShoulderPitch, LShoulderRoll, LElbowYaw, LElbowRoll, LWristYaw]

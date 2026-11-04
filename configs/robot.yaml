@@ -1,8 +1,11 @@
 # Connexion et exécution. Rien n'est supposé sur votre robot : les champs
 # marqués null doivent être renseignés avant toute connexion réelle.
+# Les variables du fichier .env (voir .env.example) et de l'environnement
+# REMPLACENT les valeurs de ce fichier (NAO_IP, NAOQI_VERSION, ...).
 schema_version: 1
 adapter: sim                # sim | bridge  (bridge = pont NAOqi, voir bridge/)
 robot:
+  name: null                # ALSystem.robotName ; vérifié à l'armement s'il est renseigné
   model: null               # ex. "NAO V5" / "NAO V6" (à renseigner)
   naoqi_version: null       # ex. "2.1.4" / "2.8.x" (à renseigner)
   ip: null

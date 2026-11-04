@@ -90,7 +90,17 @@ class Controller:
             raise ControllerError(f"Armement impossible dans l'état {self.state.value}")
         if getattr(self.adapter, "is_real", False):
             if not self.cfg.calibrated or not self.cfg.poses_calibrated:
-                raise ControllerError("Robot réel : limites ou poses non calibrées (voir configs/). Armement refusé.")
+                raise ControllerError("Robot réel : aucune calibration active (limites et poses mesurées). "
+                                      "Lancer `nao-motion calibrate`. Armement refusé.")
+            cal_name = (self.cfg.calibration.robot or {}).get("robot_name")
+            live_name = self.adapter.capabilities().get("robot_name")
+            conf_name = (self.cfg.robot.get("robot") or {}).get("name")
+            if conf_name and live_name and conf_name != live_name:
+                raise ControllerError(f"Robot configuré « {conf_name} » (.env / robot.yaml), robot connecté "
+                                      f"« {live_name} ». Armement refusé.")
+            if cal_name and live_name and cal_name != live_name:
+                raise ControllerError(f"Calibration faite sur « {cal_name} », robot connecté « {live_name} ». "
+                                      "Armement refusé.")
         self.armed = True
         self._log("armé")
 

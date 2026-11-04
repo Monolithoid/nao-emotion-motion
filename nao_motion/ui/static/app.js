@@ -44,12 +44,12 @@ const cols = (q) => q[0].map((_, j) => q.map((r) => r[j]));
 async function refreshStatus() {
   try { STATUS = await api("status"); } catch (e) { return; }
   const r = STATUS.recording;
-  $("status").textContent = `${STATUS.adapter}${STATUS.real_robot ? " (ROBOT RÉEL)" : " (simulation)"} · ${STATUS.connected ? "connecté" : "déconnecté"} · contrôleur : ${STATUS.controller}` +
+  $("status").textContent = `${STATUS.adapter}${STATUS.real_robot ? ` (ROBOT RÉEL ${STATUS.robot_name || ""} ${STATUS.robot_address || "— adresse non fournie"})` : " (simulation)"} · ${STATUS.connected ? "connecté" : "déconnecté"} · contrôleur : ${STATUS.controller}` +
     (STATUS.last_error ? ` · erreur : ${STATUS.last_error}` : "") +
     (STATUS.event.present ? ` · événement az ${(STATUS.event.azimuth_rad * 180 / Math.PI).toFixed(0)}° el ${(STATUS.event.elevation_rad * 180 / Math.PI).toFixed(0)}°` : " · aucun événement");
   $("armed").checked = STATUS.armed;
   const w = [];
-  if (!STATUS.calibrated || !STATUS.poses_calibrated) w.push("Limites/poses non calibrées : valeurs de remplacement (exécution réelle refusée).");
+  if (!STATUS.calibrated || !STATUS.poses_calibrated) w.push("Aucune calibration active (nao-motion calibrate) : limites de remplacement, exécution réelle refusée.");
   if (STATUS.sim_demonstration) w.push("Simulation : un démonstrateur SYNTHÉTIQUE remplace votre main ; les prises sont marquées comme synthétiques.");
   $("warn").textContent = w.join(" ");
   const txt = r.state === "none" ? "" : r.state === "countdown" ? `Départ dans ${Math.ceil(r.countdown_left)}…` :
@@ -151,7 +151,8 @@ async function showArmForHead() {
   const tk = await api("takes/" + id);
   plot($("h-arm-plot"), tk.t, cols(tk.q), tk.meta.joints, {segment: tk.meta.segment});
   $("h-arm-info").textContent = `${tk.head_takes.length} contexte(s) de tête déjà enregistré(s)`;
-  $("h-consigne").textContent = `${label(tk.meta.emotion)} — ${fmtInt(tk.meta.intensity)}`;
+  if (document.querySelector("input[name=hsrc]:checked").value === "take")
+    $("h-consigne").textContent = `${label(tk.meta.emotion)} — ${fmtInt(tk.meta.intensity)} (démonstration rejouée)`;
 }
 
 // ---- entraînement ---------------------------------------------------------------
@@ -191,7 +192,13 @@ async function generate() {
 async function init() {
   CFG = await api("config");
   const opts = CFG.emotions.map((e) => `<option value="${e.id}">${e.label}</option>`).join("");
-  $("a-emotion").innerHTML = opts; $("g-emotion").innerHTML = opts; $("g-emotion2").innerHTML += opts;
+  $("a-emotion").innerHTML = opts; $("g-emotion").innerHTML = opts; $("h-emotion").innerHTML = opts;
+  const hcons = () => { $("h-int-val").textContent = fmtInt($("h-intensity").value);
+    if (document.querySelector("input[name=hsrc]:checked").value === "generated")
+      $("h-consigne").textContent = `${label($("h-emotion").value)} — ${fmtInt($("h-intensity").value)} (geste généré)`; else showArmForHead(); };
+  ["h-emotion", "h-intensity"].forEach((id) => $(id).oninput = hcons);
+  document.querySelectorAll("input[name=hsrc]").forEach((r) => r.onchange = hcons);
+  hcons(); $("g-emotion2").innerHTML += opts;
   $("a-intention").innerHTML += CFG.intentions.map((i) => `<option>${i}</option>`).join("");
   ["a-emotion", "a-intensity", "a-intention"].forEach((id) => $(id).oninput = updateConsigne);
   $("g-intensity").oninput = () => $("g-int-val").textContent = fmtInt($("g-intensity").value);
@@ -229,7 +236,10 @@ async function init() {
     $("h-ev").textContent = ev.present ? `actif : az ${(ev.azimuth_rad * 180 / Math.PI).toFixed(0)}°, el ${(ev.elevation_rad * 180 / Math.PI).toFixed(0)}° (${ev.source})` : `aucun événement (${ev.source})`;
   };
   $("h-prepare").onclick = () => confirmReal("Les bras vont se déplacer (motorisés) vers le début de la relecture, puis la tête sera RELÂCHÉE. Continuer ?") &&
-    api("record/prepare", {kind: "head", arm_take_id: $("h-arm").value, confirm: true}).then(() => { draftShown = null; });
+    api("record/prepare", document.querySelector("input[name=hsrc]:checked").value === "generated"
+      ? {kind: "head", confirm: true, generated: {emotion: $("h-emotion").value, intensity: parseFloat($("h-intensity").value),
+          variation: parseFloat($("h-var").value), seed: parseInt($("h-seed").value)}}
+      : {kind: "head", arm_take_id: $("h-arm").value, confirm: true}).then(() => { draftShown = null; });
   $("h-start").onclick = () => api("record/start", {});
   $("h-stop").onclick = () => api("stop", {});
   $("h-hold").onclick = () => api("hold", {groups: ["head"]});
@@ -264,6 +274,18 @@ async function init() {
   $("g-exec").onclick = () => lastPlan && window.confirm(real() ? "Exécuter sur le ROBOT RÉEL ?" : "Exécuter sur le robot simulé ?") && api("execute", {plan_id: lastPlan, confirm: true});
   // robot
   $("r-connect").onclick = () => api("connect", {});
+  const stored = (() => { try { return JSON.parse(localStorage.getItem("nao-robot") || "{}"); } catch (e) { return {}; } })();
+  $("r-host").value = stored.host || (CFG.robot && CFG.robot.ip) || "";
+  $("r-port").value = stored.port || (CFG.robot && CFG.robot.port) || 9559;
+  $("r-bhost").value = stored.bhost || (CFG.bridge && CFG.bridge.host) || "127.0.0.1";
+  $("r-bport").value = stored.bport || (CFG.bridge && CFG.bridge.port) || 9600;
+  $("r-connect-robot").onclick = async () => {
+    const v = {host: $("r-host").value.trim(), port: parseInt($("r-port").value), bhost: $("r-bhost").value.trim(), bport: parseInt($("r-bport").value)};
+    if (!v.host) return alert("Indiquer l'adresse du robot (IP ou nom DNS)");
+    await api("connect", {mode: "robot", robot_host: v.host, robot_port: v.port, bridge_host: v.bhost, bridge_port: v.bport});
+    try { localStorage.setItem("nao-robot", JSON.stringify(v)); } catch (e) {}
+  };
+  $("r-sim").onclick = () => api("connect", {mode: "sim"});
   $("r-ack").onclick = () => api("acknowledge", {});
   $("r-hold-all").onclick = () => api("hold", {});
   $("r-rest").onclick = () => window.confirm("Retour motorisé au repos depuis la posture mesurée ?") && api("rest", {confirm: true});

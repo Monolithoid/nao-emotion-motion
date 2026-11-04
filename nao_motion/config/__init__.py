@@ -61,6 +61,7 @@ class Config:
     robot: dict
     model: dict
     raw: dict = field(default_factory=dict, repr=False)
+    calibration: Optional[object] = None  # nao_motion.calibration.Calibration si une calibration est active
 
     # -- accès pratiques -------------------------------------------------
     @property
@@ -103,13 +104,19 @@ def _load(path: Path) -> dict:
     return data
 
 
-def load_config(config_dir: Optional[os.PathLike] = None) -> Config:
+def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Optional[os.PathLike] = None,
+                use_calibration: bool = True) -> Config:
+    """Charge configs/. Si une calibration est active (configs/calibration/ACTIVE)
+    ou fournie, ses limites, poses et contraintes couplées mesurées REMPLACENT
+    les valeurs de remplacement de joints.yaml / poses.yaml."""
+    from ..calibration import Calibration, CalibrationError, active_calibration_path
     root = Path(config_dir) if config_dir else DEFAULT_CONFIG_DIR
     joints = _load(root / "joints.yaml")
     poses = _load(root / "poses.yaml")
     emos = _load(root / "emotions.yaml")
     guard = _load(root / "guardian.yaml")
-    robot = _load(root / "robot.yaml")
+    from .env import apply_env
+    robot = apply_env(_load(root / "robot.yaml"), Path(os.environ.get("NAO_MOTION_ENV", root.parent / ".env")))
     model = _load(root / "model.yaml")
 
     groups = {k: list(v) for k, v in joints["groups"].items()}
@@ -132,6 +139,23 @@ def load_config(config_dir: Optional[os.PathLike] = None) -> Config:
             raise ConfigError(f"Limite invalide pour {j}: {lo} >= {hi}")
         limits[j] = (lo, hi)
 
+    calibration = None
+    poses_from_cal = False
+    cal_path = calibration_file or (active_calibration_path(root) if use_calibration else None)
+    if cal_path:
+        try:
+            calibration = Calibration.load(cal_path)
+        except CalibrationError as e:
+            raise ConfigError(str(e)) from e
+        missing = [j for j in all_j if j not in calibration.limits]
+        if missing:
+            raise ConfigError(f"Calibration {calibration.version} : articulations non calibrées {missing}")
+        limits = {j: tuple(calibration.limits[j]) for j in all_j}
+        cal_poses = calibration.poses or {}
+        if all(g in cal_poses.get(n, {}) for n in ("rest", "start") for g in groups):
+            poses = dict(poses, rest=cal_poses["rest"], start=cal_poses["start"])
+            poses_from_cal = True
+
     pose_d = {}
     for name in ("rest", "start"):
         pose_d[name] = {}
@@ -143,7 +167,9 @@ def load_config(config_dir: Optional[os.PathLike] = None) -> Config:
             for j in js:
                 lo, hi = limits[j]
                 if not lo <= float(gp[j]) <= hi:
-                    raise ConfigError(f"poses.yaml : {name}/{j}={gp[j]} hors limites [{lo}, {hi}]")
+                    raise ConfigError(f"pose {name}/{j}={gp[j]} hors limites [{lo}, {hi}]"
+                                      + (" (limites calibrées : capturer les poses pendant la calibration)"
+                                         if calibration else ""))
             pose_d[name][g] = {j: float(gp[j]) for j in js}
 
     emotions = [e["id"] for e in emos["emotions"]]
@@ -155,7 +181,8 @@ def load_config(config_dir: Optional[os.PathLike] = None) -> Config:
         raise ConfigError("Une intention ne doit pas porter le même identifiant qu'une émotion")
 
     cc = []
-    for c in guard.get("coupled_constraints", []) or []:
+    manual = list(guard.get("coupled_constraints", []) or [])
+    for c in manual + (list(calibration.coupled) if calibration else []):
         for j in c["terms"]:
             if j not in limits:
                 raise ConfigError(f"Contrainte {c['name']} : articulation inconnue {j}")
@@ -175,10 +202,12 @@ def load_config(config_dir: Optional[os.PathLike] = None) -> Config:
     )
     return Config(
         root=root, groups=groups, limits=limits,
-        calibration_version=str(joints["calibration"]["version"]),
-        calibrated=bool(joints["calibration"]["calibrated"]),
-        poses=pose_d, poses_calibrated=bool(poses.get("calibrated", False)),
+        calibration_version=calibration.version if calibration else str(joints["calibration"]["version"]),
+        calibrated=calibration is not None,
+        poses=pose_d,
+        poses_calibrated=poses_from_cal,
         emotions=emotions, emotion_labels=labels, intentions=intentions,
         guardian=gcfg, robot=robot, model=model,
         raw={"joints": joints, "poses": poses, "emotions": emos, "guardian": guard},
+        calibration=calibration,
     )

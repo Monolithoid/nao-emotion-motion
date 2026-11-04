@@ -38,6 +38,8 @@ class Api:
         return {"emotions": [{"id": e, "label": c.emotion_labels[e]} for e in c.emotions],
                 "intentions": c.intentions, "groups": c.groups, "limits": c.limits,
                 "calibration_version": c.calibration_version, "calibrated": c.calibrated,
+                "calibration_robot": (c.calibration.robot if c.calibration else None),
+                "bridge": c.robot.get("bridge"),
                 "poses_calibrated": c.poses_calibrated, "robot": c.robot.get("robot"),
                 "countdown_s": c.robot.get("recording", {}).get("countdown_s", 3)}
 
@@ -84,7 +86,16 @@ class Api:
 
     # POST --------------------------------------------------------------------
     def post_connect(self, d):
-        self.wb.ctrl.connect()
+        """{"mode": "sim"} ou {"mode": "robot", "robot_host": "nao.local" | "192.168.1.10",
+        "robot_port": 9559, "bridge_host"?: ..., "bridge_port"?: ...}. Aucun mouvement."""
+        mode = d.get("mode")
+        if mode == "robot":
+            self.wb.connect_robot(d.get("robot_host"), int(d.get("robot_port") or 9559),
+                                  d.get("bridge_host") or None, d.get("bridge_port") or None)
+        elif mode == "sim":
+            self.wb.use_simulation()
+        else:
+            self.wb.ctrl.connect()
         return self.wb.status()
 
     def post_arm(self, d):
@@ -118,6 +129,8 @@ class Api:
 
     def post_record_prepare(self, d):
         if d.get("kind") == "head":
+            if d.get("generated"):
+                return self.wb.prepare_head_take(generated=d["generated"], confirm=bool(d.get("confirm")))
             return self.wb.prepare_head_take(d["arm_take_id"], confirm=bool(d.get("confirm")))
         return self.wb.prepare_arm_take(d["emotion"], float(d["intensity"]), d.get("intention") or None,
                                         confirm=bool(d.get("confirm")))

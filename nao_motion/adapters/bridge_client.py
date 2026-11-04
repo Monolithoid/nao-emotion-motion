@@ -64,10 +64,16 @@ class BridgeAdapter(RobotAdapter):
     def disconnect(self):
         self._alive = False
         try:
+            if self._file:
+                self._file.close()  # sinon la socket reste ouverte tant que le fichier existe
             if self._sock:
+                self._sock.shutdown(socket.SHUT_RDWR)
                 self._sock.close()
+        except OSError:
+            pass
         finally:
             self._sock = None
+            self._file = None
 
     def is_connected(self) -> bool:
         return self._alive and self._sock is not None
@@ -97,6 +103,22 @@ class BridgeAdapter(RobotAdapter):
 
     def capabilities(self) -> dict:
         return {"adapter": "bridge", **self.info}
+
+    def connect_robot(self, host: str, port: int = 9559) -> dict:
+        """Demande au pont de se connecter à NAOqi (IP ou nom DNS). Aucun mouvement."""
+        from ..config.hosts import validate_host
+        info = self._call("connect_robot", host=validate_host(host), port=int(port))
+        self.info = self._call("hello")
+        return info
+
+    @property
+    def robot_connected(self) -> bool:
+        return bool(self.info.get("robot_connected"))
+
+    def factory_limits(self, joints):
+        """Limites d'usine lues via ALMotion.getLimits (aucune commande)."""
+        lim = self._call("get_limits", joints=list(joints))
+        return {j: [float(x) for x in l] for j, l in zip(joints, lim)}
 
     def _read(self, joints):
         return np.array(self._call("read_angles", joints=joints), dtype=np.float64)

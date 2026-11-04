@@ -51,6 +51,57 @@ class Workbench:
         self.rng = np.random.default_rng(0)
         self.lock = threading.RLock()
 
+    # -- connexion au robot (adresse saisie dans l'interface) -------------------
+    def _busy(self) -> bool:
+        rec = self.recording
+        return self.ctrl.state == State.EXECUTING or (
+            rec is not None and rec.state in (RecState.COUNTDOWN, RecState.RECORDING))
+
+    def use_adapter(self, adapter):
+        """Remplace l'adaptateur (simulation <-> pont). Refusé pendant un mouvement ou un enregistrement."""
+        if self._busy():
+            raise ControllerError("Mouvement ou enregistrement en cours : arrêter d'abord")
+        try:
+            if self.adapter.is_connected():
+                self.adapter.disconnect()
+        except Exception:
+            pass
+        self.adapter = adapter
+        self.ctrl = Controller(self.cfg, adapter, self.guardian)
+        self.recording = None
+        self.engine = None
+        self.sim_demonstration = adapter.name == "sim"
+
+    def connect_robot(self, robot_host: str, robot_port: int = 9559, bridge_host: Optional[str] = None,
+                      bridge_port: Optional[int] = None) -> dict:
+        """Connexion au robot via le pont, à l'adresse (IP ou nom DNS) fournie par l'interface.
+        Ni mouvement, ni changement de raideur ; le contrôleur reste désarmé."""
+        from .adapters.bridge_client import BridgeAdapter
+        from .config.hosts import validate_host
+        host = validate_host(robot_host)
+        if bridge_host:
+            validate_host(bridge_host)
+        ad = BridgeAdapter(self.cfg, host=bridge_host, port=bridge_port)
+        if self._busy():
+            raise ControllerError("Mouvement ou enregistrement en cours : arrêter d'abord")
+        if self.adapter.name == "bridge" and self.adapter.is_connected():
+            self.adapter.disconnect()  # le pont n'accepte qu'un client à la fois
+        ad.connect()
+        try:
+            info = ad.connect_robot(host, int(robot_port or 9559))
+        except Exception:
+            ad.disconnect()
+            raise
+        self.use_adapter(ad)
+        self.ctrl.state = State.IDLE
+        self.ctrl._log(f"connecté au robot {host}:{robot_port} via le pont (aucun mouvement envoyé)")
+        return info
+
+    def use_simulation(self):
+        from .adapters.sim import SimAdapter
+        self.use_adapter(SimAdapter(self.cfg))
+        self.ctrl.connect()
+
     # -- événement extérieur ---------------------------------------------------
     def set_event(self, d: dict, ttl_s: Optional[float] = None) -> EventContext:
         """Reçoit un événement (composant caméra/micros, ou test manuel)."""
@@ -86,15 +137,28 @@ class Workbench:
                          "event": self.current_event().to_dict()}
         return self.rec_info
 
-    def prepare_head_take(self, arm_take_id, confirm=False):
-        arm = self.store.load(arm_take_id)
+    def prepare_head_take(self, arm_take_id=None, confirm=False, generated: Optional[dict] = None):
+        """Passage 2. `generated={"emotion", "intensity", "variation"?, "seed"?}` : le modèle
+        des bras existant (figé) produit le geste ; sinon `arm_take_id` : démonstration rejouée."""
         ev = self.current_event()
-        rec = HeadRecording(self.cfg, self.ctrl, arm, ev)
+        if generated is not None:
+            g = dict(generated)
+            self.cfg.emotion_index(g["emotion"])
+            eng = self.get_engine()
+            if getattr(eng, "arm_model", None) is None:
+                raise ControllerError("Aucun modèle des bras entraîné : entraîner les bras d'abord")
+            rec = HeadRecording.from_generated(self.cfg, self.ctrl, eng, g["emotion"], float(g["intensity"]), ev,
+                                               float(g.get("variation", 0.0)), g.get("seed"))
+            emotion, intensity, intention = g["emotion"], float(g["intensity"]), g.get("intention")
+        else:
+            arm = self.store.load(arm_take_id)
+            rec = HeadRecording.from_take(self.cfg, self.ctrl, arm, ev)
+            emotion, intensity, intention = arm.meta.emotion, arm.meta.intensity, arm.meta.intention
         rec.prepare(confirm=confirm)  # approche motorisée validée, contrôleur armé requis
         self.recording = rec
-        self.rec_info = {"kind": "head", "emotion": arm.meta.emotion, "intensity": arm.meta.intensity,
-                         "intention": arm.meta.intention, "arm_take_id": arm_take_id, "event": ev.to_dict()}
-        return self.rec_info
+        self.rec_info = {"kind": "head", "emotion": emotion, "intensity": intensity, "intention": intention,
+                         "event": ev.to_dict(), **rec.source}
+        return {k: v for k, v in self.rec_info.items()}
 
     def _sim_demonstrator(self, countdown_s):
         """En simulation, un démonstrateur synthétique remplace la main de l'opérateur."""
@@ -165,10 +229,13 @@ class Workbench:
             config_fingerprint=self.cfg.fingerprint(), adapter=self.adapter.name,
             sample_rate_hz=rec.rate, segment=seg, head_initial=r.head_initial,
             arm_take_id=info.get("arm_take_id"), intention=info.get("intention"),
+            arm_source=info.get("arm_source"), arm_gesture_id=info.get("arm_gesture_id"),
+            arm_generation=info.get("arm_generation"),
             synthetic=self.sim_demonstration if synthetic is None else synthetic, status=status,
             annotations={"notes": notes or ("" if r.complete else r.message), "tags": [] if r.complete else ["incomplete"]},
         )
-        self.store.save(meta, r.traj)
+        ref = rec.replay.shifted(r.segment[0]) if info["kind"] == "head" else None  # consigne, même horloge
+        self.store.save(meta, r.traj, reference=ref)
         self.recording = None
         return take_id
 
@@ -298,7 +365,10 @@ class Workbench:
         self.ctrl.stop()
 
     def status(self) -> dict:
+        info = getattr(self.adapter, "info", {}) or {}
         return {"adapter": self.adapter.name, "real_robot": bool(getattr(self.adapter, "is_real", False)),
+                "robot_address": info.get("robot_address"), "robot_name": info.get("robot_name"),
+                "naoqi_version": info.get("naoqi_version"),
                 "connected": self.adapter.is_connected(), "controller": self.ctrl.state.value,
                 "armed": self.ctrl.armed, "last_error": self.ctrl.last_error,
                 "recording": self.recording_status(), "event": self.current_event().to_dict(),

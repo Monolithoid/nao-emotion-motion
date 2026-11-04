@@ -14,16 +14,18 @@ Le composant moteur n'est pas un LLM. C'est un petit modèle neuronal supervisé
 pip install -e ".[dev]"          # numpy, pyyaml, torch (+ pytest)
 nao-motion check-config          # vérifie configs/ et liste ce qui manque pour le robot réel
 nao-motion demo                  # parcours complet en simulation (~15 s), dans ./demo_sim
+cp .env.example .env             # identité et adresse du robot (lue par la config et par le pont)
 pytest                           # tests
 ```
 
-`nao-motion demo` déroule les six étapes du premier résultat :
+`nao-motion demo` déroule les étapes du premier résultat :
 
+0. procédure de calibration exercée sur le robot simulé (sans portée réelle, non activée) ;
 1. collecte et sauvegarde de démonstrations des bras (démonstrateur synthétique, adaptateur simulé) ;
 2. consultation d'une prise et relecture virtuelle validée par le guardian ;
 3. entraînement du modèle des bras ;
 4. génération, validation, puis exécution du cycle complet sur le robot simulé ;
-5. prises de tête synchronisées sur la relecture des bras, avec plusieurs contextes de regard ;
+5. collecte tête : le **modèle des bras** joue chaque émotion/intensité pendant que la tête est guidée (ici par un démonstrateur simulé), avec plusieurs contextes de regard par geste ;
 6. entraînement de la tête avec le modèle des bras figé, puis exécution simulée avec un événement.
 
 ## Interface locale de collecte
@@ -36,7 +38,7 @@ nao-motion ui --adapter bridge   # vers le robot via le pont NAOqi (voir plus ba
 L'interface écoute uniquement sur `127.0.0.1`. Elle a six onglets :
 
 - **1 · Bras** : choisir l'émotion, l'intensité et éventuellement une intention. La consigne s'affiche en grand (« surprise — 0,8 »). Ensuite : *Préparer* (relâche les bras et maintient la tête), *Démarrer* (compte à rebours, puis enregistrement des angles **mesurés** et de leurs horodatages), *Arrêter*. Un aperçu des courbes s'affiche sans aucun mouvement, puis on choisit *Accepter*, *Garder en attente*, *Rejeter* ou *Recommencer*, avec une annotation possible.
-- **2 · Tête** : choisir une prise de bras et définir le contexte événementiel (aucun événement, événement de test, ou dernier événement reçu du composant externe). *Préparer* fait une approche motorisée des bras vers le début de la relecture, puis relâche la tête. *Démarrer* rejoue les bras pendant que vous guidez la tête. On peut enregistrer plusieurs contextes pour un même mouvement des bras.
+- **2 · Tête** : choisir la source du mouvement des bras. Par défaut, c'est un **geste généré par le modèle des bras** (émotion, intensité, variation, graine) ; une démonstration enregistrée peut aussi être rejouée. Définir ensuite le contexte événementiel (aucun événement, événement de test, ou dernier événement reçu du composant externe). *Préparer* valide le geste, fait une approche motorisée des bras vers son début, puis relâche la tête. *Démarrer* exécute les bras pendant que vous guidez la tête. On enregistre émotion/intensité, bras **réellement mesurés**, consigne envoyée et tête. Plusieurs contextes de regard peuvent être enregistrés pour un même geste (même graine).
 - **Prises** : répartition par émotion × intensité (acceptées / total), liste filtrable, courbes, relecture virtuelle (curseur animé, relecture lissée superposée), statut et annotations.
 - **Entraînement** : lancer l'entraînement des bras ou de la tête et consulter les résultats (RMSE en entraînement et en validation, référence de comparaison, taux d'acceptation du guardian).
 - **Génération** : choisir une émotion, éventuellement un mélange de deux émotions, l'intensité, une variation et l'événement. On obtient les courbes, le rapport du guardian sur le geste et sur le cycle complet, et un bouton *Exécuter* (désactivé si le cycle est refusé).
@@ -65,6 +67,10 @@ nao-motion generate --emotion joie --intensity 0.7 --event-az 30 --out geste.jso
 nao-motion generate --mix '{"joie":0.6,"calme":0.4}' --intensity 0.5 --variation 0.03 --seed 1
 nao-motion generate --emotion peur --intensity 0.9 --simulate     # exécution sur le robot SIMULÉ
 nao-motion execute geste.json --adapter bridge --confirm          # seul chemin CLI vers un robot réel
+nao-motion robot-info                   # identité, NAOqi, limites d'usine, posture mesurée (lecture seule, via le pont)
+nao-motion calibrate                    # procédure de calibration du guardian (voir « Calibration »)
+nao-motion calibrate --adapter sim      # la même procédure sur le robot simulé
+nao-motion calibration-activate configs/calibration/<fichier>.yaml
 nao-motion capture-pose --group left_arm --name start --adapter bridge   # lit les capteurs, n'envoie rien
 nao-motion serve-inference --port 8766  # inférence déportée (génère, n'exécute pas)
 ```
@@ -104,7 +110,9 @@ Les données vont dans `data/`, les entraînements dans `runs/`. Ces deux dossie
 
 La tête est exprimée sur la **même phase temporelle** que les bras, avec la même durée. Le réseau voit donc tout le déroulement prévu des bras et peut apprendre une anticipation ou un retard. Rien ne force la tête à suivre les mains : ce que montrent les démonstrations (regarder les mains, rester vers l'interlocuteur, détourner le regard) détermine son comportement.
 
-La tête s'entraîne avec le modèle des bras **figé** : il est chargé, ses paramètres n'ont pas de gradient, et l'empreinte de son checkpoint est enregistrée dans celui de la tête. Par défaut (`head_model.arm_input: recorded`), l'entrée « bras » d'un exemple de tête correspond aux bras **mesurés pendant la relecture**, c'est-à-dire au mouvement exact auquel la tête a été associée. L'option `predicted` utilise plutôt la sortie du modèle des bras.
+**Collecte et entraînement de la tête.** Le modèle des bras déjà entraîné reçoit une émotion et une intensité. Le geste qu'il produit est validé par le guardian, puis exécuté par les bras pendant que l'opérateur guide uniquement la tête. Chaque prise donne un exemple (émotion/intensité, bras réalisés, tête enregistrée, événement). On peut aussi rejouer une démonstration de bras enregistrée.
+
+« Bras figés » veut dire que les poids du modèle des bras ne changent pas pendant l'entraînement de la tête. Il est chargé sans gradient, et l'empreinte de son checkpoint est enregistrée dans celui de la tête et dans chaque prise de tête générée. Par défaut (`head_model.arm_input: recorded`), l'entrée « bras » d'un exemple est la trajectoire des bras **mesurée** pendant la prise, c'est-à-dire le mouvement réellement exécuté. L'option `predicted` utilise plutôt la sortie du modèle des bras.
 
 ### Représentation des mouvements
 
@@ -152,8 +160,8 @@ Le découpage entraînement/validation se fait **par groupe** : une prise de bra
 
 Chaque prise est stockée dans `data/takes/<take_id>/` :
 
-- `samples.npz` : `t` (N,) en s depuis le début de l'enregistrement, `q` (N, J) en rad **mesurés**, `joints` ;
-- `meta.json` : `take_id`, `session_id`, `kind` (`arms` | `head`), `emotion`, `intensity`, `intention` (optionnelle), `joints`, `unit`, `time_unit`, `guided_joints`, `driven_joints`, `event` (repère torse), `event_frame`, `segment`, `head_initial`, `arm_take_id` (lien tête → bras), `calibration_version`, `config_fingerprint`, `adapter`, `sample_rate_hz`, `synthetic`, `status` (`pending` | `accepted` | `rejected`), `annotations` (`notes`, `tags`), `created_at` et `format_version`.
+- `samples.npz` : `t` (N,) en s depuis le début de l'enregistrement, `q` (N, J) en rad **mesurés**, `joints` ; pour une prise de tête, aussi la consigne envoyée aux bras (`ref_t`, `ref_q`, `ref_joints`) sur la même horloge ;
+- `meta.json` : `take_id`, `session_id`, `kind` (`arms` | `head`), `emotion`, `intensity`, `intention` (optionnelle), `joints`, `unit`, `time_unit`, `guided_joints`, `driven_joints`, `event` (repère torse), `event_frame`, `segment`, `head_initial`, `arm_source` (`take` | `generated`), `arm_take_id` (démonstration rejouée), `arm_generation` (émotion, intensité, variation, graine, empreinte du modèle des bras), `arm_gesture_id` (groupe de découpage), `calibration_version`, `config_fingerprint`, `adapter`, `sample_rate_hz`, `synthetic`, `status` (`pending` | `accepted` | `rejected`), `annotations` (`notes`, `tags`), `created_at` et `format_version`.
 
 Les données sont refusées à l'enregistrement si une valeur n'est pas finie, si les horodatages ne sont pas strictement croissants, si l'émotion est inconnue, si l'intensité sort de [0, 1], si les unités ne sont pas celles attendues, si une articulation est à la fois guidée et pilotée, ou si une prise de tête n'a pas de prise de bras valide.
 
@@ -167,6 +175,7 @@ L'emplacement de l'inférence se règle dans `configs/robot.yaml` → `inference
 
 Le modèle **propose**, le contrôleur **encadre**.
 
+- **Limites du guardian** : elles viennent uniquement d'une **calibration** mesurée sur le robot (section suivante). Les valeurs de `joints.yaml` et `poses.yaml` ne servent qu'à la simulation.
 - **Guardian** (`nao_motion/guardian`) : il accepte ou refuse, sans jamais corriger. Il refuse les formats invalides, les valeurs non finies, les articulations inconnues ou celles des jambes, les jeux d'articulations incompatibles et les durées hors bornes. Il vérifie les **limites min/max avec marge** et les **contraintes couplées** linéaires (`guardian.yaml`, y compris tête ↔ bras) sur le **trajet complet** échantillonné à 100 Hz, et pas seulement aux extrémités. Il limite la **vitesse** et l'**accélération** par articulation et contrôle l'écart entre le premier point et l'état mesuré. En cas de dépassement de vitesse, il indique le ralentissement qui suffirait, sans l'appliquer.
 - Des min/max indépendants et quelques contraintes linéaires **ne garantissent pas l'absence de collision**. Les contraintes fournies sont des exemples, à remplacer par des zones mesurées sur votre robot.
 - **Cycle nominal** construit par le contrôleur, non appris : repos → départ → geste → départ → repos. Les transitions repos ↔ départ ont un jerk minimal. Les transitions départ ↔ geste sont quintiques et raccordées en vitesse et en accélération. Le **cycle entier** est validé avant le premier envoi, puis revalidé contre l'état mesuré juste avant l'exécution. Il est refusé si le robot n'est pas mesuré au repos (sauf choix explicite `from_pose="current"`).
@@ -178,33 +187,57 @@ Le modèle **propose**, le contrôleur **encadre**.
   - *Perte de connexion* : plus rien ne peut être envoyé depuis le PC. Le **chien de garde du pont**, côté robot, arrête alors les tâches et maintient la posture si aucun battement n'arrive pendant 0,6 s ou si le client se déconnecte.
   - Il n'y a **jamais** de retour motorisé automatique au repos ni de relâchement automatique. *Retour au repos* et *Relâcher* sont des actions explicites, parce que la bonne réaction dépend de l'état réel du robot.
 - **Aucun mouvement automatique** au démarrage, pendant les tests ou à la fin d'un entraînement. Le contrôleur démarre désarmé, et chaque mouvement exige l'armement puis une action explicite. Plusieurs tests le vérifient.
-- **Robot réel** : l'armement est refusé tant que `joints.yaml` et `poses.yaml` ne sont pas marqués comme calibrés.
+- **Robot réel** : l'armement est refusé sans calibration active, ou si le robot connecté ne porte pas le nom de la calibration ou du `.env`.
 - **Redémarrages observés pendant certains mouvements** : leur cause n'est pas établie ici. Le guardian **ne les corrige pas** et ne doit pas être présenté comme une protection contre eux. Pour les étudier, il faudrait journaliser les mouvements concernés (trajectoire, vitesses, températures et courant si disponibles) et comparer.
 
 ---
 
+## Calibration du guardian
+
+La calibration est une procédure à part entière, faite robot par robot. Son résultat est un fichier versionné, `configs/calibration/<robot>-<date>.yaml`. Le fichier actif est désigné par `configs/calibration/ACTIVE`, et une calibration n'est jamais écrasée.
+
+```bash
+nao-motion calibrate            # interactive, via le pont ; rien n'est commandé
+```
+
+1. **Identification** : nom du robot, version de NAOqi, configuration matérielle, et limites d'usine lues par `ALMotion.getLimits`.
+2. **Exploration guidée**, groupe par groupe (bras gauche, bras droit, tête). Le groupe exploré est relâché et seulement lu, les autres sont raidis sur place. Amenez lentement chaque articulation jusqu'à ses butées *utiles*, et parcourez les combinaisons (tête tournée **et** baissée, épaule levée **et** écartée, etc.).
+3. **Poses** de repos et de départ, capturées pour chaque groupe en plaçant le robot à la main.
+4. **Calcul** : les limites sont l'amplitude mesurée, intersectée avec les limites d'usine, moins une marge (`configs/calibration.yaml`). Les **contraintes couplées** viennent de l'enveloppe convexe de chaque couple exploré (`pairs`), simplifiée de façon conservatrice. La procédure est refusée si l'exploration est trop courte ou trop étroite, ou si une pose sort de l'enveloppe.
+5. **Relecture** du résumé, puis enregistrement et activation (`nao-motion calibration-activate`).
+
+Une calibration active remplace limites, poses et version de calibration dans toute la chaîne (guardian, prises, checkpoints). Les contraintes manuelles de `guardian.yaml` s'y ajoutent, notamment entre membres (bras ↔ tête, bras ↔ bras), qu'une exploration articulation par articulation ne mesure pas. L'enveloppe convexe suppose une zone atteignable convexe pour chaque couple ; une zone en L doit être découpée à la main.
+
 ## Connecter le robot réel
 
-Informations indispensables, à renseigner dans `configs/robot.yaml` :
+Identité relevée sur le NAO de Joachim (dans `.env.example`) : **naoH25, tête/corps/bras VERSION_40 (NAO V4), NAOqi 2.1.4.13, Python 2.7.3, nom « nao »**. Pour la relever ou la vérifier sur un autre robot, en SSH (`ssh nao@<IP>`) :
 
-1. **Modèle et version** du robot et de NAOqi (`robot.model`, `robot.naoqi_version`), par exemple via l'interface web du robot ou Choregraphe.
-2. **Adresse IP** (et port NAOqi, 9559 par défaut).
-3. **SDK Python NAOqi disponible** pour cette version, et sa version de Python (souvent 2.7 pour NAO). Le pont accepte `import qi` (libqi) puis, à défaut, `from naoqi import ALProxy`.
+```bash
+qicli call ALSystem.systemVersion        # version NAOqi
+qicli call ALSystem.robotName            # nom (lié à la calibration)
+qicli call ALMotion.getRobotConfig       # modèle et versions tête/corps/bras
+qicli call ALMotion.getLimits HeadPitch  # [min, max, vitesse max, couple max], par articulation
+python --version                         # Python embarqué
+```
 
 Étapes :
 
-1. **Préparer la position du robot.** Les jambes restent hors périmètre et ne sont jamais commandées. Placez le robot dans une posture stable, par exemple assis ou accroupi, avant toute séance. Gérez la vie autonome (ALAutonomousLife), la respiration et les mouvements d'attente depuis vos outils habituels : le pont n'y touche pas, car désactiver la vie autonome peut elle-même faire bouger le robot selon les versions.
-2. **Lancer le pont**, sur le PC (connexion par IP) ou sur le robot. Il n'envoie aucun mouvement au démarrage.
+1. `cp .env.example .env` (non versionné) : identité attendue du robot, port du pont. Ces valeurs remplacent celles de `configs/robot.yaml`.
+2. **Installer le SDK Python NAOqi 2.1.4** (Python 2.7) sur la machine qui fera tourner le pont, ou lancer le pont directement sur le robot, qui a Python 2.7.3. Le pont essaie `import qi`, puis `from naoqi import ALProxy`.
+3. **Préparer la position du robot.** Les jambes restent hors périmètre et ne sont jamais commandées. Placez le robot dans une posture stable, par exemple assis ou accroupi. Gérez la vie autonome, la respiration et les mouvements d'attente depuis vos outils habituels : le pont n'y touche pas, car les désactiver peut faire bouger le robot selon les versions.
+4. **Lancer le pont**, qui n'envoie aucun mouvement au démarrage et attend l'adresse du robot :
    ```bash
-   python2 bridge/naoqi_bridge.py --robot-ip 192.168.1.10 --port 9600 --watchdog 0.6
+   python2 bridge/naoqi_bridge.py            # adresse fournie ensuite par l'interface
+   python2 bridge/naoqi_bridge.py --robot-ip nao.local   # ou dès le lancement
    ```
-   Pour tester le protocole sans robot : `python bridge/naoqi_bridge.py --fake`.
-3. **Mesurer les limites** de chaque articulation sur votre robot (`joints.yaml` → `limits`), puis passer `calibration.calibrated: true` et changer `calibration.version`.
-4. **Capturer les poses** de repos et de départ par groupe, en plaçant le robot à la main : `nao-motion capture-pose --adapter bridge --group left_arm --name rest` lit les capteurs et affiche un extrait YAML à coller dans `poses.yaml`. Passer ensuite `calibrated: true`.
-5. **Remplacer les contraintes couplées d'exemple** (`guardian.yaml`) par des zones mesurées, notamment bras ↔ tête et bras ↔ bras. Ajuster aussi vitesses, accélérations et raideurs (`robot.yaml` → `stiffness`).
-6. `nao-motion check-config`, puis `nao-motion ui --adapter bridge`. Faites un premier essai avec des gestes lents, une main près du bouton ARRÊT, et un robot dans une posture où un relâchement ne le ferait pas tomber.
+   Pour tester le protocole sans robot : `python bridge/naoqi_bridge.py --fake`. Le pont n'accepte qu'un client à la fois (interface **ou** commande).
+   Puis, dans `nao-motion ui --adapter bridge` → onglet **Robot**, saisir l'**adresse du robot (IP ou nom DNS)**, par exemple `192.168.1.10` ou `nao.local`, et cliquer sur *Connecter au robot*. Cette action n'envoie aucun mouvement et ne change aucune raideur. L'adresse est mémorisée dans le navigateur. En ligne de commande, `--robot <IP ou DNS>` joue le même rôle, avec `NAO_IP` comme valeur par défaut.
+5. `nao-motion robot-info --robot <IP ou DNS>` : vérifie la connexion et affiche identité, limites d'usine et posture mesurée, sans aucun mouvement.
+6. `nao-motion calibrate` (section précédente), puis `nao-motion check-config`.
+7. Ajuster vitesses, accélérations, raideurs (`robot.yaml` → `stiffness`) et contraintes manuelles entre membres (`guardian.yaml`).
+8. `nao-motion ui --adapter bridge`. Faites un premier essai avec des gestes lents, une main près du bouton ARRÊT, et un robot dans une posture où un relâchement ne le ferait pas tomber.
 
-Points à vérifier sur votre version, que ce dépôt ne présume pas : le comportement de `setAngles` / `killTasksUsingResources` en maintien, la raideur minimale qui permet un guidage confortable, et la latence réelle du streaming à 25 Hz.
+Points à vérifier sur NAOqi 2.1.4, que ce dépôt ne présume pas : le comportement de `setAngles` / `killTasksUsingResources` en maintien, la raideur minimale qui permet un guidage confortable, et la latence réelle du streaming à 25 Hz.
 
 ---
 

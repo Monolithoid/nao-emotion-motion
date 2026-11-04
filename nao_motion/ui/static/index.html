@@ -52,12 +52,18 @@
 </section>
 
 <section id="tab-head" class="tab">
-  <p class="hint">Passage 2 : les bras rejouent une prise (motorisés) pendant que vous guidez uniquement la tête.
-  Plusieurs contextes de regard peuvent être enregistrés pour un même mouvement des bras.</p>
-  <div class="row">
-    <label>Prise de bras <select id="h-arm"></select></label>
-    <span id="h-arm-info"></span>
-  </div>
+  <p class="hint">Passage 2 : les bras sont motorisés pendant que vous guidez uniquement la tête. On enregistre
+  émotion/intensité, bras réellement mesurés et tête. Plusieurs contextes de regard peuvent être enregistrés pour un même geste.</p>
+  <fieldset>
+    <legend>Source du mouvement des bras</legend>
+    <label><input type="radio" name="hsrc" value="generated" checked> Geste généré par le modèle des bras :</label>
+    <select id="h-emotion"></select>
+    intensité <input type="range" id="h-intensity" min="0" max="1" step="0.05" value="0.7"> <span id="h-int-val"></span>
+    variation <input type="number" id="h-var" value="0" step="0.02" min="0" class="num">
+    graine <input type="number" id="h-seed" value="0" class="num">
+    <br><label><input type="radio" name="hsrc" value="take"> Démonstration enregistrée :</label>
+    <select id="h-arm"></select> <span id="h-arm-info"></span>
+  </fieldset>
   <div class="plot" id="h-arm-plot"></div>
   <fieldset>
     <legend>Contexte événementiel (repère torse : azimut + à gauche, élévation + en haut)</legend>
@@ -71,7 +77,7 @@
   </fieldset>
   <div class="consigne" id="h-consigne"></div>
   <div class="row">
-    <button id="h-prepare">Préparer (approche motorisée des bras, puis tête relâchée)</button>
+    <button id="h-prepare">Préparer (approche motorisée des bras, puis tête relâchée — mouvements autorisés requis)</button>
     <button id="h-start">Démarrer (compte à rebours + relecture)</button>
     <button id="h-stop">Arrêter</button>
     <button id="h-hold">Raidir la tête sur place</button>
@@ -143,8 +149,19 @@
 </section>
 
 <section id="tab-robot" class="tab">
+  <fieldset>
+    <legend>Connexion (aucun mouvement, aucune raideur modifiée)</legend>
+    <div class="row">
+      <label>Adresse du robot (IP ou nom DNS) <input id="r-host" placeholder="192.168.1.10 ou nao.local" size="24"></label>
+      <label>Port NAOqi <input id="r-port" type="number" value="9559" class="num"></label>
+      <label>Pont <input id="r-bhost" placeholder="127.0.0.1" size="12">:<input id="r-bport" type="number" value="9600" class="num"></label>
+      <button id="r-connect-robot">Connecter au robot</button>
+      <button id="r-sim">Revenir à la simulation</button>
+    </div>
+    <p class="hint">Le pont (bridge/naoqi_bridge.py) doit tourner ; il se connecte à NAOqi à l'adresse indiquée ici.</p>
+  </fieldset>
   <div class="row">
-    <button id="r-connect">Connecter (aucun mouvement)</button>
+    <button id="r-connect">Reconnecter (aucun mouvement)</button>
     <button id="r-ack">Acquitter l'état</button>
     <button id="r-hold-all">Raidir tout sur place</button>
     <button id="r-rest">Retour au repos (explicite)</button>
