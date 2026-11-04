@@ -95,8 +95,15 @@ class Workbench:
         ad = BridgeAdapter(self.cfg, host=bridge_host, port=bridge_port)
         if self._busy():
             raise ControllerError("Mouvement ou enregistrement en cours : arrêter d'abord")
-        if self.adapter.name == "bridge" and self.adapter.is_connected():
-            self.adapter.disconnect()  # le pont n'accepte qu'un client à la fois
+        old = self.adapter
+        if old.name == "bridge" and (old.host, old.port) == (ad.host, ad.port):
+            # même pont (ex. après une coupure) : reconnexion en place, la calibration
+            # ouverte et ses explorations sont conservées
+            return self._reconnect_bridge(old, naoqi_host, robot_port, bridge_on_robot, host)
+        if self.calibration is not None:
+            raise ControllerError("Calibration ouverte : la fermer avant de changer de robot ou de pont")
+        if old.name == "bridge":
+            old.disconnect()  # toujours : le pont n'accepte qu'un client à la fois
         ad.connect()
         try:
             # un pont lancé avec --on-robot est déjà connecté à NAOqi : rien à refaire
@@ -108,6 +115,14 @@ class Workbench:
         self.ctrl.state = State.IDLE
         where = "sur le robot" if bridge_on_robot else "sur ce PC"
         self.ctrl._log(f"connecté au robot {host} via le pont {where} (aucun mouvement envoyé)")
+        return info
+
+    def _reconnect_bridge(self, ad, naoqi_host, robot_port, bridge_on_robot, host) -> dict:
+        ad.connect()  # ferme l'ancienne socket d'abord
+        info = ad.info if (bridge_on_robot and ad.robot_connected) else ad.connect_robot(naoqi_host, int(robot_port or 9559))
+        if self.ctrl.state.value in ("disconnected", "fault"):
+            self.ctrl.state = State.IDLE
+        self.ctrl._log(f"reconnecté au robot {host} via le même pont (aucun mouvement envoyé)")
         return info
 
     def use_simulation(self):

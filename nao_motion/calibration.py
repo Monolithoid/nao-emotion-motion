@@ -326,19 +326,26 @@ class CalibrationSession:
         self.live, self.live_joints = qs, list(joints)
         t0 = a.now()
         k = 0
-        while not self._stop.is_set() and a.now() - t0 < max_duration_s:
-            a.heartbeat()
-            qs.append(a.read_angles(joints))
-            self.n = len(qs)
-            k += 1
-            a.sleep(max(0.0, t0 + k / self.rate - a.now()))
-        self.current = None
+        try:
+            while not self._stop.is_set() and a.now() - t0 < max_duration_s:
+                a.heartbeat()
+                qs.append(a.read_angles(joints))
+                self.n = len(qs)
+                k += 1
+                a.sleep(max(0.0, t0 + k / self.rate - a.now()))
+        finally:
+            # même en cas de coupure, les mesures déjà prises sont gardées
+            self.current = None
+            self._store_sweep(group, joints, qs)
+        q = self.sweeps[group]["q"]
+        return {j: (float(q[:, i].min()), float(q[:, i].max())) for i, j in enumerate(joints)} if len(q) else {}
+
+    def _store_sweep(self, group, joints, qs):
         q = np.array(qs).reshape(-1, len(joints))
         prev = self.sweeps.get(group)
         if prev is not None and len(prev["q"]):  # une nouvelle exploration complète la précédente
             q = np.vstack([np.asarray(prev["q"]), q])
         self.sweeps[group] = {"joints": joints, "q": q}
-        return {j: (float(q[:, i].min()), float(q[:, i].max())) for i, j in enumerate(joints)} if len(q) else {}
 
     def clear_sweep(self, group: str):
         self.sweeps.pop(group, None)

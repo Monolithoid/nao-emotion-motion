@@ -95,8 +95,8 @@ class Api:
         """{"mode": "sim"} ou {"mode": "robot", "robot_host": "nao.local" | "192.168.1.10",
         "robot_port": 9559, "bridge_host"?: ..., "bridge_port"?: ...}. Aucun mouvement."""
         mode = d.get("mode")
-        if self.wb.calibration is not None:
-            raise ValueError("Calibration ouverte : la fermer avant de changer de connexion")
+        if self.wb.calibration is not None and mode == "sim":
+            raise ValueError("Calibration ouverte : la fermer avant de passer en simulation")
         if mode == "robot":
             self.wb.connect_robot(d.get("robot_host"), int(d.get("robot_port") or 9559),
                                   d.get("bridge_host") or None, d.get("bridge_port") or None,
