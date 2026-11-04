@@ -122,3 +122,19 @@ def test_real_robot_release_requires_confirmation(ui):
     assert all(wb.adapter.roles[j] == "guided" for j in wb.cfg.groups["head"])
     api.post_calibration_hold({"group": "head"})
     assert all(wb.adapter.roles[j] == "driven" for j in wb.cfg.groups["head"])
+
+
+def test_factory_limits_shown_during_calibration(ui, monkeypatch):
+    """Limites d'usine lues une fois à l'ouverture (lecture seule) et affichées
+    pendant l'exploration ; cadre des nuages = limites d'usine."""
+    wb, api = ui
+    st = api.post_calibration_open({})
+    assert st["factory"] is None  # simulation : pas de getLimits
+    fac = {j: [lo - 0.1, hi + 0.1, 5.0, 1.0] for j, (lo, hi) in wb.cfg.limits.items()}
+    monkeypatch.setattr(wb.adapter, "factory_limits", lambda joints: {j: fac[j] for j in joints}, raising=False)
+    st = api.post_calibration_open({})
+    assert st["factory"]["HeadPitch"] == [round(fac["HeadPitch"][0], 4), round(fac["HeadPitch"][1], 4)]
+    wb.require_calibration().sweep_start("head", max_duration_s=5, background=False)
+    st = api.get_calibration({})
+    pair = next(p for p in st["pairs"] if p["joints"] == ["HeadYaw", "HeadPitch"])
+    assert pair["limits"][1] == fac["HeadPitch"][:2]

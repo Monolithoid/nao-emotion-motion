@@ -74,7 +74,8 @@
     const js = CAL.groups[group] || [];
     const res = CAL.result;
     $("c-table-title").textContent = `Articulations · ${glabel(group)}`;
-    let h = "<tr><th>Articulation</th><th>Rôle</th><th>Actuel</th><th>Min exploré</th><th>Max exploré</th><th>Repos</th><th>Départ</th>" +
+    const fac = CAL.factory || {};
+    let h = "<tr><th>Articulation</th><th>Rôle</th><th>Actuel</th><th>Plage d'usine</th><th>Min exploré</th><th>Max exploré</th><th>Repos</th><th>Départ</th>" +
       (res ? "<th>Guardian</th>" : "") + "</tr>";
     for (const j of js) {
       const rg = CAL.ranges[j] || {};
@@ -82,11 +83,25 @@
       const role = (CAL.roles || {})[j] || "—";
       h += `<tr><td>${j}</td><td>${role === "guided" ? "relâché" : role === "driven" ? "raidi" : role}</td>` +
         `<td class="live num">${CAL.angles ? f3(CAL.angles[j]) : "—"}</td>` +
+        `<td class="num">${fac[j] ? f3(fac[j][0]) + " … " + f3(fac[j][1]) + "<br>" + facBar(fac[j], CAL.angles ? CAL.angles[j] : null, rg) : "non lues"}</td>` +
         `<td class="num${rg.live ? " live" : ""}">${f3(rg.min)}</td><td class="num${rg.live ? " live" : ""}">${f3(rg.max)}</td>` +
         `<td class="num">${f3(rest)}</td><td class="num">${f3(start)}</td>` +
         (res ? `<td class="num">${res.limits[j] ? f3(res.limits[j][0]) + " … " + f3(res.limits[j][1]) : "—"}</td>` : "") + "</tr>";
     }
     $("c-table").innerHTML = h;
+  }
+
+  // barre : plage d'usine (fond), plage explorée (bande), angle actuel (trait) ;
+  // le trait passe en rouge à moins de 0,05 rad d'une limite d'usine
+  function facBar(f, q, rg) {
+    if (!f) return "—";
+    const W = 110, H = 10, X = (v) => Math.max(0, Math.min(W, (v - f[0]) / ((f[1] - f[0]) || 1) * W));
+    const near = q != null && (q - f[0] < 0.05 || f[1] - q < 0.05);
+    const band = rg && rg.min != null ? `<rect x="${X(rg.min).toFixed(1)}" y="2" width="${Math.max(1, X(rg.max) - X(rg.min)).toFixed(1)}" height="${H - 4}" fill="var(--accent)" fill-opacity=".35"/>` : "";
+    const mark = q != null ? `<rect x="${(X(q) - 1.5).toFixed(1)}" y="0" width="3" height="${H}" fill="${near ? "var(--bad, #c0392b)" : "currentColor"}"/>` : "";
+    return `<svg class="facbar" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="plage d'usine">` +
+      `<rect x="0" y="0" width="${W}" height="${H}" rx="2" fill="none" stroke="var(--muted)"/>${band}${mark}</svg>` +
+      (near ? ' <span class="warn">près de la butée</span>' : "");
   }
 
   function renderPairs() {
