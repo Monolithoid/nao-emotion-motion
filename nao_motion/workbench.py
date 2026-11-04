@@ -76,12 +76,20 @@ class Workbench:
         self.sim_demonstration = adapter.name == "sim"
 
     def connect_robot(self, robot_host: str, robot_port: int = 9559, bridge_host: Optional[str] = None,
-                      bridge_port: Optional[int] = None) -> dict:
+                      bridge_port: Optional[int] = None, bridge_on_robot: Optional[bool] = None) -> dict:
         """Connexion au robot via le pont, à l'adresse (IP ou nom DNS) fournie par l'interface.
-        Ni mouvement, ni changement de raideur ; le contrôleur reste désarmé."""
+        Pont sur le robot (défaut, `bridge.location: robot`) : l'interface joint le pont à
+        l'adresse du robot, et le pont joint NAOqi en local. Ni mouvement, ni changement de
+        raideur ; le contrôleur reste désarmé."""
         from .adapters.bridge_client import BridgeAdapter
         from .config.hosts import validate_host
         host = validate_host(robot_host)
+        if bridge_on_robot is None:
+            bridge_on_robot = (self.cfg.robot.get("bridge") or {}).get("location", "robot") == "robot"
+        if bridge_on_robot:
+            bridge_host, naoqi_host = host, "127.0.0.1"
+        else:
+            naoqi_host = host
         if bridge_host:
             validate_host(bridge_host)
         ad = BridgeAdapter(self.cfg, host=bridge_host, port=bridge_port)
@@ -91,13 +99,15 @@ class Workbench:
             self.adapter.disconnect()  # le pont n'accepte qu'un client à la fois
         ad.connect()
         try:
-            info = ad.connect_robot(host, int(robot_port or 9559))
+            # un pont lancé avec --on-robot est déjà connecté à NAOqi : rien à refaire
+            info = ad.info if (bridge_on_robot and ad.robot_connected) else ad.connect_robot(naoqi_host, int(robot_port or 9559))
         except Exception:
             ad.disconnect()
             raise
         self.use_adapter(ad)
         self.ctrl.state = State.IDLE
-        self.ctrl._log(f"connecté au robot {host}:{robot_port} via le pont (aucun mouvement envoyé)")
+        where = "sur le robot" if bridge_on_robot else "sur ce PC"
+        self.ctrl._log(f"connecté au robot {host} via le pont {where} (aucun mouvement envoyé)")
         return info
 
     def use_simulation(self):
