@@ -167,3 +167,33 @@ def test_joint_names_are_native_str_on_python2(monkeypatch):
     monkeypatch.setattr(mod, "sys", types.SimpleNamespace(version_info=(2, 7, 3)))
     assert mod.native_str(u"HeadYaw") == b"HeadYaw"
     assert mod.native_str(1.5) == 1.5
+
+
+def test_reconnect_same_bridge_keeps_calibration(cfg, tmp_path):
+    """Coupure pendant une calibration : la socket morte est fermée (le pont, qui ne sert
+    qu'un client, se libère) et « Connecter au robot » sur le même pont reconnecte en
+    place sans perdre la calibration ouverte ni ses explorations."""
+    from nao_motion.adapters.base import ConnectionLost
+    from nao_motion.workbench import Workbench
+    mod = _load_bridge_module()
+    br = mod.Bridge(None, 0.3, lambda h, p: mod.FakeBackend())
+    br.handle({"cmd": "connect_robot", "host": "127.0.0.1", "port": 9559})
+    ready = threading.Event()
+    threading.Thread(target=mod.serve, args=(br, "127.0.0.1", 0, ready), daemon=True).start()
+    assert ready.wait(5)
+    wb = Workbench(tmp_path / "d", tmp_path / "r", cfg=cfg, adapter_kind="sim", virtual_time=True)
+    wb.connect_robot("127.0.0.1", 9559, None, ready.port)
+    ad = wb.adapter
+    wb.open_calibration()
+    wb.calibration.session.sweeps["head"] = {"joints": cfg.groups["head"], "q": np.zeros((60, 2))}
+    ad._sock.shutdown(__import__("socket").SHUT_RDWR)  # coupure réseau simulée
+    with pytest.raises(ConnectionLost):
+        ad.read_angles(["HeadYaw"])
+    assert ad._sock is None  # socket morte fermée
+    wb.connect_robot("127.0.0.1", 9559, None, ready.port)
+    assert wb.adapter is ad and wb.calibration is not None and "head" in wb.calibration.session.sweeps
+    assert ad.read_angles(["HeadYaw"]) == [0.0]
+    with pytest.raises(Exception, match="Calibration ouverte"):
+        wb.connect_robot("127.0.0.2", 9559, None, ready.port)
+    wb.close_calibration()
+    wb.use_simulation()

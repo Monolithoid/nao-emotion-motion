@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import socket
 import threading
+from typing import Optional
 import time
 
 import numpy as np
@@ -21,13 +22,15 @@ PROTOCOL_VERSION = 1
 class BridgeAdapter(RobotAdapter):
     name = "bridge"
 
-    def __init__(self, cfg, host=None, port=None, timeout_s: float = 1.0):
+    def __init__(self, cfg, host=None, port=None, timeout_s: Optional[float] = None):
         super().__init__(cfg)
         b = cfg.robot.get("bridge", {})
         self.host = host or b.get("host", "127.0.0.1")
         self.port = int(port or b.get("port", 9600))
         self.heartbeat_s = float(b.get("heartbeat_s", 0.2))
-        self.timeout_s = timeout_s
+        # délai de réponse du pont : le Wi-Fi du NAO a des pointes de latence ; une réponse
+        # en retard désynchroniserait le flux, la connexion est alors fermée proprement
+        self.timeout_s = float(timeout_s if timeout_s is not None else b.get("timeout_s", 3.0))
         self._sock = None
         self._file = None
         self._lock = threading.Lock()
@@ -40,6 +43,7 @@ class BridgeAdapter(RobotAdapter):
         return bool(self.info.get("real", True))
 
     def connect(self):
+        self._close()  # libère une ancienne connexion : le pont ne sert qu'un client à la fois
         try:
             self._sock = socket.create_connection((self.host, self.port), timeout=self.timeout_s)
         except OSError as e:
@@ -62,6 +66,9 @@ class BridgeAdapter(RobotAdapter):
                 return
 
     def disconnect(self):
+        self._close()
+
+    def _close(self):
         self._alive = False
         try:
             if self._file:
@@ -88,11 +95,11 @@ class BridgeAdapter(RobotAdapter):
                 self._file.flush()
                 line = self._file.readline()
             except OSError as e:
-                self._alive = False
+                self._close()  # sinon le pont reste bloqué sur cette connexion morte
                 raise ConnectionLost(f"Connexion au pont perdue : {e}") from e
-        if not line:
-            self._alive = False
-            raise ConnectionLost("Connexion au pont fermée")
+            if not line:
+                self._close()
+                raise ConnectionLost("Connexion au pont fermée")
         resp = json.loads(line)
         if not resp.get("ok"):
             raise AdapterError(f"Pont : {resp.get('error')}")

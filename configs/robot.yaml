@@ -16,6 +16,7 @@ bridge:
   port: 9600
   heartbeat_s: 0.2          # le pont arrête le mouvement s'il ne reçoit plus de battement
   watchdog_s: 0.6
+  timeout_s: 3.0            # délai de réponse du pont (latence Wi-Fi du NAO) ; au-delà, connexion fermée
 execution:
   # Le contrôleur envoie des consignes setAngles à cadence fixe (streaming),
   # ce qui permet de vérifier arrêt/connexion à chaque pas. Le pont expose aussi

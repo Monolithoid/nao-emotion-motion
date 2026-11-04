@@ -231,11 +231,9 @@ class CalibrationWizard:
                 poses[name] = {"q": [round(p[0], 4), round(p[1], 4)],
                                "inside": bool(len(poly) and in_zone(p, cons, box))}
         cur = None
-        try:
-            q = self.adapter.read_angles([a, b])
-            cur = [round(float(q[0]), 4), round(float(q[1]), 4)]
-        except Exception:
-            pass
+        ang = getattr(self, "_angles", None) or {}
+        if a in ang and b in ang:  # angles déjà lus pour cet état (pas de lecture en plus)
+            cur = [ang[a], ang[b]]
         return {"zone": np.round(poly, 4).tolist(), "poses": poses, "current": cur,
                 "current_inside": bool(cur is not None and len(poly) and in_zone(cur, cons, box))}
 
@@ -267,6 +265,7 @@ class CalibrationWizard:
                 angles = dict(zip(joints, np.round(self.adapter.read_angles(joints), 4).tolist()))
             except Exception:
                 angles = None
+        self._angles = angles
         live = np.array(list(s.live)) if self.sweeping and s.live else None
         live_joints = list(s.live_joints) if live is not None else []
         if live is not None and s.current in s.sweeps and len(s.sweeps[s.current]["q"]):
