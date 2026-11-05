@@ -45,5 +45,9 @@ def test_static_nao_figure_served():
         with urllib.request.urlopen(base + "/") as r:
             html = r.read().decode()
         assert 'id="nao-fig"' in html and "nao-figure.js" in html
+        # raccourcis clavier : script chargé, barre d'aide présente, script servi
+        assert 'id="shortcuts"' in html and 'src="shortcuts.js"' in html
+        with urllib.request.urlopen(base + "/shortcuts.js") as r:
+            assert "javascript" in r.headers["Content-Type"] and b"ArrowRight" in r.read()
     finally:
         srv.shutdown()
