@@ -69,6 +69,7 @@
     renderTable();
     renderPairs();
     renderResult();
+    if (window.NAOFIG) window.NAOFIG.update();
   }
 
   function renderTable() {
@@ -169,4 +170,12 @@
     call("activate", {confirm: true});
   setInterval(poll, 300);
   document.querySelector('nav button[data-tab="calib"]').addEventListener("click", poll);
+  // lu par nao-figure.js (illustration) : groupe affiché et état de la calibration ;
+  // un clic sur une partie du robot choisit le groupe, comme les boutons
+  window.CALIB = {
+    get active() { return !!CAL.active; },
+    get group() { return group; },
+    get sweeping() { return CAL.sweeping || null; },
+    select(g) { if (CAL.active && !CAL.sweeping && CAL.groups && g in CAL.groups) { group = g; render(); } },
+  };
 })();
