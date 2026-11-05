@@ -264,6 +264,8 @@ def make_handler(api: Api):
                     f = STATIC / ("index.html" if path in ("/", "") else path.lstrip("/"))
                     if not f.resolve().is_relative_to(STATIC.resolve()) or not f.exists():
                         return self._send(404, {"error": "introuvable"})
+                    if f.suffix == ".png":
+                        return self._send(200, f.read_bytes(), "image/png")
                     ctype = {"html": "text/html", "js": "text/javascript", "css": "text/css"}.get(f.suffix[1:], "text/plain")
                     return self._send(200, f.read_bytes(), ctype + "; charset=utf-8")
                 name = path[len("/api/"):]

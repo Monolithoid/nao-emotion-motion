@@ -60,6 +60,7 @@ async function refreshStatus() {
   if (r.state === "done") showDraft(r.kind);
   $("r-status").textContent = JSON.stringify(STATUS, null, 1);
   if (window.FOV) window.FOV.sync(STATUS.event);
+  if (window.NAOFIG) window.NAOFIG.update();
 }
 
 let draftShown = null;
@@ -214,6 +215,7 @@ async function init() {
     b.classList.add("active"); $("tab-" + b.dataset.tab).classList.add("active");
     if (b.dataset.tab === "train") refreshTrain();
     if (b.dataset.tab === "takes" || b.dataset.tab === "head") loadTakes();
+    if (window.NAOFIG) window.NAOFIG.update();
   });
   $("stop").onclick = () => api("stop", {});
   $("armed").onchange = async (e) => {
