@@ -5,6 +5,10 @@ technique de la chaîne (collecte, données, entraînement, génération,
 guardian). Ils ne disent RIEN de l'expressivité réelle : les formes ci-dessous
 sont arbitraires. Les prises produites sont marquées `synthetic: true`.
 
+« surprise » et « colère » pointent vers l'événement quand il y en a un (bras du
+côté de l'événement, d'autant plus tendu que l'événement est proche), pour que
+la chaîne puisse apprendre un geste orienté par l'angle et la distance.
+
 Certaines émotions ont volontairement deux variantes de geste sous la même
 étiquette, pour illustrer qu'un modèle de régression déterministe tend à en
 produire la moyenne.
@@ -39,9 +43,30 @@ def _env(u):
     return np.sin(np.pi * np.clip(u, 0, 1)) ** 2
 
 
+POINTING = ("surprise", "colere")
+
+
+def pointing_pose(cfg: Config, event: EventContext) -> Dict[str, float]:
+    """Pose approximative du bras du côté de l'événement, tendu vers lui (convention NAOqi :
+    ShoulderPitch = -élévation, ShoulderRoll = azimut, coude presque tendu)."""
+    side = "L" if event.azimuth_rad >= 0 else "R"
+    m = cfg.guardian.limit_margin_rad + 0.02
+    want = {"ShoulderPitch": -event.elevation_rad, "ShoulderRoll": event.azimuth_rad,
+            "ElbowYaw": 0.0, "ElbowRoll": -0.1 if side == "L" else 0.1}
+    out = {}
+    for name, v in want.items():
+        j = side + name
+        if j in cfg.limits:
+            lo, hi = cfg.limits[j]
+            out[j] = float(np.clip(v, lo + m, hi - m))
+    return out
+
+
 def arm_gesture(cfg: Config, emotion: str, intensity: float, rng: np.random.Generator,
-                style: Optional[int] = None):
+                style: Optional[int] = None, event: Optional[EventContext] = None):
     """Retourne (fonction t -> {joint: rad}, durée) pour un geste des bras."""
+    if event is not None and event.present and emotion in POINTING:
+        return _pointing_gesture(cfg, emotion, intensity, rng, event)
     styles = STYLES.get(emotion, STYLES["calme"])
     s = dict(styles[rng.integers(len(styles)) if style is None else style % len(styles)])
     amp = (0.35 + 0.65 * intensity) * rng.uniform(0.85, 1.15)
@@ -70,6 +95,29 @@ def arm_gesture(cfg: Config, emotion: str, intensity: float, rng: np.random.Gene
                     val += sign * amp * osc * e * 0.5
                 lo, hi = cfg.limits[j]
                 out[j] = float(np.clip(val, lo + m, hi - m))
+        return out
+
+    return fn, float(dur)
+
+
+def _pointing_gesture(cfg, emotion, intensity, rng, event: EventContext):
+    """Pointe vers l'événement : aller, tenue, retour. Plus l'événement est proche, plus
+    le bras va loin vers la pose de pointage (proximité inconnue : valeur moyenne)."""
+    start = dict(zip(cfg.arm_joints, cfg.pose("start", cfg.arm_joints)))
+    target = pointing_pose(cfg, event)
+    close = 1.0 / (1.0 + event.distance_m) if event.distance_m else 0.4
+    w = float(np.clip((0.45 + 0.55 * intensity) * (0.55 + 0.9 * close), 0.3, 1.0)) * rng.uniform(0.92, 1.05)
+    dur = (2.8 if emotion == "surprise" else 2.4) * (1.15 - 0.2 * intensity) * rng.uniform(0.9, 1.1)
+    # enveloppe sin² : vitesse de pointe = pi * amplitude / durée ; on la garde sous ~80 % de la limite
+    vmax = 0.8 * cfg.guardian.max_velocity_rad_s
+    amp = max(abs(v - start[j]) for j, v in target.items()) * min(w, 1.0)
+    dur = max(dur, math.pi * amp / vmax)
+
+    def fn(t: float) -> Dict[str, float]:
+        e = float(_env(t / dur))
+        out = dict(start)
+        for j, v in target.items():
+            out[j] = float(start[j] + min(w, 1.0) * e * (v - start[j]))
         return out
 
     return fn, float(dur)

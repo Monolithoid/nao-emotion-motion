@@ -1,5 +1,8 @@
 """Moteur de génération : bras puis tête, sur une base temporelle commune.
 
+Les deux modèles reçoivent le même événement (direction + distance) : un geste
+de pointage des bras et le regard restent cohérents.
+
 Le moteur PROPOSE des trajectoires ; il n'exécute rien. L'exécution passe par
 le contrôleur, qui fait valider le cycle complet par le guardian.
 """
@@ -58,10 +61,11 @@ class MotionEngine:
         head = load_model(head_path, cfg, "head") if head_path else None
         return cls(cfg, arm, head)
 
-    def plan_arms(self, emotion: Emotion, intensity: float, variation: float = 0.0, seed: Optional[int] = None):
+    def plan_arms(self, emotion: Emotion, intensity: float, variation: float = 0.0, seed: Optional[int] = None,
+                  event: Optional[EventContext] = None):
         if self.arm_model is None:
             raise CheckpointError("Aucun modèle des bras chargé")
-        out = self.arm_model.predict(arm_input(self.cfg.emotions, emotion, intensity))[0]
+        out = self.arm_model.predict(arm_input(self.cfg.emotions, emotion, intensity, event))[0]
         ctrl_n = out[:-1].reshape(self.K, -1)
         if variation > 0:
             ctrl_n = ctrl_n + self._smooth_noise(ctrl_n.shape, variation, seed)
@@ -99,7 +103,7 @@ class MotionEngine:
         check_intensity(intensity)
         emotion_vector(self.cfg.emotions, emotion)
         event = event or EventContext.none()
-        arm_n, dur = self.plan_arms(emotion, intensity, variation, seed)
+        arm_n, dur = self.plan_arms(emotion, intensity, variation, seed, event)
         head_n, notes = self.plan_head(emotion, intensity, arm_n, dur, head_current, event)
         arm_ctrl = self.arm_norm.inv(arm_n)
         head_ctrl = self.head_norm.inv(head_n)

@@ -29,8 +29,18 @@
     <label>Émotion <select id="a-emotion"></select></label>
     <label>Intensité <input type="range" id="a-intensity" min="0" max="1" step="0.05" value="0.7"> <span id="a-int-val"></span></label>
     <label>Intention (optionnelle) <select id="a-intention"><option value="">—</option></select></label>
-    <button id="a-random" title="Tire une émotion et une intensité au hasard">Tirage aléatoire</button>
   </div>
+  <fieldset>
+    <legend>Événement (repère torse : azimut + à gauche, élévation + en haut, distance en mètres)</legend>
+    <p class="hint">L'événement est enregistré avec la prise et donné au modèle des bras : si le geste est orienté
+    (pointer du doigt, se protéger d'un côté, tendre la main), faites-le vers la direction et à la distance indiquées.
+    Décocher « événement présent » pour un geste sans direction.</p>
+    <div class="row">
+      <button id="a-random" class="ok" title="Tire émotion, intensité, angle et distance au hasard">Tirage aléatoire</button>
+      <label><input type="checkbox" id="a-random-none"> parfois sans événement</label>
+    </div>
+    <div id="a-fov"></div>
+  </fieldset>
   <div class="consigne" id="a-consigne"></div>
   <p class="hint">Passage 1 : les bras sont relâchés (tenez-les) et seuls leurs capteurs sont lus ; la tête reste raide sur place.</p>
   <div class="row">
@@ -55,7 +65,9 @@
 
 <section id="tab-head" class="tab">
   <p class="hint">Passage 2 : les bras sont motorisés pendant que vous guidez uniquement la tête. On enregistre
-  émotion/intensité, bras réellement mesurés et tête. Plusieurs contextes de regard peuvent être enregistrés pour un même geste.</p>
+  émotion/intensité, bras réellement mesurés et tête. Plusieurs contextes de regard peuvent être enregistrés pour un même geste.
+  Le modèle des bras reçoit aussi l'événement ci-dessous : un geste généré pointe vers lui. Pour une démonstration
+  enregistrée, garder l'événement de la démonstration si le geste est orienté (il est rappelé à côté de la prise).</p>
   <fieldset>
     <legend>Source du mouvement des bras</legend>
     <label><input type="radio" name="hsrc" value="generated" checked> Geste généré par le modèle des bras :</label>

@@ -22,7 +22,7 @@ from .data.store import TakeStore
 from .events import EVENT_FEATURES, EventContext
 from .guardian import Guardian
 from .models.datasets import Examples, arm_examples, grouped_split, head_examples
-from .models.features import Norm, head_input_dim
+from .models.features import Norm, arm_input_dim, head_input_dim
 from .models.nets import LoadedModel, build, save_checkpoint
 
 
@@ -135,6 +135,7 @@ def train_arms(store: TakeStore, cfg: Config, runs_dir, statuses=("accepted",), 
         tcfg["epochs"] = epochs
     tr, va, val_groups = grouped_split(ex.groups, float(tcfg["val_fraction"]), int(tcfg["seed"]))
     mc = cfg.model["arm_model"]
+    assert ex.X.shape[1] == arm_input_dim(len(cfg.emotions))
     arch = {"in_dim": ex.X.shape[1], "out_dim": K * J + 1, "hidden": list(mc["hidden"]),
             "dropout": float(mc.get("dropout", 0)), "latent_dim": 0}
     model, hist = _fit(ex, tr, va, arch, K, J, tcfg, True, log)
@@ -143,6 +144,8 @@ def train_arms(store: TakeStore, cfg: Config, runs_dir, statuses=("accepted",), 
     run = _run_dir(runs_dir, "arms")
     meta = _meta(cfg, "arms", cfg.arm_joints, norm, K, ex, tr, va, tcfg)
     meta["synthetic_data"] = any(store.load_meta(t).synthetic for t in ex.take_ids)
+    meta.update({"event_features": EVENT_FEATURES,
+                 "inputs": ["emotion", "intensity", "event[present,sin_az,cos_az,elev,dist_known,proximity]"]})
     meta["metrics"] = metrics
     save_checkpoint(run / "model.pt", model, component="arms", arch=arch, meta=meta)
     loaded = LoadedModel(run / "model.pt", cfg, "arms")
@@ -211,8 +214,8 @@ def _guardian_sweep(cfg, arm_model, head_model=None, intensities=(0.2, 0.5, 0.8,
     from .engine import MotionEngine
     eng = MotionEngine(cfg, arm_model, head_model)
     g = Guardian(cfg)
-    events = ([EventContext.none(), EventContext(True, 0.6, 0.1, source="test"),
-               EventContext(True, -0.4, 0.0, source="test", distance_m=0.6)] if head_model else [None])
+    events = [EventContext.none(), EventContext(True, 0.6, 0.1, source="test"),
+              EventContext(True, -0.4, 0.0, source="test", distance_m=0.6)]
     total = ok = 0
     failures = {}
     for e in cfg.emotions:

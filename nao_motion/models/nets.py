@@ -1,6 +1,6 @@
 """Petits réseaux PyTorch (MLP) et rechargement des checkpoints.
 
-Modèle des bras : [émotion, intensité] -> [points de contrôle (K×Ja), log durée].
+Modèle des bras : [émotion, intensité, événement] -> [points de contrôle (K×Ja), log durée].
 Modèle de la tête : [émotion, intensité, bras planifiés, tête actuelle, événement]
                     -> points de contrôle de la tête (K×Jh), sur la MÊME phase que
                     les bras (même durée), ce qui permet d'apprendre anticipation
@@ -117,6 +117,9 @@ class LoadedModel:
             raise CheckpointError("Articulations du modèle différentes de la configuration")
         if self.component == "head" and m["arm_joints"] != cfg.arm_joints:
             raise CheckpointError("Articulations des bras du modèle tête différentes de la configuration")
+        if self.component == "arms" and m.get("event_features", 0) != EVENT_FEATURES:
+            raise CheckpointError("Modèle des bras entraîné sans l'événement (angle, distance) : "
+                                  "réentraîner les bras, puis la tête")
         if self.component == "head" and m.get("event_features", 4) != EVENT_FEATURES:
             raise CheckpointError("Encodage de l'événement différent (distance ajoutée) : réentraîner le modèle de la tête")
         if m["calibration_version"] != cfg.calibration_version:
