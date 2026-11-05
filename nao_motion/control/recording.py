@@ -179,7 +179,7 @@ class HeadRecording(RecordingSession):
         """Le modèle des bras (figé) produit le geste ; il est validé puis exécuté."""
         from ..data.representation import decode
         import hashlib
-        arm_n, dur = engine.plan_arms(emotion, intensity, variation, seed)
+        arm_n, dur = engine.plan_arms(emotion, intensity, variation, seed, event)
         ctrl = engine.arm_norm.inv(arm_n)
         traj = decode(ctrl, dur, cfg.arm_joints, 50.0)
         digest = getattr(engine.arm_model, "digest", None)

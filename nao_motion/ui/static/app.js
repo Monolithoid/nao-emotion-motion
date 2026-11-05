@@ -89,7 +89,9 @@ async function saveDraft(kind, status) {
 // ---- bras ----------------------------------------------------------------------
 function updateConsigne() {
   $("a-int-val").textContent = fmtInt($("a-intensity").value);
-  $("a-consigne").textContent = `${label($("a-emotion").value)} — ${fmtInt($("a-intensity").value)}` + ($("a-intention").value ? ` (${$("a-intention").value})` : "");
+  const ev = window.FOV && window.FOV.current();
+  $("a-consigne").textContent = `${label($("a-emotion").value)} — ${fmtInt($("a-intensity").value)}` + ($("a-intention").value ? ` (${$("a-intention").value})` : "") +
+    (ev ? ` · ${window.FOV.describe(ev)}` : "");
 }
 
 // ---- prises ----------------------------------------------------------------------
@@ -103,7 +105,7 @@ async function loadTakes() {
   if (prev) armSel.value = prev;
   $("t-table").innerHTML = "<tr><th>Prise</th><th>Type</th><th>Émotion</th><th>Int.</th><th>Durée</th><th>Événement</th><th>Statut</th><th>Notes</th></tr>" +
     TAKES.map((m) => `<tr class="clickable" data-id="${m.take_id}"><td>${m.take_id}${m.synthetic ? " <span class='tag'>synth</span>" : ""}</td><td>${m.kind}</td><td>${label(m.emotion)}</td>` +
-      `<td>${fmtInt(m.intensity)}</td><td>${m.duration_s.toFixed(1)} s</td><td>${m.event.present ? (m.event.azimuth_rad * 180 / Math.PI).toFixed(0) + "°" : "aucun"}</td>` +
+      `<td>${fmtInt(m.intensity)}</td><td>${m.duration_s.toFixed(1)} s</td><td>${m.event.present ? `az ${(m.event.azimuth_rad * 180 / Math.PI).toFixed(0)}° el ${(m.event.elevation_rad * 180 / Math.PI).toFixed(0)}°` + (m.event.distance_m != null ? ` ${(+m.event.distance_m).toFixed(2)} m` : "") : "aucun"}</td>` +
       `<td class="${m.status}">${m.status}</td><td>${(m.annotations.notes || "")}</td></tr>`).join("");
   document.querySelectorAll("#t-table tr.clickable").forEach((tr) => tr.onclick = () => openTake(tr.dataset.id));
   const st = await api("stats");
@@ -126,7 +128,8 @@ async function openTake(id) {
   $("t-title").textContent = `${m.take_id} — ${label(m.emotion)} ${fmtInt(m.intensity)} (${m.kind})`;
   $("t-notes").value = m.annotations.notes || "";
   plot($("t-plot"), currentTake.t, cols(currentTake.q), m.joints, {segment: m.segment});
-  const ev = m.event.present ? `az ${(m.event.azimuth_rad * 180 / Math.PI).toFixed(1)}°, el ${(m.event.elevation_rad * 180 / Math.PI).toFixed(1)}° (repère torse)` : "aucun événement";
+  const ev = m.event.present ? `az ${(m.event.azimuth_rad * 180 / Math.PI).toFixed(1)}°, el ${(m.event.elevation_rad * 180 / Math.PI).toFixed(1)}°` +
+    (m.event.distance_m != null ? `, ${(+m.event.distance_m).toFixed(2)} m` : ", distance inconnue") + " (repère torse)" : "aucun événement";
   $("t-info").textContent = `session ${m.session_id} · ${m.n_samples} échantillons · ${m.sample_rate_hz} Hz · segment ${m.segment.map((x) => x.toFixed(2)).join("–")} s · calibration ${m.calibration_version}\n` +
     `guidées : ${m.guided_joints.join(", ")} · pilotées : ${m.driven_joints.join(", ") || "—"} · ${ev}` +
     (m.arm_take_id ? `\nprise de bras rejouée : ${m.arm_take_id}` : "") +
@@ -152,7 +155,8 @@ async function showArmForHead() {
   if (!id) { $("h-arm-plot").innerHTML = ""; return; }
   const tk = await api("takes/" + id);
   plot($("h-arm-plot"), tk.t, cols(tk.q), tk.meta.joints, {segment: tk.meta.segment});
-  $("h-arm-info").textContent = `${tk.head_takes.length} contexte(s) de tête déjà enregistré(s)`;
+  $("h-arm-info").textContent = `${tk.head_takes.length} contexte(s) de tête déjà enregistré(s) · démonstration faite avec : ` +
+    (window.FOV ? window.FOV.describe(tk.meta.event) : (tk.meta.event.present ? "un événement" : "aucun événement"));
   if (document.querySelector("input[name=hsrc]:checked").value === "take")
     $("h-consigne").textContent = `${label(tk.meta.emotion)} — ${fmtInt(tk.meta.intensity)} (démonstration rejouée)`;
 }

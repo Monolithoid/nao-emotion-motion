@@ -48,7 +48,7 @@ def arm_examples(store: TakeStore, cfg: Config, statuses: Sequence[str] = ("acce
             continue
         take = store.load(m.take_id)
         ctrl, dur = encode_trajectory(take.segment_trajectory(cfg.arm_joints), K, n)
-        X.append(arm_input(cfg.emotions, m.emotion, m.intensity))
+        X.append(arm_input(cfg.emotions, m.emotion, m.intensity, m.event_ctx))
         Y.append(norm.fwd(ctrl).ravel())
         D.append(np.log(dur))
         G.append(m.take_id); T.append(m.take_id); E.append(m.emotion); I.append(m.intensity)
@@ -73,7 +73,7 @@ def head_examples(store: TakeStore, cfg: Config, statuses: Sequence[str] = ("acc
         elif arm_source == "predicted":
             if arm_model is None:
                 raise ValueError("arm_source='predicted' exige le modèle des bras")
-            out = arm_model.predict(arm_input(cfg.emotions, m.emotion, m.intensity))[0]
+            out = arm_model.predict(arm_input(cfg.emotions, m.emotion, m.intensity, m.event_ctx))[0]
             arm_norm, ld = out[:-1].reshape(K, -1), float(out[-1])
         else:
             raise ValueError(f"arm_source inconnu : {arm_source}")

@@ -241,7 +241,8 @@ class Workbench:
             return None
         info, rec = self.rec_info, self.recording
         if info["kind"] == "arms":
-            fn, dur = arm_gesture(self.cfg, info["emotion"], info["intensity"], self.rng)
+            fn, dur = arm_gesture(self.cfg, info["emotion"], info["intensity"], self.rng,
+                                  event=EventContext.from_dict(info["event"]))
             self.adapter.set_demonstrator(lambda t: fn(t - countdown_s))
             return dur
         replay = rec.replay

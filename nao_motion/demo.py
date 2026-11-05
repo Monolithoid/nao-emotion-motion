@@ -25,14 +25,23 @@ DEFAULT_CONTEXTS = [EventContext.none(), EventContext(True, 0.7, 0.1, source="te
                     EventContext(True, 0.2, 0.2, source="test")]  # distance inconnue
 
 
-def collect_arms(wb: Workbench, reps=2, intensities=(0.3, 0.7, 1.0), log=print):
+ARM_CONTEXTS = [EventContext.none(), EventContext(True, 0.7, 0.2, source="test", distance_m=0.5),
+                EventContext(True, -0.6, 0.0, source="test", distance_m=2.5)]
+
+
+def collect_arms(wb: Workbench, reps=2, intensities=(0.3, 0.7, 1.0), contexts=None, log=print):
+    """Une prise par (émotion, intensité, répétition) ; l'événement change d'une
+    prise à l'autre (sans, à gauche proche, à droite loin...)."""
+    contexts = contexts or ARM_CONTEXTS
     arm_ids = []
     for e in wb.cfg.emotions:
         for i in intensities:
-            for _ in range(reps):
+            for r in range(reps):
+                wb.event = contexts[len(arm_ids) % len(contexts)]
                 wb.prepare_arm_take(e, i)
                 wb.start_recording(countdown_s=0.3, background=False)
                 arm_ids.append(wb.save_recording(status="accepted", notes="synthétique"))
+    wb.event = EventContext.none()
     log(f"  {len(arm_ids)} prises de bras enregistrées")
     return arm_ids
 
@@ -70,7 +79,7 @@ def collect_heads(wb: Workbench, mode="generated", intensities=(0.3, 0.7, 1.0), 
 def collect_synthetic(wb: Workbench, reps=2, intensities=(0.3, 0.7, 1.0), head_per_arm=None,
                       head_contexts=None, log=print):
     """Collecte bras + têtes sur prises rejouées (sans modèle des bras)."""
-    arm_ids = collect_arms(wb, reps, intensities, log)
+    arm_ids = collect_arms(wb, reps, intensities, log=log)
     targets = arm_ids if head_per_arm is None else arm_ids[:head_per_arm]
     head_ids = collect_heads(wb, "take", arm_ids=targets, contexts=head_contexts, log=log)
     return arm_ids, head_ids

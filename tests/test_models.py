@@ -118,19 +118,30 @@ def test_head_collection_on_generated_arm_gesture(trained, cfg):
     # le modèle de test est peu entraîné : on retient un geste que le guardian accepte
     # (un geste refusé n'est jamais exécuté, ce qui est testé ailleurs)
     from nao_motion.data.representation import decode
-    gesture = None
+    head_start = dict(zip(cfg.head_joints, cfg.pose("start", cfg.head_joints)))
+
+    def accepted(emo, inten, ev):
+        n, d = wb.engine.plan_arms(emo, inten, event=ev)
+        tr = decode(wb.engine.arm_norm.inv(n), d, cfg.arm_joints, 50)
+        return wb.guardian.validate(tr, context_pose=head_start).ok
+
+    candidates = [EventContext(True, az, el, source="test", distance_m=dist)
+                  for az in (-0.5, 0.5, -0.2, 0.2, 0.0) for el in (0.0, 0.2) for dist in (None, 1.5)]
+    gesture = events = None
     for emo in cfg.emotions:
-        for inten in (0.3, 0.6, 1.0):
-            n, d = wb.engine.plan_arms(emo, inten)
-            tr = decode(wb.engine.arm_norm.inv(n), d, cfg.arm_joints, 50)
-            if wb.guardian.validate(tr, context_pose=dict(zip(cfg.head_joints, cfg.pose("start", cfg.head_joints)))).ok:
+        for inten in (0.3, 0.6, 1.0, 0.45, 0.8):
+            if not accepted(emo, inten, EventContext.none()):
+                continue
+            ev = next((c for c in candidates if accepted(emo, inten, c)), None)
+            if ev is not None:
                 gesture = {"emotion": emo, "intensity": inten, "seed": 3}
+                events = (EventContext.none(), EventContext.none(), ev)
                 break
         if gesture:
             break
     assert gesture is not None
     ids = []
-    for ev in (EventContext.none(), EventContext(True, -0.5, 0.0, source="test")):
+    for ev in events:
         wb.event = ev
         info = wb.prepare_head_take(generated=gesture)
         assert info["arm_source"] == "generated"
@@ -138,11 +149,13 @@ def test_head_collection_on_generated_arm_gesture(trained, cfg):
         ids.append(wb.save_recording(status="accepted"))
         wb.ctrl.hold(cfg.head_joints)
     wb.ctrl.disarm()
-    m1, m2 = (wb.store.load_meta(i) for i in ids)
+    m1, m2, m3 = (wb.store.load_meta(i) for i in ids)
     arm_digest = LoadedModel(arm_path, cfg, "arms").digest
     assert m1.arm_generation["arm_checkpoint_digest"] == arm_digest
     assert m1.arm_take_id is None and m1.emotion == gesture["emotion"]
     assert wb.store.group_id(m1) == wb.store.group_id(m2)  # même geste => même groupe
+    # le modèle des bras reçoit l'événement : autre direction => autre geste, autre groupe
+    assert wb.store.group_id(m1) != wb.store.group_id(m3)
     ref = wb.store.load_reference(ids[0])
     take = wb.store.load(ids[0])
     tt = np.linspace(take.meta.segment[0], take.meta.segment[1], 40)
@@ -173,4 +186,26 @@ def test_distance_changes_generated_head(trained, cfg):
     eng = MotionEngine.from_paths(cfg, Path(trained["arm_run"]) / "model.pt", Path(trained["head_run"]) / "model.pt")
     near = eng.generate("peur", 0.9, EventContext(True, 0.5, 0.0, distance_m=0.3), None, 0.0, 0)
     far = eng.generate("peur", 0.9, EventContext(True, 0.5, 0.0, distance_m=3.0), None, 0.0, 0)
-    assert not np.allclose(near.combined.q, far.combined.q)
+    assert not np.allclose(near.head_ctrl, far.head_ctrl)
+
+
+def test_arm_model_receives_event(trained, cfg):
+    """Le geste des bras dépend de l'angle et de la distance (ex. pointer vers l'événement)."""
+    eng = MotionEngine.from_paths(cfg, Path(trained["arm_run"]) / "model.pt")
+    assert eng.arm_model.meta["event_features"] == 6
+    left, _ = eng.plan_arms("surprise", 0.9, event=EventContext(True, 0.7, 0.2, distance_m=0.5))
+    right, _ = eng.plan_arms("surprise", 0.9, event=EventContext(True, -0.6, 0.0, distance_m=0.5))
+    far, _ = eng.plan_arms("surprise", 0.9, event=EventContext(True, 0.7, 0.2, distance_m=3.0))
+    none, _ = eng.plan_arms("surprise", 0.9)
+    for other in (right, far, none):
+        assert not np.allclose(left, other)
+
+
+def test_arm_model_without_event_is_refused(trained, cfg, tmp_path):
+    """Un modèle des bras entraîné avant l'ajout de l'événement doit être réentraîné."""
+    ck = torch.load(Path(trained["arm_run"]) / "model.pt", map_location="cpu", weights_only=True)
+    del ck["meta"]["event_features"]
+    old = tmp_path / "old_arms.pt"
+    torch.save(ck, old)
+    with pytest.raises(CheckpointError, match="réentraîner les bras"):
+        LoadedModel(old, cfg, "arms")

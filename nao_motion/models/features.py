@@ -69,8 +69,16 @@ def check_intensity(x: float) -> float:
     return x
 
 
-def arm_input(emotions, emotion, intensity) -> np.ndarray:
-    return np.concatenate([emotion_vector(emotions, emotion), [check_intensity(intensity)]]).astype(np.float32)
+def arm_input(emotions, emotion, intensity, event: Optional[EventContext] = None) -> np.ndarray:
+    """[émotion, intensité, événement (6)] : la direction et la distance de l'événement
+    permettent d'apprendre un geste orienté (pointer, se protéger d'un côté...)."""
+    ev = event if event is not None else EventContext.none()
+    return np.concatenate([emotion_vector(emotions, emotion), [check_intensity(intensity)],
+                           ev.features()]).astype(np.float32)
+
+
+def arm_input_dim(n_emotions) -> int:
+    return n_emotions + 1 + EVENT_FEATURES
 
 
 def head_input(emotions, emotion, intensity, arm_ctrl_norm: np.ndarray, arm_log_dur: float,
