@@ -42,6 +42,12 @@ def test_static_nao_figure_served():
         with urllib.request.urlopen(base + "/nao.png") as r:
             assert r.headers["Content-Type"] == "image/png"
             assert r.read(8) == b"\x89PNG\r\n\x1a\n"
+        with urllib.request.urlopen(base + "/favicon.ico") as r:
+            assert r.headers["Content-Type"] == "image/x-icon"
+            assert r.read(4) == b"\x00\x00\x01\x00"
+        with urllib.request.urlopen(base + "/favicon.svg") as r:
+            assert r.headers["Content-Type"].startswith("image/svg+xml")
+            assert b"<svg" in r.read()
         with urllib.request.urlopen(base + "/") as r:
             html = r.read().decode()
         assert 'id="nao-fig"' in html and "nao-figure.js" in html
