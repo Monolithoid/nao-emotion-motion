@@ -11,7 +11,6 @@ async function api(path, body) {
   return d;
 }
 const real = () => STATUS && STATUS.real_robot;
-const confirmReal = (msg) => !real() || window.confirm(msg);
 const fmtInt = (x) => Number(x).toFixed(1).replace(".", ",");
 const label = (id) => (CFG.emotions.find((e) => e.id === id) || {label: id}).label;
 
@@ -224,7 +223,8 @@ async function init() {
     await api("arm", {armed: on, confirm: on}).catch(() => (e.target.checked = false));
   };
   // bras
-  $("a-prepare").onclick = () => confirmReal("Les bras vont être RELÂCHÉS. Les tenez-vous ?") &&
+  // pas de confirmation (souhait de Joachim) : l'avertissement de la page (#a-alert) la remplace
+  $("a-prepare").onclick = () =>
     api("record/prepare", {kind: "arms", emotion: $("a-emotion").value, intensity: parseFloat($("a-intensity").value), intention: $("a-intention").value, confirm: true}).then(() => { draftShown = null; });
   $("a-start").onclick = () => api("record/start", {});
   $("a-stop").onclick = () => api("record/stop", {});
@@ -235,7 +235,8 @@ async function init() {
   $("a-retry").onclick = async () => { await saveDraft("arms", "rejected"); $("a-prepare").onclick(); };
   // tête
   $("h-arm").onchange = showArmForHead;
-  $("h-prepare").onclick = () => confirmReal("Les bras vont se déplacer (motorisés) vers le début de la relecture, puis la tête sera RELÂCHÉE. Continuer ?") &&
+  // pas de confirmation : l'avertissement de la page (#h-alert) la remplace
+  $("h-prepare").onclick = () =>
     api("record/prepare", document.querySelector("input[name=hsrc]:checked").value === "generated"
       ? {kind: "head", confirm: true, generated: {emotion: $("h-emotion").value, intensity: parseFloat($("h-intensity").value),
           variation: parseFloat($("h-var").value), seed: parseInt($("h-seed").value)}}

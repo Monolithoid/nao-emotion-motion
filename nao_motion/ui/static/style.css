@@ -70,3 +70,5 @@ kbd{display:inline-block;min-width:1.5em;padding:0 5px;border:1px solid var(--li
 .shortcuts b{color:var(--fg)}.shortcuts .sc-note{font-size:12px}
 .shortcuts .sc-flash{color:var(--accent);font-weight:600}
 button.next{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 35%,transparent)}
+.alert{border:1px solid var(--bad);border-left-width:5px;background:color-mix(in srgb,var(--bad) 9%,var(--card));border-radius:6px;padding:8px 12px;margin:10px 0;max-width:900px}
+.alert b{color:var(--bad)}

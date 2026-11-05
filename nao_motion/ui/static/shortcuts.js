@@ -7,7 +7,7 @@
 //   →          déclenche l'étape suivante, déduite de l'état de l'enregistrement.
 // Les touches sont ignorées quand le focus est dans un champ de saisie (texte, nombre,
 // liste) et quand Ctrl, Alt ou Cmd sont enfoncés. Chaque étape passe par le bouton de
-// l'interface : mêmes confirmations, même garde-fous côté serveur. Relâcher n'est pas
+// l'interface : mêmes garde-fous côté serveur. Relâcher n'est pas
 // un mouvement commandé : aucune raideur n'est ajoutée, rien n'est déplacé.
 (function () {
   const STEPS = {
