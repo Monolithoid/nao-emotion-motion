@@ -175,6 +175,9 @@
   window.CALIB = {
     get active() { return !!CAL.active; },
     get group() { return group; },
+    get groupLabel() { return glabel(group); },
+    // raccourci Espace (shortcuts.js) : relâche le groupe choisi, comme le bouton, sans boîte de dialogue
+    release() { return CAL.active ? call("release", {group, confirm: true}) : undefined; },
     get sweeping() { return CAL.sweeping || null; },
     select(g) { if (CAL.active && !CAL.sweeping && CAL.groups && g in CAL.groups) { group = g; render(); } },
   };

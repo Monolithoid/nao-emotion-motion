@@ -49,6 +49,12 @@ The interface listens on `127.0.0.1` only. It has seven tabs:
 
 The **ARRÊT** (stop) button interrupts recording, replay and execution. The posture is held and the controller is disarmed. There is **no** automatic return to rest.
 
+**Keyboard shortcuts** (shown under the tab bar, ignored while typing in a text, number or list field, and with Ctrl, Alt or Cmd):
+
+- **Space** releases the limbs, anywhere in the interface: the arms in the *Bras* tab, the head in the *Tête* tab, the selected group while a calibration is open, the arms and the head elsewhere. It asks for no confirmation: hold the limbs before pressing it. Releasing commands no movement.
+- **1 2 3 4** run the take steps of the *Bras* and *Tête* tabs: *Préparer*, *Démarrer*, *Arrêter*, *Raidir sur place*. On an AZERTY keyboard, the top-row keys work with or without Shift, as does the numeric keypad.
+- **→** (right arrow) runs the next step, deduced from the recording state; that step is outlined. The keys press the same buttons, with the same confirmations and the same server-side checks.
+
 In simulation, a synthetic demonstrator replaces your hand. The takes it produces are marked `synthetic: true`.
 
 ### External entry points (HTTP JSON)

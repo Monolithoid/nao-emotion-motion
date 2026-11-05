@@ -23,6 +23,7 @@
   <button data-tab="calib">Calibration</button>
   <button data-tab="robot">Robot</button>
 </nav>
+<div id="shortcuts" class="shortcuts" aria-live="polite"></div>
 <div class="layout">
 <main>
 <section id="tab-arms" class="tab active">
@@ -45,10 +46,10 @@
   <div class="consigne" id="a-consigne"></div>
   <p class="hint">Passage 1 : les bras sont relâchés (tenez-les) et seuls leurs capteurs sont lus ; la tête reste raide sur place.</p>
   <div class="row">
-    <button id="a-prepare">Préparer (relâcher les bras)</button>
-    <button id="a-start">Démarrer (compte à rebours)</button>
-    <button id="a-stop">Arrêter l'enregistrement</button>
-    <button id="a-hold">Raidir les bras sur place</button>
+    <button id="a-prepare"><kbd>1</kbd> Préparer (relâcher les bras)</button>
+    <button id="a-start"><kbd>2</kbd> Démarrer (compte à rebours)</button>
+    <button id="a-stop"><kbd>3</kbd> Arrêter l'enregistrement</button>
+    <button id="a-hold"><kbd>4</kbd> Raidir les bras sur place</button>
   </div>
   <div class="recstate" id="a-rec"></div>
   <div id="a-draft" class="draft hidden">
@@ -90,10 +91,10 @@
   </fieldset>
   <div class="consigne" id="h-consigne"></div>
   <div class="row">
-    <button id="h-prepare">Préparer (approche motorisée des bras, puis tête relâchée — mouvements autorisés requis)</button>
-    <button id="h-start">Démarrer (compte à rebours + relecture)</button>
-    <button id="h-stop">Arrêter</button>
-    <button id="h-hold">Raidir la tête sur place</button>
+    <button id="h-prepare"><kbd>1</kbd> Préparer (approche motorisée des bras, puis tête relâchée — mouvements autorisés requis)</button>
+    <button id="h-start"><kbd>2</kbd> Démarrer (compte à rebours + relecture)</button>
+    <button id="h-stop"><kbd>3</kbd> Arrêter</button>
+    <button id="h-hold"><kbd>4</kbd> Raidir la tête sur place</button>
   </div>
   <div class="recstate" id="h-rec"></div>
   <div id="h-draft" class="draft hidden">
@@ -253,5 +254,6 @@
 <script src="fov.js"></script>
 <script src="calib.js"></script>
 <script src="nao-figure.js"></script>
+<script src="shortcuts.js"></script>
 </body>
 </html>
