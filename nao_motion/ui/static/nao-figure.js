@@ -13,10 +13,14 @@
       shape: '<polygon points="16,12 60,14 92,26 130,28 150,36 162,56 150,76 128,66 96,60 60,62 16,60"/>', tag: [52, 78]},
     left_arm: {label: "Bras gauche",
       shape: '<polygon points="178,64 204,66 232,82 258,104 258,130 226,132 196,118 180,98"/>', tag: [222, 148]},
+    // mains (LHand, RHand) : dessinées après les bras, donc au-dessus
+    hands: {label: "Mains",
+      shape: '<ellipse cx="36" cy="36" rx="24" ry="25"/><ellipse cx="243" cy="117" rx="17" ry="16"/>', tag: [36, 96]},
   };
-  const GROUPS = ["head", "right_arm", "left_arm"];
-  const JOINT_GROUP = (j) => (j.startsWith("Head") ? "head" : j[0] === "L" ? "left_arm" : j[0] === "R" ? "right_arm" : null);
-  const TABS = ["arms", "head", "gen", "calib", "robot"];
+  const GROUPS = ["head", "right_arm", "left_arm", "hands"];
+  const JOINT_GROUP = (j) => (j.startsWith("Head") ? "head" : j.endsWith("Hand") ? "hands" :
+    j[0] === "L" ? "left_arm" : j[0] === "R" ? "right_arm" : null);
+  const TABS = ["arms", "head", "hands", "gen", "calib", "robot"];
   const box = document.getElementById("nao-fig");
   if (!box) return;
 
@@ -30,14 +34,15 @@
     `<div class="nao-legend"><span><i class="sw guided"></i>relâché : à guider</span>` +
     `<span><i class="sw driven"></i>raidi / motorisé</span><span><i class="sw focus"></i>partie concernée</span></div>`;
   box.querySelectorAll(".part").forEach((p) => p.onclick = () => {
-    if (activeTab() === "calib" && window.CALIB) window.CALIB.select(p.dataset.part);
+    // les mains ne se calibrent pas (plage d'usine 0..1)
+    if (activeTab() === "calib" && window.CALIB && p.dataset.part !== "hands") window.CALIB.select(p.dataset.part);
   });
 
   const activeTab = () => { const t = document.querySelector("section.tab.active"); return t ? t.id.slice(4) : ""; };
 
   // état réel de chaque groupe : guided si une articulation est relâchée, sinon driven si raidie
   function groupRoles(roles) {
-    const out = {head: "idle", left_arm: "idle", right_arm: "idle"};
+    const out = {head: "idle", left_arm: "idle", right_arm: "idle", hands: "idle"};
     for (const [j, r] of Object.entries(roles || {})) {
       const g = JOINT_GROUP(j);
       if (!g || !(g in out)) continue;
@@ -69,6 +74,11 @@
         "Tête relâchée : tenez-la. Les bras sont motorisés.", "guidez la tête pendant que les bras rejouent le geste.");
       return {parts: ["head"], live, text};
     }
+    if (tab === "hands") {
+      const [text, live] = step("hands", "Passage 3 : les bras rejouent le geste, motorisés, la tête reste raide ; vous pilotez l'ouverture des mains d'ici.",
+        "Bras au début du geste, rien n'est relâché. Réglez l'ouverture de départ si besoin.", "ouvrez ou fermez les mains pendant que les bras rejouent le geste.");
+      return {parts: ["hands"], live, text};
+    }
     if (tab === "calib") {
       const c = window.CALIB;
       if (!c || !c.active) return {parts: [], live: false, text: "Calibration fermée. Une fois ouverte, la partie choisie est mise en évidence (clic sur le robot pour la choisir)."};
@@ -78,7 +88,7 @@
         ? {parts: [g], live: true, text: `Exploration en cours : amenez lentement ${g === "head" ? "la tête" : "le " + lbl} jusqu'aux butées utiles.`}
         : {parts: [g], live: false, text: `Groupe choisi : ${lbl}. Cliquer sur une autre partie du robot pour changer de groupe.`};
     }
-    if (tab === "gen") return {parts: ["head", "left_arm", "right_arm"], live: false, text: "Le geste généré anime les bras et la tête (les jambes ne bougent jamais)."};
+    if (tab === "gen") return {parts: ["head", "left_arm", "right_arm", "hands"], live: false, text: "Le geste généré anime les bras, la tête et, si le modèle des mains est entraîné, l'ouverture des mains (les jambes ne bougent jamais)."};
     return {parts: [], live: false, text: "État des groupes lu sur le robot : relâché ou raidi."};
   }
 
@@ -93,7 +103,7 @@
     for (const g of GROUPS) {
       const el = box.querySelector(`[data-part="${g}"]`);
       const on = f.parts.includes(g);
-      el.setAttribute("class", `part ${roles[g]}${on ? " focus" : ""}${on && f.live ? " live" : ""}${tab === "calib" && window.CALIB && window.CALIB.active ? " pick" : ""}`);
+      el.setAttribute("class", `part ${roles[g]}${on ? " focus" : ""}${on && f.live ? " live" : ""}${tab === "calib" && window.CALIB && window.CALIB.active && g !== "hands" ? " pick" : ""}`);
       box.querySelector(`[data-tag="${g}"]`).classList.toggle("on", on || roles[g] !== "idle");
     }
     const c = box.querySelector("#nao-caption");

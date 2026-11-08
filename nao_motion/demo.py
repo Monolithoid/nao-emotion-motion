@@ -7,7 +7,9 @@
 4. générer et valider une trajectoire, l'exécuter sur le robot simulé ;
 5. collecte tête : le modèle des bras joue l'émotion, l'opérateur (ici simulé)
    guide la tête ; jeu (émotion/intensité, bras réalisés, tête enregistrée) ;
-6. entraîner la tête (bras figés) et exécuter le cycle complet simulé.
+6. entraîner la tête (bras figés) et exécuter le cycle complet simulé ;
+7. collecte mains : le modèle des bras joue l'émotion, l'opérateur (simulé)
+   pilote l'ouverture des mains ; entraîner les mains, cycle complet.
 
 Les données synthétiques vérifient le fonctionnement technique, pas l'expressivité.
 """
@@ -74,6 +76,27 @@ def collect_heads(wb: Workbench, mode="generated", intensities=(0.3, 0.7, 1.0), 
     wb.ctrl.disarm()
     log(f"  {len(head_ids)} prises de tête enregistrées ({mode})")
     return head_ids
+
+
+def collect_hands(wb: Workbench, intensities=(0.3, 0.7, 1.0), contexts=None, log=print):
+    """Passage 3 : le modèle des bras produit chaque geste, l'opérateur (ici simulé)
+    pilote l'ouverture des mains depuis l'interface."""
+    cfg = wb.cfg
+    contexts = contexts or DEFAULT_CONTEXTS[:3]
+    wb.ctrl.hold(cfg.all_joints)
+    wb.ctrl.arm(confirm=True)
+    ids = []
+    for e in cfg.emotions:
+        for i in intensities:
+            for ev in contexts:
+                wb.event = ev
+                wb.prepare_hands_take(generated={"emotion": e, "intensity": i})
+                wb.start_recording(countdown_s=0.3, background=False)
+                ids.append(wb.save_recording(status="accepted", notes="synthétique"))
+    wb.event = EventContext.none()
+    wb.ctrl.disarm()
+    log(f"  {len(ids)} prises de mains enregistrées")
+    return ids
 
 
 def collect_synthetic(wb: Workbench, reps=2, intensities=(0.3, 0.7, 1.0), head_per_arm=None,
@@ -167,6 +190,24 @@ def run_demo(workdir="demo_sim", epochs=None, log=print) -> dict:
         wb.execute_plan(out2["plan_id"], background=False)
         log(f"  exécution simulée : état {wb.ctrl.state.value}")
     wb.ctrl.disarm()
-    return {"arm_takes": len(arm_ids), "head_takes": len(head_ids), "arms_metrics": m_arms,
-            "head_metrics": m_head, "final_state": wb.ctrl.state.value, "workdir": str(work),
+
+    log("7. Collecte mains (ouverture pilotée, simulée), entraînement, cycle complet")
+    hand_ids = collect_hands(wb, log=log)
+    job_m = wb.train("hands", epochs=epochs, background=False)
+    if job_m["state"] != "done":
+        raise RuntimeError(job_m["error"])
+    m_hands = json.loads((Path(job_m["run"]) / "metrics.json").read_text())["metrics"]
+    log(f"  val RMSE mains {m_hands.get('val_rmse_rad')} (ouverture 0..1), guardian {m_hands['guardian']['rate']:.0%}")
+    wb.ctrl.hold(cfg.controlled_joints)
+    wb.ctrl.arm(confirm=True)
+    wb.ctrl.return_to_rest(confirm=True)
+    out3 = wb.generate("joie", 0.9, use_event=False)
+    ok = out3.get("cycle", {}).get("report", {}).get("ok")
+    log(f"  cycle bras + tête + mains {'accepté' if ok else 'refusé'} {out3.get('cycle_error', '')}")
+    if ok:
+        wb.execute_plan(out3["plan_id"], background=False)
+    wb.ctrl.disarm()
+    return {"arm_takes": len(arm_ids), "head_takes": len(head_ids), "hand_takes": len(hand_ids),
+            "arms_metrics": m_arms, "head_metrics": m_head, "hands_metrics": m_hands,
+            "final_state": wb.ctrl.state.value, "workdir": str(work),
             "calibration": cal.to_dict()}

@@ -13,10 +13,11 @@
   const STEPS = {
     arms: ["a-prepare", "a-start", "a-stop", "a-hold"],
     head: ["h-prepare", "h-start", "h-stop", "h-hold"],
+    hands: ["m-prepare", "m-start", "m-stop", "m-hold"],
   };
   const STEP_LABEL = ["Préparer", "Démarrer", "Arrêter", "Raidir"];
   const ARMS = ["left_arm", "right_arm"], ALL = ["head", "left_arm", "right_arm"];
-  const lastHold = {arms: false, head: false};
+  const lastHold = {arms: false, head: false, hands: false};
   const bar = document.getElementById("shortcuts");
   let flashUntil = 0, flashText = "";
 

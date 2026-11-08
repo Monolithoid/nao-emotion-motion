@@ -132,7 +132,13 @@ class MotionEngine:
         hands = hand_ctrl = None
         hand_n = self.plan_hands(emotion, intensity, arm_n, dur, hands_current, event)
         if hand_n is not None:
-            hand_ctrl = self.hand_norm.inv(hand_n)
+            # points de contrôle ramenés dans la plage d'ouverture : par la propriété d'enveloppe
+            # convexe des B-splines, la courbe y reste aussi, sans cassure de vitesse
+            hj = self.cfg.hand_joints
+            g = self.cfg.guardian
+            lo = np.array([self.cfg.limits[j][0] + g.margin(j) for j in hj])
+            hi = np.array([self.cfg.limits[j][1] - g.margin(j) for j in hj])
+            hand_ctrl = np.clip(self.hand_norm.inv(hand_n), lo, hi)
             hands = decode(hand_ctrl, dur, self.cfg.hand_joints, self.rate)
             combined = Trajectory.merge(combined, hands)
         elif self.cfg.hand_joints:

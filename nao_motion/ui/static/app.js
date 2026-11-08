@@ -11,6 +11,8 @@ async function api(path, body) {
   return d;
 }
 const real = () => STATUS && STATUS.real_robot;
+const PFX = {arms: "a", head: "h", hands: "m"};  // préfixe des éléments de chaque passage
+const pid = (kind, name) => $(`${PFX[kind] || "a"}-${name}`);
 const fmtInt = (x) => Number(x).toFixed(1).replace(".", ",");
 const label = (id) => (CFG.emotions.find((e) => e.id === id) || {label: id}).label;
 
@@ -55,7 +57,7 @@ async function refreshStatus() {
   const txt = r.state === "none" ? "" : r.state === "countdown" ? `Départ dans ${Math.ceil(r.countdown_left)}…` :
     r.state === "recording" ? `● Enregistrement ${r.elapsed.toFixed(1)} s` : r.state === "prepared" ? "Prêt" :
     r.state === "done" ? `Terminé (${r.elapsed.toFixed(1)} s)${r.complete === false ? " — incomplet" : ""}` : r.state + (r.error ? " : " + r.error : "");
-  if (r.state !== "none") (r.kind === "head" ? $("h-rec") : $("a-rec")).textContent = txt;
+  if (r.state !== "none") pid(r.kind, "rec").textContent = txt;
   if (r.state === "done") showDraft(r.kind);
   $("r-status").textContent = JSON.stringify(STATUS, null, 1);
   if (window.FOV) window.FOV.sync(STATUS.event);
@@ -66,21 +68,25 @@ let draftShown = null;
 function showDraft(kind) {
   if (draftShown === kind) return;
   draftShown = kind;
-  $(kind === "head" ? "h-draft" : "a-draft").classList.remove("hidden");
-  const plotEl = $(kind === "head" ? "h-plot" : "a-plot");
+  pid(kind, "draft").classList.remove("hidden");
+  const plotEl = pid(kind, "plot");
   api("record/draft").then((d) => {
+    if (kind === "hands") {  // aperçu lisible : ouverture des mains seulement (0 fermée .. 1 ouverte)
+      const idx = d.joints.map((j, i) => (j.endsWith("Hand") ? i : -1)).filter((i) => i >= 0);
+      d.q = d.q.map((row) => idx.map((i) => row[i])); d.joints = idx.map((i) => d.joints[i]);
+    }
     plot(plotEl, d.t, cols(d.q), d.joints, {segment: d.segment});
     animate(plotEl, d.segment[0], d.segment[1]);
   });
 }
 
 async function saveDraft(kind, status) {
-  const notes = $(kind === "head" ? "h-notes" : "a-notes").value;
+  const notes = pid(kind, "notes").value;
   const r = await api("record/save", {status, notes});
   draftShown = null;
-  $(kind === "head" ? "h-draft" : "a-draft").classList.add("hidden");
+  pid(kind, "draft").classList.add("hidden");
   const take = await api("takes/" + r.take_id);
-  const box = $(kind === "head" ? "h-rec" : "a-rec");
+  const box = pid(kind, "rec");
   box.textContent = `Prise ${r.take_id} : ${status}`;
   await loadTakes();
   return take;
@@ -99,10 +105,13 @@ let TAKES = [];
 async function loadTakes() {
   TAKES = await api("takes" + ($("t-kind").value ? "?kind=" + $("t-kind").value : ""));
   const all = await api("takes");
-  const armSel = $("h-arm"), prev = armSel.value;
-  armSel.innerHTML = all.filter((m) => m.kind === "arms" && m.status !== "rejected")
+  const armOpts = all.filter((m) => m.kind === "arms" && m.status !== "rejected")
     .map((m) => `<option value="${m.take_id}">${label(m.emotion)} ${fmtInt(m.intensity)} · ${m.take_id} · ${m.status}</option>`).join("");
-  if (prev) armSel.value = prev;
+  for (const id of ["h-arm", "m-arm"]) {
+    const sel = $(id), prev = sel.value;
+    sel.innerHTML = armOpts;
+    if (prev) sel.value = prev;
+  }
   $("t-table").innerHTML = "<tr><th>Prise</th><th>Type</th><th>Émotion</th><th>Int.</th><th>Durée</th><th>Événement</th><th>Statut</th><th>Notes</th></tr>" +
     TAKES.map((m) => `<tr class="clickable" data-id="${m.take_id}"><td>${m.take_id}${m.synthetic ? " <span class='tag'>synth</span>" : ""}</td><td>${m.kind}</td><td>${label(m.emotion)}</td>` +
       `<td>${fmtInt(m.intensity)}</td><td>${m.duration_s.toFixed(1)} s</td><td>${m.event.present ? `az ${(m.event.azimuth_rad * 180 / Math.PI).toFixed(0)}° el ${(m.event.elevation_rad * 180 / Math.PI).toFixed(0)}°` + (m.event.distance_m != null ? ` ${(+m.event.distance_m).toFixed(2)} m` : "") : "aucun"}</td>` +
@@ -110,8 +119,9 @@ async function loadTakes() {
   document.querySelectorAll("#t-table tr.clickable").forEach((tr) => tr.onclick = () => openTake(tr.dataset.id));
   const st = await api("stats");
   let h = "";
-  for (const kind of ["arms", "head"]) {
-    h += `<h4>${kind === "arms" ? "Bras" : "Tête"}</h4><table><tr><th></th>${st.bins.map((b) => `<th>${b}</th>`).join("")}</tr>`;
+  for (const kind of ["arms", "head", "hands"]) {
+    if (!st.table[kind]) continue;
+    h += `<h4>${{arms: "Bras", head: "Tête", hands: "Mains"}[kind]}</h4><table><tr><th></th>${st.bins.map((b) => `<th>${b}</th>`).join("")}</tr>`;
     for (const e of CFG.emotions) {
       h += `<tr><td>${e.label}</td>` + st.bins.map((b) => { const c = st.table[kind][e.id][b] || {}; const tot = Object.values(c).reduce((a, x) => a + x, 0); return `<td>${c.accepted || 0} / ${tot}</td>`; }).join("") + "</tr>";
     }
@@ -134,6 +144,7 @@ async function openTake(id) {
     `guidées : ${m.guided_joints.join(", ")} · pilotées : ${m.driven_joints.join(", ") || "—"} · ${ev}` +
     (m.arm_take_id ? `\nprise de bras rejouée : ${m.arm_take_id}` : "") +
     (currentTake.head_takes.length ? `\n${currentTake.head_takes.length} prise(s) de tête sur ce mouvement` : "") +
+    ((currentTake.hand_takes || []).length ? `\n${currentTake.hand_takes.length} prise(s) de mains sur ce mouvement` : "") +
     (currentTake.replay ? `\nrelecture (guardian) : ${currentTake.replay.guardian.ok ? "acceptée" : "refusée " + JSON.stringify(currentTake.replay.guardian.violations)}` : "");
 }
 
@@ -198,7 +209,7 @@ async function generate() {
 async function init() {
   CFG = await api("config");
   const opts = CFG.emotions.map((e) => `<option value="${e.id}">${e.label}</option>`).join("");
-  $("a-emotion").innerHTML = opts; $("g-emotion").innerHTML = opts; $("h-emotion").innerHTML = opts;
+  $("a-emotion").innerHTML = opts; $("g-emotion").innerHTML = opts; $("h-emotion").innerHTML = opts; $("m-emotion").innerHTML = opts;
   const hcons = () => { $("h-int-val").textContent = fmtInt($("h-intensity").value);
     if (document.querySelector("input[name=hsrc]:checked").value === "generated")
       $("h-consigne").textContent = `${label($("h-emotion").value)} — ${fmtInt($("h-intensity").value)} (geste généré)`; else showArmForHead(); };
@@ -213,7 +224,7 @@ async function init() {
     document.querySelectorAll("nav button, .tab").forEach((x) => x.classList.remove("active"));
     b.classList.add("active"); $("tab-" + b.dataset.tab).classList.add("active");
     if (b.dataset.tab === "train") refreshTrain();
-    if (b.dataset.tab === "takes" || b.dataset.tab === "head") loadTakes();
+    if (["takes", "head", "hands"].includes(b.dataset.tab)) loadTakes();
     if (window.NAOFIG) window.NAOFIG.update();
   });
   $("stop").onclick = () => api("stop", {});
@@ -248,6 +259,29 @@ async function init() {
   $("h-pending").onclick = () => saveDraft("head", "pending");
   $("h-reject").onclick = () => saveDraft("head", "rejected");
   $("h-retry").onclick = async () => { await saveDraft("head", "rejected"); $("h-prepare").onclick(); };
+  // mains (passage 3) : curseurs et clavier dans hands.js
+  const mcons = () => { $("m-int-val").textContent = fmtInt($("m-intensity").value);
+    const take = document.querySelector("input[name=msrc]:checked").value === "take";
+    const opt = $("m-arm").selectedOptions[0];
+    $("m-consigne").textContent = take ? (opt ? `${opt.textContent.split(" · ")[0]} (démonstration rejouée)` : "Aucune prise de bras")
+      : `${label($("m-emotion").value)} — ${fmtInt($("m-intensity").value)} (geste généré)`; };
+  ["m-emotion", "m-intensity", "m-arm"].forEach((id) => $(id).oninput = mcons);
+  $("m-arm").onchange = mcons;
+  document.querySelectorAll("input[name=msrc]").forEach((r) => r.onchange = mcons);
+  mcons();
+  // pas de confirmation : l'avertissement de la page (#m-alert) la remplace
+  $("m-prepare").onclick = () =>
+    api("record/prepare", document.querySelector("input[name=msrc]:checked").value === "generated"
+      ? {kind: "hands", confirm: true, generated: {emotion: $("m-emotion").value, intensity: parseFloat($("m-intensity").value),
+          variation: parseFloat($("m-var").value), seed: parseInt($("m-seed").value)}}
+      : {kind: "hands", arm_take_id: $("m-arm").value, confirm: true}).then(() => { draftShown = null; });
+  $("m-start").onclick = () => api("record/start", {});
+  $("m-stop").onclick = () => api("stop", {});
+  $("m-hold").onclick = () => api("hold", {});
+  $("m-accept").onclick = () => saveDraft("hands", "accepted");
+  $("m-pending").onclick = () => saveDraft("hands", "pending");
+  $("m-reject").onclick = () => saveDraft("hands", "rejected");
+  $("m-retry").onclick = async () => { await saveDraft("hands", "rejected"); $("m-prepare").onclick(); };
   // prises
   $("t-kind").onchange = loadTakes; $("t-refresh").onclick = loadTakes;
   $("t-play").onclick = () => {
@@ -265,10 +299,11 @@ async function init() {
   $("t-accept").onclick = () => upd({status: "accepted"});
   $("t-reject").onclick = () => upd({status: "rejected"});
   $("t-save-notes").onclick = () => upd({notes: $("t-notes").value});
+  $("t-use-hands").onclick = () => { if (currentTake.meta.kind !== "arms") return alert("Choisir une prise de bras"); document.querySelector("nav button[data-tab=hands]").click(); setTimeout(() => { document.querySelector("input[name=msrc][value=take]").checked = true; $("m-arm").value = currentTake.meta.take_id; $("m-arm").onchange(); }, 300); };
   $("t-use-head").onclick = () => { if (currentTake.meta.kind !== "arms") return alert("Choisir une prise de bras"); document.querySelector("nav button[data-tab=head]").click(); setTimeout(() => { $("h-arm").value = currentTake.meta.take_id; showArmForHead(); }, 300); };
   // entraînement
   const train = (c) => api("train", {component: c, epochs: parseInt($("tr-epochs").value), include_pending: $("tr-pending").checked}).then(refreshTrain);
-  $("tr-arms").onclick = () => train("arms"); $("tr-head").onclick = () => train("head");
+  $("tr-arms").onclick = () => train("arms"); $("tr-head").onclick = () => train("head"); $("tr-hands").onclick = () => train("hands");
   setInterval(() => { if ($("tab-train").classList.contains("active")) refreshTrain(); }, 2000);
   // génération
   $("g-go").onclick = generate;

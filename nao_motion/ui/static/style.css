@@ -72,3 +72,8 @@ kbd{display:inline-block;min-width:1.5em;padding:0 5px;border:1px solid var(--li
 button.next{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 35%,transparent)}
 .alert{border:1px solid var(--bad);border-left-width:5px;background:color-mix(in srgb,var(--bad) 9%,var(--card));border-radius:6px;padding:8px 12px;margin:10px 0;max-width:900px}
 .alert b{color:var(--bad)}
+/* onglet Mains (hands.js) */
+.hand-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+.hand-name{min-width:7.5em;font-weight:600}
+.hand-row input[type=range]{width:min(320px,60vw)}
+.hand-row output{min-width:3em;font-variant-numeric:tabular-nums;font-weight:600}

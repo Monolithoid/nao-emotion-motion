@@ -20,6 +20,7 @@
 <nav>
   <button data-tab="arms" class="active">1 · Bras</button>
   <button data-tab="head">2 · Tête</button>
+  <button data-tab="hands">3 · Mains</button>
   <button data-tab="takes">Prises</button>
   <button data-tab="train">Entraînement</button>
   <button data-tab="gen">Génération</button>
@@ -118,11 +119,85 @@
   </div>
 </section>
 
+<section id="tab-hands" class="tab">
+  <p class="hint">Passage 3 : les doigts de NAO ne se guident pas à la main, on les pilote d'ici. Les bras rejouent un
+  geste (motorisés), la tête reste raide sur place, et vous réglez en direct l'ouverture de chaque main, de
+  <b>0 (fermée)</b> à <b>1 (ouverte)</b>, avec toutes les valeurs intermédiaires. La consigne et la mesure sont enregistrées
+  sur la même horloge que les bras : le modèle des mains apprend à ouvrir ou fermer au bon moment du geste.
+  Hors enregistrement, les mêmes commandes bougent les mains tout de suite (« Mouvements autorisés » requis).</p>
+  <fieldset class="hands">
+    <legend>Ouverture des mains</legend>
+    <div class="hand-row" data-hand="LHand">
+      <span class="hand-name">Main gauche</span>
+      <input type="range" id="m-LHand" min="0" max="1" step="0.01" value="0.3" aria-label="Ouverture main gauche">
+      <output id="m-LHand-val">0,30</output>
+      <button data-hand-set="LHand:0">Fermer</button><button data-hand-set="LHand:0.5">½</button><button data-hand-set="LHand:1">Ouvrir</button>
+      <span class="hint" id="m-LHand-meas"></span>
+    </div>
+    <div class="hand-row" data-hand="RHand">
+      <span class="hand-name">Main droite</span>
+      <input type="range" id="m-RHand" min="0" max="1" step="0.01" value="0.3" aria-label="Ouverture main droite">
+      <output id="m-RHand-val">0,30</output>
+      <button data-hand-set="RHand:0">Fermer</button><button data-hand-set="RHand:0.5">½</button><button data-hand-set="RHand:1">Ouvrir</button>
+      <span class="hint" id="m-RHand-meas"></span>
+    </div>
+    <div class="hand-row">
+      <span class="hand-name">Les deux</span>
+      <button data-hand-set="LHand:0,RHand:0">Fermer</button><button data-hand-set="LHand:0.5,RHand:0.5">½</button>
+      <button data-hand-set="LHand:1,RHand:1">Ouvrir</button>
+      <label><input type="checkbox" id="m-link"> curseurs liés</label>
+    </div>
+    <p class="hint">Clavier (onglet Mains) : <kbd>↑</kbd> / <kbd>↓</kbd> ouvrent / ferment les deux mains par pas de 0,1 ;
+    <kbd>O</kbd> ouvre tout, <kbd>F</kbd> ferme tout. Pendant l'enregistrement, chaque réglage est suivi en direct,
+    à vitesse limitée par le guardian.</p>
+    <div id="m-live" class="hint"></div>
+  </fieldset>
+  <fieldset>
+    <legend>Source du mouvement des bras</legend>
+    <label><input type="radio" name="msrc" value="generated" checked> Geste généré par le modèle des bras :</label>
+    <select id="m-emotion"></select>
+    intensité <input type="range" id="m-intensity" min="0" max="1" step="0.05" value="0.7"> <span id="m-int-val"></span>
+    variation <input type="number" id="m-var" value="0" step="0.02" min="0" class="num">
+    graine <input type="number" id="m-seed" value="0" class="num">
+    <br><label><input type="radio" name="msrc" value="take"> Démonstration enregistrée :</label>
+    <select id="m-arm"></select>
+  </fieldset>
+  <details><summary>Événement (repère torse)</summary>
+    <div class="row">
+      <button id="m-random" class="ok" title="Tire émotion, intensité, angle et distance au hasard (geste généré)">Tirage aléatoire</button>
+      <label><input type="checkbox" id="m-random-none"> parfois sans événement</label>
+    </div>
+    <div id="m-fov"></div>
+  </details>
+  <div class="consigne" id="m-consigne"></div>
+  <div class="alert" id="m-alert"><b>Attention :</b> <kbd>1</kbd> Préparer <b>déplace les bras au moteur</b> vers le début
+  de la relecture, sans confirmation. Ce passage ne relâche rien (<kbd>Espace</kbd> relâche toujours bras et tête).
+  Dégagez les bras avant d'appuyer.</div>
+  <div class="row">
+    <button id="m-prepare"><kbd>1</kbd> Préparer (approche motorisée des bras — mouvements autorisés requis)</button>
+    <button id="m-start"><kbd>2</kbd> Démarrer (compte à rebours + relecture)</button>
+    <button id="m-stop"><kbd>3</kbd> Arrêter</button>
+    <button id="m-hold"><kbd>4</kbd> Raidir tout sur place</button>
+  </div>
+  <div class="recstate" id="m-rec"></div>
+  <div id="m-draft" class="draft hidden">
+    <h3>Prise de mains — aperçu</h3>
+    <div class="plot" id="m-plot"></div>
+    <div class="row">
+      <input id="m-notes" placeholder="Annotation">
+      <button class="ok" id="m-accept">Accepter</button>
+      <button id="m-pending">Garder en attente</button>
+      <button class="bad" id="m-reject">Rejeter</button>
+      <button id="m-retry">Recommencer</button>
+    </div>
+  </div>
+</section>
+
 <section id="tab-takes" class="tab">
   <h3>Répartition (émotion × intensité, prises acceptées / total)</h3>
   <div id="stats"></div>
   <div class="row">
-    <label>Type <select id="t-kind"><option value="">tous</option><option value="arms">bras</option><option value="head">tête</option></select></label>
+    <label>Type <select id="t-kind"><option value="">tous</option><option value="arms">bras</option><option value="head">tête</option><option value="hands">mains</option></select></label>
     <button id="t-refresh">Actualiser</button>
   </div>
   <table id="t-table"></table>
@@ -136,6 +211,7 @@
       <button class="bad" id="t-reject">Rejeter</button>
       <button id="t-save-notes">Enregistrer l'annotation</button>
       <button id="t-use-head">Enregistrer une tête sur cette prise</button>
+      <button id="t-use-hands">Enregistrer les mains sur cette prise</button>
     </div>
     <div id="t-info" class="mono"></div>
   </div>
@@ -149,6 +225,7 @@
     <label><input type="checkbox" id="tr-pending"> inclure les prises en attente</label>
     <button id="tr-arms">Entraîner les bras</button>
     <button id="tr-head">Entraîner la tête (bras figés)</button>
+    <button id="tr-hands">Entraîner les mains (bras figés)</button>
   </div>
   <div id="tr-jobs"></div>
   <h3>Résultats</h3>
@@ -262,6 +339,7 @@
 <script src="fov.js"></script>
 <script src="calib.js"></script>
 <script src="nao-figure.js"></script>
+<script src="hands.js"></script>
 <script src="shortcuts.js"></script>
 </body>
 </html>
