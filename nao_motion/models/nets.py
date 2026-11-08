@@ -5,6 +5,9 @@ Modèle de la tête : [émotion, intensité, bras planifiés, tête actuelle, é
                     -> points de contrôle de la tête (K×Jh), sur la MÊME phase que
                     les bras (même durée), ce qui permet d'apprendre anticipation
                     ou retard par rapport au geste des bras.
+Modèle des mains : même forme que la tête, [..., ouverture actuelle des mains, ...]
+                    -> ouverture des mains (K×2, 0 fermée .. 1 ouverte), sur la
+                    phase des bras : la main s'ouvre au bon moment du geste.
 
 Référence déterministe : une régression par moindres carrés produit la MOYENNE
 des gestes portant la même étiquette. Si « joie » a été démontrée de deux
@@ -113,14 +116,15 @@ class LoadedModel:
         m = self.meta
         if m["emotions"] != cfg.emotions:
             raise CheckpointError(f"Liste d'émotions différente : modèle {m['emotions']} / config {cfg.emotions}")
-        if m["joints"] != (cfg.arm_joints if self.component == "arms" else cfg.head_joints):
+        expected = {"arms": cfg.arm_joints, "head": cfg.head_joints, "hands": cfg.hand_joints}.get(self.component)
+        if m["joints"] != expected:
             raise CheckpointError("Articulations du modèle différentes de la configuration")
-        if self.component == "head" and m["arm_joints"] != cfg.arm_joints:
-            raise CheckpointError("Articulations des bras du modèle tête différentes de la configuration")
+        if self.component in ("head", "hands") and m["arm_joints"] != cfg.arm_joints:
+            raise CheckpointError(f"Articulations des bras du modèle {self.component} différentes de la configuration")
         if self.component == "arms" and m.get("event_features", 0) != EVENT_FEATURES:
             raise CheckpointError("Modèle des bras entraîné sans l'événement (angle, distance) : "
                                   "réentraîner les bras, puis la tête")
-        if self.component == "head" and m.get("event_features", 4) != EVENT_FEATURES:
+        if self.component in ("head", "hands") and m.get("event_features", 4) != EVENT_FEATURES:
             raise CheckpointError("Encodage de l'événement différent (distance ajoutée) : réentraîner le modèle de la tête")
         if m["calibration_version"] != cfg.calibration_version:
             self.warnings.append(f"Calibration différente : modèle {m['calibration_version']}, "

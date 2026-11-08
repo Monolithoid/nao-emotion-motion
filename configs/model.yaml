@@ -9,6 +9,11 @@ head_model:
   hidden: [96, 64]
   dropout: 0.0
   arm_input: recorded       # recorded (bras mesurés pendant la relecture) | predicted (modèle bras figé)
+hands_model:                # ouverture des mains, conditionnée par le geste des bras (passage 3)
+  hidden: [64, 64]
+  dropout: 0.0
+  arm_input: recorded
+  target: command           # command (consigne donnée par l'opérateur) | measured (capteur de la main)
 training:
   epochs: 800
   lr: 0.01

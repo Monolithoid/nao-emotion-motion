@@ -33,7 +33,7 @@ class SimAdapter(RobotAdapter):
         self._last_update = None
         self._connected = False
         self._lock = threading.RLock()
-        joints = cfg.all_joints
+        joints = cfg.controlled_joints
         self.q: Dict[str, float] = dict(zip(joints, cfg.pose(initial_pose, joints)))
         self.target: Dict[str, float] = dict(self.q)
         self.stiffness: Dict[str, float] = {j: 0.0 for j in joints}

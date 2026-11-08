@@ -4,7 +4,8 @@ Chaque exemple porte un identifiant de GROUPE servant au découpage
 entraînement/validation : une prise de bras forme son propre groupe ; toutes
 les prises de tête enregistrées sur un même geste des bras (même prise
 rejouée, ou même geste généré) partagent ce groupe. Aucune variante d'une même prise ne peut donc se
-retrouver à la fois en entraînement et en validation.
+retrouver à la fois en entraînement et en validation. Les prises de mains (passage 3) suivent la
+même règle que la tête.
 """
 from __future__ import annotations
 
@@ -15,7 +16,8 @@ import numpy as np
 
 from ..config import Config
 from ..data.representation import encode_trajectory
-from ..data.store import TakeStore
+from ..data.store import Take, TakeStore
+from ..trajectory import Trajectory
 from .features import Norm, arm_input, head_input
 
 
@@ -55,18 +57,37 @@ def arm_examples(store: TakeStore, cfg: Config, statuses: Sequence[str] = ("acce
     return _pack(X, Y, D, G, T, E, I, len(cfg.arm_joints), K)
 
 
+def follower_joints(cfg: Config, kind: str):
+    return {"head": cfg.head_joints, "hands": cfg.hand_joints}[kind]
+
+
+def _target_segment(store: TakeStore, take: Take, joints, target: str) -> Trajectory:
+    """Segment utile des articulations suivies : mesures, ou consigne envoyée (mains)."""
+    if target == "command":
+        ref = store.load_reference(take.meta.take_id)
+        if ref is not None and set(joints) <= set(ref.joints):
+            return Take(take.meta, ref).segment_trajectory(joints)
+    elif target != "measured":
+        raise ValueError(f"cible inconnue : {target}")
+    return take.segment_trajectory(joints)
+
+
 def head_examples(store: TakeStore, cfg: Config, statuses: Sequence[str] = ("accepted",),
-                  arm_source: str = "recorded", arm_model=None) -> Examples:
+                  arm_source: str = "recorded", arm_model=None, kind: str = "head",
+                  target: str = "measured") -> Examples:
+    """Exemples tête (kind="head") ou mains (kind="hands") : [émotion, intensité, bras,
+    état initial, événement] -> points de contrôle de la tête ou de l'ouverture des mains."""
     from .features import Norm as _N
     K, n = _rep(cfg)
+    fj = follower_joints(cfg, kind)
     an = _N.from_config(cfg, cfg.arm_joints)
-    hn = _N.from_config(cfg, cfg.head_joints)
+    hn = _N.from_config(cfg, fj)
     X, Y, D, G, T, E, I = [], [], [], [], [], [], []
-    for m in store.list(kind="head"):
+    for m in store.list(kind=kind):
         if m.status not in statuses:
             continue
         take = store.load(m.take_id)
-        head_ctrl, dur = encode_trajectory(take.segment_trajectory(cfg.head_joints), K, n)
+        head_ctrl, dur = encode_trajectory(_target_segment(store, take, fj, target), K, n)
         if arm_source == "recorded":
             arm_ctrl, _ = encode_trajectory(take.segment_trajectory(cfg.arm_joints), K, n)
             arm_norm, ld = an.fwd(arm_ctrl), np.log(dur)
@@ -77,12 +98,13 @@ def head_examples(store: TakeStore, cfg: Config, statuses: Sequence[str] = ("acc
             arm_norm, ld = out[:-1].reshape(K, -1), float(out[-1])
         else:
             raise ValueError(f"arm_source inconnu : {arm_source}")
-        hc = hn.fwd(np.array(m.head_initial if m.head_initial is not None else head_ctrl[0]))
+        init = m.head_initial if kind == "head" else m.hands_initial
+        hc = hn.fwd(np.array(init if init is not None else head_ctrl[0]))
         X.append(head_input(cfg.emotions, m.emotion, m.intensity, arm_norm, ld, hc, m.event_ctx))
         Y.append(hn.fwd(head_ctrl).ravel())
         D.append(np.log(dur))
         G.append(store.group_id(m)); T.append(m.take_id); E.append(m.emotion); I.append(m.intensity)
-    return _pack(X, Y, D, G, T, E, I, len(cfg.head_joints), K)
+    return _pack(X, Y, D, G, T, E, I, len(fj), K)
 
 
 def _pack(X, Y, D, G, T, E, I, J, K):

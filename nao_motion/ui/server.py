@@ -36,7 +36,7 @@ class Api:
     def get_config(self, q):
         c = self.wb.cfg
         return {"emotions": [{"id": e, "label": c.emotion_labels[e]} for e in c.emotions],
-                "intentions": c.intentions, "groups": c.groups, "limits": c.limits,
+                "intentions": c.intentions, "groups": c.groups, "limits": c.limits, "hands": c.hand_joints,
                 "calibration_version": c.calibration_version, "calibrated": c.calibrated,
                 "calibration_robot": (c.calibration.robot if c.calibration else None),
                 "bridge": c.robot.get("bridge"),
@@ -58,7 +58,8 @@ class Api:
         t, qq = _downsample(take.traj.t, take.traj.q)
         out = {"meta": take.meta.to_dict(), "t": t, "q": qq,
                "suggested_segment": list(suggest_segment(take.traj)),
-               "head_takes": [m.to_dict() for m in st.head_takes_for(take_id)] if take.meta.kind == "arms" else []}
+               "head_takes": [m.to_dict() for m in st.head_takes_for(take_id)] if take.meta.kind == "arms" else [],
+               "hand_takes": [m.to_dict() for m in st.head_takes_for(take_id, "hands")] if take.meta.kind == "arms" else []}
         if take.meta.kind == "arms":
             rp = replay_trajectory(take, self.wb.cfg.arm_joints)
             ctx = dict(zip(self.wb.cfg.head_joints, self.wb.cfg.pose("start", self.wb.cfg.head_joints)))
@@ -73,7 +74,7 @@ class Api:
             raise ValueError("Aucune prise terminée")
         r = rec.result
         t, qq = _downsample(r.traj.t, r.traj.q)
-        seg = r.segment if self.wb.rec_info.get("kind") == "head" else suggest_segment(r.traj)
+        seg = r.segment if self.wb.rec_info.get("kind") in ("head", "hands") else suggest_segment(r.traj)
         return {"t": t, "q": qq, "joints": r.traj.joints, "segment": list(seg), "complete": r.complete,
                 "message": r.message}
 
@@ -85,6 +86,10 @@ class Api:
 
     def get_event(self, q):
         return self.wb.current_event().to_dict()
+
+    def get_hands(self, q):
+        """Ouverture mesurée des mains (et, pendant le passage 3, cible et consigne). Aucune commande."""
+        return self.wb.hands_state()
 
     def get_calibration(self, q):
         cal = self.wb.calibration
@@ -124,8 +129,11 @@ class Api:
         return self.wb.status()
 
     def post_hold(self, d):
-        groups = d.get("groups") or list(self.wb.cfg.groups)
-        self.wb.ctrl.hold([j for g in groups for j in self.wb.cfg.groups[g]])
+        """Raidit sur place (aucun déplacement). Groupes de joints.yaml, plus « hands » pour les mains ;
+        sans groupe : tout, mains comprises."""
+        c = self.wb.cfg
+        groups = d.get("groups") or list(c.groups) + (["hands"] if c.hand_joints else [])
+        self.wb.ctrl.hold([j for g in groups for j in (c.hand_joints if g == "hands" else c.groups[g])])
         return self.wb.status()
 
     def post_relax(self, d):
@@ -138,10 +146,11 @@ class Api:
         return self.wb.status()
 
     def post_record_prepare(self, d):
-        if d.get("kind") == "head":
+        if d.get("kind") in ("head", "hands"):
+            k = d["kind"]
             if d.get("generated"):
-                return self.wb.prepare_head_take(generated=d["generated"], confirm=bool(d.get("confirm")))
-            return self.wb.prepare_head_take(d["arm_take_id"], confirm=bool(d.get("confirm")))
+                return self.wb.prepare_head_take(generated=d["generated"], confirm=bool(d.get("confirm")), kind=k)
+            return self.wb.prepare_head_take(d["arm_take_id"], confirm=bool(d.get("confirm")), kind=k)
         return self.wb.prepare_arm_take(d["emotion"], float(d["intensity"]), d.get("intention") or None,
                                         confirm=bool(d.get("confirm")))
 
@@ -158,6 +167,11 @@ class Api:
     def post_record_discard(self, d):
         self.wb.recording = None
         return {"discarded": True}
+
+    def post_hands(self, d):
+        """{"targets": {"LHand": 0..1, "RHand": 0..1}} : suivi en direct pendant le passage 3,
+        sinon mouvement court validé par le guardian (contrôleur armé requis)."""
+        return self.wb.set_hands(d.get("targets") or {})
 
     def post_take(self, take_id, d):
         m = self.wb.store.update(take_id, status=d.get("status"), notes=d.get("notes"), tags=d.get("tags"),

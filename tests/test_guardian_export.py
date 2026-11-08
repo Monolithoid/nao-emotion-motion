@@ -49,12 +49,12 @@ def test_export_content(calibrated):
     c, out, g = calibrated
     d = json.loads(open(out["guardian"], encoding="utf-8").read())
     assert d["source"]["calibrated"] and d["source"]["calibration_version"] == c.calibration_version
-    assert set(d["limits"]) == set(c.all_joints)
+    assert set(d["limits"]) == set(c.controlled_joints)  # bras, tête et mains (plage d'usine)
     origins = {x["origin"] for x in d["coupled_constraints"]}
     assert origins == {"manual", "calibration"}
-    assert set(d["poses"]) == {"rest", "start"} and set(d["poses"]["rest"]) == set(c.all_joints)
+    assert set(d["poses"]) == {"rest", "start"} and set(d["poses"]["rest"]) == set(c.controlled_joints)
     assert open(out["checker"], encoding="utf-8").read() == CHECKER.read_text(encoding="utf-8")
-    assert g.calibrated and g.joints == sorted(c.all_joints)
+    assert g.calibrated and g.joints == sorted(c.controlled_joints)
 
 
 def _random_trajectories(c, rng, n=150):

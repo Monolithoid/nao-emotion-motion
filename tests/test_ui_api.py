@@ -21,7 +21,7 @@ def test_event_endpoint_and_stats(trained):
     assert ev["present"] and ev["frame"] == "torso" and ev["unit"] == "rad"
     assert api.post_event({"present": False})["present"] is False
     st = api.get_stats({})
-    assert set(st["table"]) == {"arms", "head"}
+    assert set(st["table"]) == {"arms", "head", "hands"}
     take_id = trained["arm_ids"][0]
     d = api.get_take(take_id)
     assert d["replay"]["guardian"]["ok"] and len(d["head_takes"]) >= 1
@@ -58,3 +58,31 @@ def test_static_nao_figure_served():
             assert b'"a-accept"' in js and b'"h-accept"' in js and b"Enter" in js
     finally:
         srv.shutdown()
+
+
+def test_hands_endpoints(tmp_path, cfg):
+    """Onglet Mains : configuration, lecture de l'ouverture, commande (armement requis)."""
+    from .conftest import make_wb
+    wb = make_wb(tmp_path, cfg)
+    api = Api(wb)
+    assert api.get_config({})["hands"] == ["LHand", "RHand"]
+    st = api.get_hands({})
+    assert st["measured"] == {"LHand": 0.3, "RHand": 0.3} and st["limits"]["LHand"] == [0.0, 1.0]
+    with pytest.raises(Exception):
+        api.post_hands({"targets": {"LHand": 1.0}})  # contrôleur désarmé : rien n'est envoyé
+    assert wb.adapter.command_log == []
+    api.post_arm({"armed": True, "confirm": True})
+    assert api.post_hands({"targets": {"LHand": 1.0, "RHand": 0.0}}).get("started")
+    wb._hands_thread and wb._hands_thread.join(5)
+    assert api.get_hands({})["measured"] == {"LHand": 1.0, "RHand": 0.0}
+    api.post_hold({})  # « Raidir tout sur place » couvre aussi les mains
+    assert all(wb.adapter.roles[j] == "driven" for j in cfg.controlled_joints)
+
+
+def test_hands_tab_served():
+    from nao_motion.ui.server import STATIC
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'data-tab="hands"' in html and 'src="hands.js"' in html
+    for j in ("LHand", "RHand"):
+        assert f'id="m-{j}"' in html
+    assert '"m-prepare"' in (STATIC / "shortcuts.js").read_text(encoding="utf-8")

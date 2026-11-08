@@ -45,12 +45,16 @@ def guardian_dict(cfg: Config, allow_uncalibrated: bool = False) -> dict:
                    "calibrated": bool(cfg.calibrated), "poses_calibrated": bool(cfg.poses_calibrated),
                    "robot": (cfg.calibration.robot if cfg.calibration else None),
                    "config_fingerprint": cfg.fingerprint()},
-        "groups": {k: list(v) for k, v in cfg.groups.items()},
+        "groups": dict({k: list(v) for k, v in cfg.groups.items()}, **({"hands": list(cfg.hand_joints)}
+                                                                        if cfg.hand_joints else {})),
         "forbidden_joint_prefixes": list(LEG_PREFIXES),
         "limits": {j: [float(lo), float(hi)] for j, (lo, hi) in cfg.limits.items()},
         "limit_margin_rad": g.limit_margin_rad,
+        # mains (LHand, RHand) : ouverture 0..1 et non radians ; marge et accélération propres
+        "per_joint_margin": dict(g.per_joint_margin),
         "velocity_rad_s": {"default": g.max_velocity_rad_s, "per_joint": dict(g.per_joint_velocity_rad_s)},
         "max_acceleration_rad_s2": g.max_acceleration_rad_s2,
+        "per_joint_acceleration": dict(g.per_joint_acceleration),
         "check_rate_hz": g.check_rate_hz,
         "duration_s": [g.min_duration_s, g.max_duration_s],
         "start_tolerance_rad": g.start_tolerance_rad,

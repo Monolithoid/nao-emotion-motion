@@ -1,7 +1,8 @@
 """Serveur d'inférence minimal (bibliothèque standard) pour une inférence déportée.
 
 POST /generate {"emotion": "joie" | {"joie":0.5,...}, "intensity": 0.7,
-                "event": {...optionnel...}, "head_current": {...optionnel...}}
+                "event": {...optionnel...}, "head_current": {...optionnel...},
+                "hands_current": {...optionnel : ouverture LHand/RHand 0..1...}}
 -> trajectoire + rapport du guardian. Le serveur n'exécute RIEN : le client
 (contrôleur) revalide et exécute après confirmation.
 """
@@ -33,7 +34,8 @@ def make_handler(wb):
                 d = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
                 ev = EventContext.from_dict(d["event"]) if d.get("event") else EventContext.none()
                 gen = wb.get_engine().generate(d["emotion"], float(d["intensity"]), ev, d.get("head_current"),
-                                               float(d.get("variation", 0)), d.get("seed"))
+                                               float(d.get("variation", 0)), d.get("seed"),
+                                               hands_current=d.get("hands_current"))
                 self._send(200, {"generated": gen.to_dict(),
                                  "guardian": wb.guardian.validate(gen.combined).to_dict()})
             except Exception as e:

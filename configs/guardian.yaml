@@ -6,6 +6,16 @@ max_velocity_rad_s: 1.5         # par articulation (valeur par défaut)
 max_acceleration_rad_s2: 8.0
 per_joint_velocity_rad_s:       # surcharges éventuelles
   HeadPitch: 1.0
+  LHand: 2.0                    # mains : fraction d'ouverture par seconde (0 = fermée, 1 = ouverte)
+  RHand: 2.0
+# Surcharges par articulation de la marge et de l'accélération. Mains : plage d'usine
+# entière (0 à 1, butées gérées par le moteur de la main) et mouvement plus vif qu'un bras.
+per_joint_margin:
+  LHand: 0.0
+  RHand: 0.0
+per_joint_acceleration:
+  LHand: 20.0
+  RHand: 20.0
 check_rate_hz: 100              # le trajet complet est vérifié à cette fréquence
 min_duration_s: 0.3
 max_duration_s: 15.0

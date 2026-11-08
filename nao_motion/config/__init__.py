@@ -14,6 +14,7 @@ DEFAULT_CONFIG_DIR = Path(os.environ.get("NAO_MOTION_CONFIG", Path(__file__).res
 
 ARM_GROUPS = ("left_arm", "right_arm")
 HEAD_GROUP = "head"
+HANDS_GROUP = "hands"   # LHand / RHand : ouverture 0..1, pilotée (jamais guidée), hors calibration
 
 
 class ConfigError(ValueError):
@@ -41,9 +42,17 @@ class GuardianConfig:
     transition_velocity_rad_s: float
     coupled_constraints: List[CoupledConstraint]
     rest_velocity_rad_s: float = 0.3  # segments repos <-> départ (repos hors zone de mouvement)
+    per_joint_margin: Dict[str, float] = field(default_factory=dict)
+    per_joint_acceleration: Dict[str, float] = field(default_factory=dict)
 
     def velocity_limit(self, joint: str) -> float:
         return float(self.per_joint_velocity_rad_s.get(joint, self.max_velocity_rad_s))
+
+    def margin(self, joint: str) -> float:
+        return float(self.per_joint_margin.get(joint, self.limit_margin_rad))
+
+    def acceleration_limit(self, joint: str) -> float:
+        return float(self.per_joint_acceleration.get(joint, self.max_acceleration_rad_s2))
 
 
 @dataclass
@@ -68,6 +77,9 @@ class Config:
     # segments repos <-> départ peuvent quitter la zone. Que le départ soit accessible
     # sans heurt depuis le repos est à la charge de l'opérateur qui calibre.
     rest_limits: Dict[str, Tuple[float, float]] = field(default_factory=dict)
+    # Mains (LHand, RHand) : hors des groupes calibrés (on ne les guide pas à la main),
+    # bornées par leur plage d'usine 0..1 et pilotées depuis l'interface.
+    hand_joints: List[str] = field(default_factory=list)
 
     # -- accès pratiques -------------------------------------------------
     @property
@@ -80,7 +92,16 @@ class Config:
 
     @property
     def all_joints(self) -> List[str]:
+        """Articulations calibrées (bras + tête). Les mains n'en font pas partie."""
         return self.arm_joints + self.head_joints
+
+    @property
+    def controlled_joints(self) -> List[str]:
+        """Tout ce que le logiciel peut lire ou commander : bras, tête et mains."""
+        return self.all_joints + self.hand_joints
+
+    def is_hand(self, joint: str) -> bool:
+        return joint in self.hand_joints
 
     def pose(self, name: str, joints: List[str]) -> List[float]:
         flat = {}
@@ -145,6 +166,21 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
             raise ConfigError(f"Limite invalide pour {j}: {lo} >= {hi}")
         limits[j] = (lo, hi)
 
+    hands = joints.get(HANDS_GROUP) or {}
+    hand_joints = [str(j) for j in hands.get("joints") or []]
+    hand_limits = {}
+    for j in hand_joints:
+        if j in all_j:
+            raise ConfigError(f"joints.yaml : {j} est à la fois une main et une articulation d'un groupe")
+        lim = (hands.get("limits") or {}).get(j)
+        if lim is None:
+            raise ConfigError(f"joints.yaml : limite manquante pour la main {j}")
+        lo, hi = (float(x) for x in lim)
+        if not 0.0 <= lo < hi <= 1.0:
+            raise ConfigError(f"joints.yaml : plage de {j} invalide [{lo}, {hi}] (ouverture entre 0 et 1)")
+        hand_limits[j] = (lo, hi)
+    poses_file = poses
+
     calibration = None
     poses_from_cal = False
     cal_path = calibration_file or (active_calibration_path(root) if use_calibration else None)
@@ -170,16 +206,20 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
             f = (m or {}).get("factory")
             if j in rest_limits and f:
                 rest_limits[j] = (min(float(f[0]), limits[j][0]), max(float(f[1]), limits[j][1]))
+    # mains : plage d'usine, que la calibration ne remplace pas
+    limits.update(hand_limits)
+    rest_limits.update(hand_limits)
 
-    def _check(name, g, gp, lims, hint=""):
-        missing = [j for j in groups[g] if j not in gp]
+    def _check(name, g, gp, lims, hint="", js=None):
+        js = groups[g] if js is None else js
+        missing = [j for j in js if j not in gp]
         if missing:
             raise ConfigError(f"poses : {name}/{g} incomplet : {missing}")
-        for j in groups[g]:
+        for j in js:
             lo, hi = lims[j]
             if not lo <= float(gp[j]) <= hi:
                 raise ConfigError(f"pose {name}/{j}={gp[j]} hors limites [{lo}, {hi}]" + hint)
-        return {j: float(gp[j]) for j in groups[g]}
+        return {j: float(gp[j]) for j in js}
 
     hint = " (limites calibrées : capturer les poses pendant la calibration)" if calibration else ""
     pose_d = {"rest": {}, "start": {}}
@@ -187,6 +227,11 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
         pose_d["start"][g] = _check("start", g, poses["start"].get(g) or {}, limits, hint)
         # le repos peut sortir de la zone de mouvement (contact), pas des limites d'usine
         pose_d["rest"][g] = _check("rest", g, poses["rest"].get(g) or {}, rest_limits, " (limites d'usine)")
+    for n in ("rest", "start"):
+        if hand_joints:
+            # poses des mains : celles de la calibration si elle en porte, sinon poses.yaml
+            src = (poses.get(n) or {}).get(HANDS_GROUP) or (poses_file.get(n) or {}).get(HANDS_GROUP) or {}
+            pose_d[n][HANDS_GROUP] = _check(n, HANDS_GROUP, src, limits, js=hand_joints)
 
     emotions = [e["id"] for e in emos["emotions"]]
     if len(set(emotions)) != len(emotions) or not emotions:
@@ -216,6 +261,8 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
         transition_velocity_rad_s=float(guard["transition_velocity_rad_s"]),
         coupled_constraints=cc,
         rest_velocity_rad_s=float(guard.get("rest_velocity_rad_s", 0.3)),
+        per_joint_margin={k: float(v) for k, v in (guard.get("per_joint_margin") or {}).items()},
+        per_joint_acceleration={k: float(v) for k, v in (guard.get("per_joint_acceleration") or {}).items()},
     )
     return Config(
         root=root, groups=groups, limits=limits,
@@ -228,4 +275,5 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
         raw={"joints": joints, "poses": poses, "emotions": emos, "guardian": guard},
         calibration=calibration,
         rest_limits=rest_limits,
+        hand_joints=hand_joints,
     )

@@ -9,6 +9,13 @@ sur la même horloge : la fenêtre de relecture (segment) est donc connue
 exactement dans le temps de l'enregistrement. On conserve les bras MESURÉS
 pendant la relecture, c'est-à-dire le mouvement réellement exécuté.
 
+Passage 3 (mains) : comme le passage 2, mais rien n'est relâché. Les bras
+rejouent le geste, la tête reste raide sur place et l'opérateur PILOTE
+l'ouverture des mains depuis l'interface (curseurs, boutons, clavier) : une
+main de NAO ne se guide pas à la main. La consigne de l'opérateur est filtrée
+en ligne (bornes, vitesse, accélération du guardian) avant d'être envoyée, et
+conservée à côté des mesures.
+
 Aucune articulation n'est à la fois relâchée et commandée.
 """
 from __future__ import annotations
@@ -47,6 +54,8 @@ class RecordingResult:
     head_initial: Optional[List[float]]
     complete: bool
     message: str = ""
+    hands_initial: Optional[List[float]] = None
+    reference: Optional[Trajectory] = None   # consignes envoyées (passage 3 : bras + mains)
 
 
 def replay_trajectory(take: Take, joints, ctrl_per_s: float = 6.0, rate_hz: float = 50.0) -> Trajectory:
@@ -149,6 +158,7 @@ class HeadRecording(RecordingSession):
     MODÈLE DES BRAS existant pour une émotion/intensité (`from_generated`).
     Dans les deux cas, ce sont les bras MESURÉS pendant l'exécution qui sont
     conservés et servent à l'apprentissage de la tête."""
+    kind = "head"
 
     def __init__(self, cfg, controller, replay: Trajectory, event: EventContext, source: dict,
                  pre_roll_s: float = 0.5, post_roll_s: float = 0.5):
@@ -162,6 +172,8 @@ class HeadRecording(RecordingSession):
         self.replay = replay.shifted(-replay.t[0])
         self.guided = cfg.head_joints
         self.driven = cfg.arm_joints
+        self.follower_joints = cfg.head_joints   # ce que l'opérateur démontre pendant la relecture
+        self.record_joints = cfg.arm_joints + cfg.head_joints
         self.approach_plan = None
         self.replay_report = None
 
@@ -228,7 +240,7 @@ class HeadRecording(RecordingSession):
         if not self.ctrl.armed:
             raise ControllerError("Contrôleur désarmé : relecture impossible")
         a = self.adapter
-        all_j = self.cfg.arm_joints + self.cfg.head_joints
+        all_j = self.record_joints
         arm_j = self.cfg.arm_joints
         D = self.replay.duration
         speed = self.ctrl.speed
@@ -243,6 +255,7 @@ class HeadRecording(RecordingSession):
             self.state = RecState.RECORDING
             ts, qs = [], []
             seg_start = seg_end = None
+            self._begin()
             t0 = a.now()
             k = 0
             while True:
@@ -261,6 +274,7 @@ class HeadRecording(RecordingSession):
                         seg_start = t - uc  # instant correspondant à la phase 0 de la relecture
                     if u >= D:
                         seg_end = seg_start + D
+                self._follow(t, u)
                 q = a.read_angles(all_j)
                 ts.append(t)
                 qs.append(q)
@@ -292,7 +306,100 @@ class HeadRecording(RecordingSession):
             seg = (0.0, float(ts[-1]))
         else:
             seg = (float(seg_start), float(min(seg_end, ts[-1])))
-        hi = traj.sample(np.array([seg[0]]))[0][len(arm_j):].tolist()
-        self.result = RecordingResult(traj, seg, self.guided, self.driven, hi, complete, msg)
+        fi = traj.select(self.follower_joints).sample(np.array([seg[0]]))[0].tolist()
+        self.result = self._result(traj, seg, fi, complete, msg)
         self.state = RecState.DONE
         return self.result
+
+    # -- points d'extension (passage 3) ------------------------------------------
+    def _begin(self):
+        pass
+
+    def _follow(self, t: float, u: float):
+        """Appelé à chaque pas, juste avant la lecture des capteurs. u : phase de la relecture (s)."""
+
+    def _result(self, traj, seg, follower_initial, complete, msg) -> RecordingResult:
+        return RecordingResult(traj, seg, self.guided, self.driven, follower_initial, complete, msg)
+
+
+class HandRecording(HeadRecording):
+    """Passage 3 : bras rejoués (prise ou geste généré), tête raide sur place, mains
+    PILOTÉES en direct par l'opérateur (`set_target`). Rien n'est relâché.
+
+    La cible reçue de l'interface est bornée (limites et marge du guardian) et suivie
+    avec une vitesse et une accélération limitées : c'est cette consigne filtrée qui
+    est envoyée et conservée (`reference`), à côté des mesures."""
+    kind = "hands"
+
+    def __init__(self, cfg, controller, replay, event, source, **kw):
+        super().__init__(cfg, controller, replay, event, source, **kw)
+        if not cfg.hand_joints:
+            raise ControllerError("Aucune main configurée (joints.yaml, section hands)")
+        hj = list(cfg.hand_joints)
+        self.follower_joints = hj
+        self.guided = []
+        self.driven = cfg.arm_joints + cfg.head_joints + hj   # tête raidie sur place
+        self.record_joints = cfg.arm_joints + cfg.head_joints + hj
+        g = cfg.guardian
+        self._lo = np.array([cfg.limits[j][0] + g.margin(j) for j in hj])
+        self._hi = np.array([cfg.limits[j][1] - g.margin(j) for j in hj])
+        self._vmax = np.array([0.8 * g.velocity_limit(j) for j in hj])
+        self._amax = np.array([0.8 * g.acceleration_limit(j) for j in hj])
+        self.hand_target: Optional[np.ndarray] = None
+        self.target_fn: Optional[Callable[[float], dict]] = None  # démonstrateur simulé (phase -> cible)
+        self.command: Optional[np.ndarray] = None
+        self._vel = np.zeros(len(hj))
+        self._last_t = 0.0
+        self._last_arm = None
+        self._ref_rows: List[np.ndarray] = []
+
+    def set_target(self, targets: dict):
+        """Nouvelle cible d'ouverture {LHand|RHand: 0..1} ; les mains absentes gardent la leur."""
+        hj = self.follower_joints
+        unknown = [j for j in targets if j not in hj]
+        if unknown:
+            raise ControllerError(f"Mains attendues {hj}, reçu {unknown}")
+        base = self.hand_target if self.hand_target is not None else (
+            self.command if self.command is not None else self.adapter.read_angles(hj))
+        tgt = np.array(base, dtype=float)
+        for i, j in enumerate(hj):
+            if j in targets:
+                v = float(targets[j])
+                if not np.isfinite(v):
+                    raise ControllerError(f"Ouverture invalide pour {j}")
+                tgt[i] = v
+        self.hand_target = np.clip(tgt, self._lo, self._hi)
+
+    def _begin(self):
+        hj = self.follower_joints
+        self.command = np.clip(self.adapter.read_angles(hj), self._lo, self._hi)
+        if self.hand_target is None:
+            self.hand_target = self.command.copy()
+        self._vel = np.zeros(len(hj))
+        self._last_t = 0.0
+        self._last_arm = self.replay.q[0].copy()
+        self._ref_rows = []
+
+    def _follow(self, t: float, u: float):
+        hj = self.follower_joints
+        if self.target_fn is not None:
+            d = self.target_fn(u)
+            self.set_target({j: d[j] for j in hj if j in d})
+        dt = max(0.0, t - self._last_t)
+        self._last_t = t
+        q, v = self.command, self._vel
+        err = self.hand_target - q
+        # vitesse visée : bornée, et compatible avec un arrêt sur la cible (freinage)
+        v_des = np.sign(err) * np.minimum(self._vmax, np.sqrt(2 * self._amax * np.abs(err)))
+        v = v + np.clip(v_des - v, -self._amax * dt, self._amax * dt)
+        q = np.clip(q + v * dt, self._lo, self._hi)
+        self.command, self._vel = q, v
+        self.adapter.send_angles(hj, q, self.ctrl.speed)
+        if 0.0 <= u <= self.replay.duration:
+            self._last_arm = self.replay.sample(np.array([u]))[0]
+        self._ref_rows.append(np.concatenate([self._last_arm, q]))
+
+    def _result(self, traj, seg, follower_initial, complete, msg) -> RecordingResult:
+        ref = Trajectory(self.cfg.arm_joints + self.follower_joints, traj.t.copy(), np.array(self._ref_rows))
+        return RecordingResult(traj, seg, self.guided, self.driven, None, complete, msg,
+                               hands_initial=follower_initial, reference=ref)

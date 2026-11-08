@@ -159,7 +159,7 @@
   function setup() {
     if (typeof CFG === "undefined" || !CFG || !CFG.events) return setTimeout(setup, 100);
     R = ranges();
-    for (const id of ["a-fov", "h-fov", "g-fov"]) { const el = $(id); if (el) show(build(el), {present: false}); }
+    for (const id of ["a-fov", "h-fov", "m-fov", "g-fov"]) { const el = $(id); if (el) show(build(el), {present: false}); }
     api("event").then((ev) => widgets.forEach((w) => show(w, ev)));
     $("a-random").onclick = async () => {
       const d = draw($("a-random-none").checked);
@@ -173,6 +173,13 @@
       $("h-emotion").value = d.emotion; $("h-intensity").value = d.intensity;
       await applyDraw(d);
       $("h-emotion").oninput();
+    };
+    $("m-random").onclick = async () => {
+      const d = draw($("m-random-none").checked);
+      document.querySelector("input[name=msrc][value=generated]").checked = true;
+      $("m-emotion").value = d.emotion; $("m-intensity").value = d.intensity;
+      await applyDraw(d);
+      $("m-emotion").oninput();
     };
     $("g-random").onclick = async () => {
       const d = draw(false);

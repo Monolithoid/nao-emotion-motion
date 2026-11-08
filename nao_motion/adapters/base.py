@@ -36,7 +36,7 @@ class RobotAdapter:
 
     def __init__(self, cfg):
         self.cfg = cfg
-        self.roles: Dict[str, str] = {j: "idle" for j in cfg.all_joints}
+        self.roles: Dict[str, str] = {j: "idle" for j in cfg.controlled_joints}  # bras, tête, mains
 
     # -- à implémenter --------------------------------------------------------
     def connect(self): raise NotImplementedError

@@ -31,3 +31,14 @@ limits:
   RWristYaw:      [-1.50, 1.50]
   HeadYaw:        [-1.60, 1.60]
   HeadPitch:      [-0.60, 0.45]
+
+# Mains : ouverture des doigts. LHand / RHand ne sont PAS des angles : 0 = main fermée,
+# 1 = main ouverte, toute valeur intermédiaire est possible (plage d'usine NAO V4, lue par
+# ALMotion.getLimits). Les mains ne se guident pas à la main : elles sont pilotées depuis
+# l'interface (onglet Mains, passage 3). Elles ne passent pas par la calibration : elles
+# restent bornées par cette plage, que la calibration active ne remplace pas.
+hands:
+  joints: [LHand, RHand]
+  limits:
+    LHand: [0.0, 1.0]
+    RHand: [0.0, 1.0]
