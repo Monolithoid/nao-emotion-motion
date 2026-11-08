@@ -54,6 +54,7 @@ def test_static_nao_figure_served():
         # raccourcis clavier : script chargé, barre d'aide présente, script servi
         assert 'id="shortcuts"' in html and 'src="shortcuts.js"' in html
         with urllib.request.urlopen(base + "/shortcuts.js") as r:
-            assert "javascript" in r.headers["Content-Type"] and b"ArrowRight" in r.read()
+            assert "javascript" in r.headers["Content-Type"] and b"ArrowRight" in (js := r.read())
+            assert b'"a-accept"' in js and b'"h-accept"' in js and b"Enter" in js
     finally:
         srv.shutdown()

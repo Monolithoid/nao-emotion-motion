@@ -4,7 +4,9 @@
 //              (bras dans l'onglet Bras, tête dans l'onglet Tête, groupe choisi pendant
 //              une calibration ouverte, bras + tête ailleurs) ;
 //   1 2 3 4    déclenchent directement les étapes Préparer / Démarrer / Arrêter / Raidir ;
-//   →          déclenche l'étape suivante, déduite de l'état de l'enregistrement.
+//   →          déclenche l'étape suivante, déduite de l'état de l'enregistrement ;
+//   Entrée     valide (« Accepter ») la prise affichée en aperçu, y compris depuis le champ
+//              Annotation de la prise (on tape la note puis Entrée).
 // Les touches sont ignorées quand le focus est dans un champ de saisie (texte, nombre,
 // liste) et quand Ctrl, Alt ou Cmd sont enfoncés. Chaque étape passe par le bouton de
 // l'interface : mêmes garde-fous côté serveur. Relâcher n'est pas
@@ -15,6 +17,11 @@
     head: ["h-prepare", "h-start", "h-stop", "h-hold"],
   };
   const STEP_LABEL = ["Préparer", "Démarrer", "Arrêter", "Raidir"];
+  // aperçu de la prise, son bouton Accepter et son champ Annotation, par onglet
+  const DRAFT = {
+    arms: {box: "a-draft", accept: "a-accept", notes: "a-notes"},
+    head: {box: "h-draft", accept: "h-accept", notes: "h-notes"},
+  };
   const ARMS = ["left_arm", "right_arm"], ALL = ["head", "left_arm", "right_arm"];
   const lastHold = {arms: false, head: false};
   const bar = document.getElementById("shortcuts");
@@ -70,6 +77,25 @@
     btn.click();
   }
 
+  // prise en aperçu (enregistrement terminé, pas encore classée) dans l'onglet courant
+  function draftReady(kind) {
+    const d = kind && DRAFT[kind], box = d && document.getElementById(d.box);
+    const btn = d && document.getElementById(d.accept);
+    return !!(box && btn && !box.classList.contains("hidden") && !btn.disabled) && btn;
+  }
+
+  let accepting = false;
+  function accept(kind) {
+    const btn = draftReady(kind);
+    if (!btn) { flash("Entrée : aucune prise en aperçu à valider."); return; }
+    if (accepting) return; // évite un double enregistrement si Entrée est frappée deux fois
+    accepting = true;
+    flash("Entrée · prise acceptée");
+    Promise.resolve(btn.onclick ? btn.onclick() : btn.click())
+      .catch(() => flash("Validation refusée (voir le message d'erreur)."))
+      .finally(() => { accepting = false; });
+  }
+
   function flash(text) { flashText = text; flashUntil = performance.now() + 2500; render(); }
 
   function render() {
@@ -83,6 +109,7 @@
     let h = `<span><kbd>Espace</kbd> relâcher ${t.label}</span>`;
     if (kind) h += `<span><kbd>1</kbd>–<kbd>4</kbd> étapes</span>` +
       `<span><kbd>→</kbd> étape suivante : <b>${nextStep(kind) + 1} · ${STEP_LABEL[nextStep(kind)]}</b></span>`;
+    if (kind && draftReady(kind)) h += `<span><kbd>Entrée</kbd> <b>accepter la prise</b></span>`;
     h += `<span class="sc-note">inactifs dans un champ de saisie</span>`;
     if (performance.now() < flashUntil) h += `<span class="sc-flash">${flashText}</span>`;
     bar.innerHTML = h;
@@ -90,14 +117,21 @@
 
   document.addEventListener("keydown", (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
-    if (isEntry(e.target)) return;
     const tab = activeTab(), kind = tab in STEPS ? tab : null;
+    const isEnter = e.key === "Enter" || e.code === "NumpadEnter";
+    // Entrée dans le champ Annotation de la prise : on garde la note et on valide.
+    if (isEnter && kind && e.target && e.target.id === DRAFT[kind].notes) {
+      e.preventDefault(); if (!e.repeat) accept(kind); return;
+    }
+    if (isEntry(e.target)) return;
     if (e.key === " " || e.code === "Space") {
       e.preventDefault(); // pas de défilement ni de clic sur le bouton qui a le focus
       if (!e.repeat) release();
       return;
     }
     if (!kind) return;
+    // Entrée : jamais le clic natif sur le bouton qui a gardé le focus (ex. « Arrêter »).
+    if (isEnter) { e.preventDefault(); if (!e.repeat) accept(kind); return; }
     // chiffres : e.code couvre la rangée du haut AZERTY (où « 1 » demande Maj) et le pavé numérique
     const m = /^(?:Digit|Numpad)([1-4])$/.exec(e.code) || /^([1-4])$/.exec(e.key);
     if (m) { e.preventDefault(); if (!e.repeat) runStep(kind, +m[1] - 1); return; }
