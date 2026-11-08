@@ -86,3 +86,12 @@ def test_hands_tab_served():
     for j in ("LHand", "RHand"):
         assert f'id="m-{j}"' in html
     assert '"m-prepare"' in (STATIC / "shortcuts.js").read_text(encoding="utf-8")
+
+
+def test_random_draw_shortcut():
+    from nao_motion.ui.server import STATIC
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "shortcuts.js").read_text(encoding="utf-8")
+    for btn in ("a-random", "h-random", "m-random", "g-random"):
+        assert f'id="{btn}"' in html and f'"{btn}"' in js
+    assert "Digit0" in js and "Numpad0" in js

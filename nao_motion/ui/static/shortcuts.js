@@ -6,7 +6,10 @@
 //   1 2 3 4    déclenchent directement les étapes Préparer / Démarrer / Arrêter / Raidir ;
 //   →          déclenche l'étape suivante, déduite de l'état de l'enregistrement ;
 //   Entrée     valide (« Accepter ») la prise affichée en aperçu, y compris depuis le champ
-//              Annotation de la prise (on tape la note puis Entrée).
+//              Annotation de la prise (on tape la note puis Entrée) ;
+//   0          lance le « Tirage aléatoire » (émotion, intensité, angle, distance) des
+//              onglets Bras, Tête, Mains et Génération. Le tirage ne fait que remplir la
+//              consigne et l'événement : aucun mouvement.
 // Les touches sont ignorées quand le focus est dans un champ de saisie (texte, nombre,
 // liste) et quand Ctrl, Alt ou Cmd sont enfoncés. Chaque étape passe par le bouton de
 // l'interface : mêmes garde-fous côté serveur. Relâcher n'est pas
@@ -24,6 +27,8 @@
     head: {box: "h-draft", accept: "h-accept", notes: "h-notes"},
     hands: {box: "m-draft", accept: "m-accept", notes: "m-notes"},
   };
+  // bouton « Tirage aléatoire » par onglet
+  const RANDOM = {arms: "a-random", head: "h-random", hands: "m-random", gen: "g-random"};
   const ARMS = ["left_arm", "right_arm"], ALL = ["head", "left_arm", "right_arm"];
   const lastHold = {arms: false, head: false, hands: false};
   const bar = document.getElementById("shortcuts");
@@ -98,6 +103,19 @@
       .finally(() => { accepting = false; });
   }
 
+  function randomButton(tab) {
+    const btn = RANDOM[tab] && document.getElementById(RANDOM[tab]);
+    return btn && !btn.disabled ? btn : null;
+  }
+
+  function randomDraw(tab) {
+    const btn = randomButton(tab);
+    if (!btn) return;
+    flash("0 · tirage aléatoire");
+    Promise.resolve(btn.onclick ? btn.onclick() : btn.click())
+      .catch(() => flash("Tirage refusé (voir le message d'erreur)."));
+  }
+
   function flash(text) { flashText = text; flashUntil = performance.now() + 2500; render(); }
 
   function render() {
@@ -111,6 +129,7 @@
     let h = `<span><kbd>Espace</kbd> relâcher ${t.label}</span>`;
     if (kind) h += `<span><kbd>1</kbd>–<kbd>4</kbd> étapes</span>` +
       `<span><kbd>→</kbd> étape suivante : <b>${nextStep(kind) + 1} · ${STEP_LABEL[nextStep(kind)]}</b></span>`;
+    if (randomButton(tab)) h += `<span><kbd>0</kbd> tirage aléatoire</span>`;
     if (kind && draftReady(kind)) h += `<span><kbd>Entrée</kbd> <b>accepter la prise</b></span>`;
     h += `<span class="sc-note">inactifs dans un champ de saisie</span>`;
     if (performance.now() < flashUntil) h += `<span class="sc-flash">${flashText}</span>`;
@@ -130,6 +149,10 @@
       e.preventDefault(); // pas de défilement ni de clic sur le bouton qui a le focus
       if (!e.repeat) release();
       return;
+    }
+    // 0 : e.code couvre la rangée du haut AZERTY (où « 0 » demande Maj) et le pavé numérique
+    if (RANDOM[tab] && (e.code === "Digit0" || e.code === "Numpad0" || e.key === "0")) {
+      e.preventDefault(); if (!e.repeat) randomDraw(tab); return;
     }
     if (!kind) return;
     // Entrée : jamais le clic natif sur le bouton qui a gardé le focus (ex. « Arrêter »).
