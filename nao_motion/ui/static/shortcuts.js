@@ -22,6 +22,7 @@
   const DRAFT = {
     arms: {box: "a-draft", accept: "a-accept", notes: "a-notes"},
     head: {box: "h-draft", accept: "h-accept", notes: "h-notes"},
+    hands: {box: "m-draft", accept: "m-accept", notes: "m-notes"},
   };
   const ARMS = ["left_arm", "right_arm"], ALL = ["head", "left_arm", "right_arm"];
   const lastHold = {arms: false, head: false, hands: false};

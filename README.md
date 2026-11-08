@@ -55,7 +55,7 @@ The **ARRÊT** (stop) button interrupts recording, replay and execution. The pos
 - **Space** releases the limbs, anywhere in the interface: the arms in the *Bras* tab, the head in the *Tête* tab, the selected group while a calibration is open, the arms and the head elsewhere. Like *Préparer*, it asks for no confirmation: a warning on the *Bras* and *Tête* tabs reminds you to hold the limbs (and, for the head pass, that *Préparer* moves the arms with the motors) before pressing. Releasing commands no movement.
 - **1 2 3 4** run the take steps of the *Bras*, *Tête* and *Mains* tabs: *Préparer*, *Démarrer*, *Arrêter*, *Raidir sur place*. On an AZERTY keyboard, the top-row keys work with or without Shift, as does the numeric keypad.
 - **→** (right arrow) runs the next step, deduced from the recording state; that step is outlined. The keys press the same buttons, with the same server-side checks.
-- **Enter** accepts the take shown in preview (*Accepter* button) in the *Bras* and *Tête* tabs, with no confirmation. It also works from the take's *Annotation* field: type the note, then Enter. In these tabs, Enter never presses the button that kept the focus.
+- **Enter** accepts the take shown in preview (*Accepter* button) in the *Bras*, *Tête* and *Mains* tabs, with no confirmation. It also works from the take's *Annotation* field: type the note, then Enter. In these tabs, Enter never presses the button that kept the focus.
 
 In simulation, a synthetic demonstrator replaces your hand. The takes it produces are marked `synthetic: true`.
 
