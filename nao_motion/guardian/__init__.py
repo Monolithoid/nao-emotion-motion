@@ -111,9 +111,9 @@ class Guardian:
         n = max(2, int(np.ceil(dur * self.g.check_rate_hz)) + 1)
         tt = np.union1d(traj.t, np.linspace(traj.t[0], traj.t[-1], n))
         qq = traj.sample(tt)
-        m = self.g.limit_margin_rad
         for k, j in enumerate(traj.joints):
             lo, hi = self.cfg.limits[j]
+            m = self.g.margin(j)  # mains : plage d'usine entière par défaut
             lo, hi = lo + m, hi - m
             bad = np.nonzero((qq[:, k] < lo) | (qq[:, k] > hi))[0]
             if bad.size:
@@ -138,11 +138,11 @@ class Guardian:
             acc = np.diff(vel, axis=0) / dtm[:, None]
             max_a = np.abs(acc).max(axis=0)
             for k, j in enumerate(traj.joints):
-                if max_a[k] > self.g.max_acceleration_rad_s2:
+                alim = self.g.acceleration_limit(j)
+                if max_a[k] > alim:
                     i = int(np.argmax(np.abs(acc[:, k])))
                     v.append(Violation("acceleration", "Accélération excessive", joint=j,
-                                       time_s=float(traj.t[i + 1]), value=float(max_a[k]),
-                                       limit=self.g.max_acceleration_rad_s2))
+                                       time_s=float(traj.t[i + 1]), value=float(max_a[k]), limit=alim))
 
         # contraintes couplées sur tout le trajet (y compris tête <-> bras)
         ctx = dict(context_pose or {})
@@ -179,7 +179,8 @@ class Guardian:
         if any(x.code in ("velocity", "acceleration") for x in v):
             # facteur de ralentissement qui suffirait (information seulement, pas appliqué)
             sv = max(max_v[k] / self.g.velocity_limit(j) for k, j in enumerate(traj.joints))
-            sa = float(np.sqrt(max(max_a) / self.g.max_acceleration_rad_s2)) if max_a.size else 0
+            sa = float(np.sqrt(max(max_a[k] / self.g.acceleration_limit(j) for k, j in enumerate(traj.joints)))) \
+                if max_a.size else 0
             stats["suggested_time_scale"] = round(float(max(sv, sa, 1.0)), 3)
         return Report(not v, v, stats)
 
@@ -224,11 +225,12 @@ class Guardian:
         if vel.shape[0] >= 2:
             acc = np.diff(vel, axis=0) / ((dt[1:] + dt[:-1]) / 2)[:, None]
             for k, j in enumerate(traj.joints):
-                if np.abs(acc[:, k]).max() > self.g.max_acceleration_rad_s2:
+                alim = self.g.acceleration_limit(j)
+                if np.abs(acc[:, k]).max() > alim:
                     i = int(np.argmax(np.abs(acc[:, k])))
                     v.append(Violation("acceleration", "Accélération excessive (segment repos <-> départ)", joint=j,
                                        time_s=float(traj.t[i + 1]) + time_offset, value=float(np.abs(acc[i, k])),
-                                       limit=self.g.max_acceleration_rad_s2))
+                                       limit=alim))
         if start_state is not None:
             for k, j in enumerate(traj.joints):
                 if j in start_state and abs(float(traj.q[0, k]) - float(start_state[j])) > self.g.start_tolerance_rad:

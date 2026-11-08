@@ -21,7 +21,7 @@ from .data.representation import bspline_basis, decode
 from .data.store import TakeStore
 from .events import EVENT_FEATURES, EventContext
 from .guardian import Guardian
-from .models.datasets import Examples, arm_examples, grouped_split, head_examples
+from .models.datasets import Examples, arm_examples, follower_joints, grouped_split, head_examples
 from .models.features import Norm, arm_input_dim, head_input_dim
 from .models.nets import LoadedModel, build, save_checkpoint
 
@@ -159,42 +159,63 @@ def train_arms(store: TakeStore, cfg: Config, runs_dir, statuses=("accepted",), 
 def train_head(store: TakeStore, cfg: Config, runs_dir, arm_checkpoint, statuses=("accepted",),
                epochs: Optional[int] = None, log=None) -> Path:
     """Entraîne la tête ; le modèle des bras est chargé et FIGÉ (aucun gradient)."""
+    return train_follower("head", store, cfg, runs_dir, arm_checkpoint, statuses, epochs, log)
+
+
+def train_hands(store: TakeStore, cfg: Config, runs_dir, arm_checkpoint, statuses=("accepted",),
+                epochs: Optional[int] = None, log=None) -> Path:
+    """Entraîne l'ouverture des mains (passage 3) ; le modèle des bras est FIGÉ."""
+    return train_follower("hands", store, cfg, runs_dir, arm_checkpoint, statuses, epochs, log)
+
+
+def train_follower(component: str, store: TakeStore, cfg: Config, runs_dir, arm_checkpoint, statuses=("accepted",),
+                   epochs: Optional[int] = None, log=None) -> Path:
+    """Tête ou mains, sur la phase du geste des bras ; le modèle des bras est FIGÉ."""
+    if component not in ("head", "hands"):
+        raise ValueError(component)
     K = int(cfg.model["representation"]["n_control_points"])
-    J = len(cfg.head_joints)
+    fj = follower_joints(cfg, component)
+    if not fj:
+        raise TrainingError("Aucune main configurée (joints.yaml, section hands)")
+    J = len(fj)
     arm = LoadedModel(arm_checkpoint, cfg, "arms")
     for p in arm.model.parameters():
         p.requires_grad_(False)
-    source = cfg.model["head_model"].get("arm_input", "recorded")
-    ex = head_examples(store, cfg, statuses, source, arm)
+    mc = cfg.model.get(f"{component}_model") or cfg.model["head_model"]
+    source = mc.get("arm_input", "recorded")
+    target = mc.get("target", "measured") if component == "hands" else "measured"
+    ex = head_examples(store, cfg, statuses, source, arm, kind=component, target=target)
     if len(ex) == 0:
-        raise TrainingError("Aucune prise de tête utilisable")
+        raise TrainingError("Aucune prise de tête utilisable" if component == "head" else
+                            "Aucune prise de mains utilisable (passage 3, statut 'accepted' requis par défaut)")
     tcfg = dict(cfg.model["training"])
     if epochs:
         tcfg["epochs"] = epochs
     tr, va, _ = grouped_split(ex.groups, float(tcfg["val_fraction"]), int(tcfg["seed"]))
-    mc = cfg.model["head_model"]
     in_dim = head_input_dim(len(cfg.emotions), K, len(cfg.arm_joints), J)
     assert ex.X.shape[1] == in_dim
     arch = {"in_dim": in_dim, "out_dim": K * J, "hidden": list(mc["hidden"]),
             "dropout": float(mc.get("dropout", 0)), "latent_dim": 0}
     model, hist = _fit(ex, tr, va, arch, K, J, tcfg, False, log)
-    norm = Norm.from_config(cfg, cfg.head_joints)
+    norm = Norm.from_config(cfg, fj)
     metrics = _evaluate(model, ex, tr, va, norm, K, False)
-    run = _run_dir(runs_dir, "head")
-    meta = _meta(cfg, "head", cfg.head_joints, norm, K, ex, tr, va, tcfg)
+    run = _run_dir(runs_dir, component)
+    meta = _meta(cfg, component, fj, norm, K, ex, tr, va, tcfg)
     meta["synthetic_data"] = any(store.load_meta(t).synthetic for t in ex.take_ids)
     meta.update({"arm_joints": cfg.arm_joints, "arm_checkpoint": str(arm_checkpoint),
                  "event_features": EVENT_FEATURES,
                  "arm_checkpoint_digest": arm.digest, "arm_input": source,
                  "inputs": ["emotion", "intensity", "arm_ctrl_norm", "arm_log_duration",
-                            "head_current_norm", "event[present,sin_az,cos_az,elev,dist_known,proximity]"]})
+                            f"{component}_current_norm", "event[present,sin_az,cos_az,elev,dist_known,proximity]"]})
+    if component == "hands":
+        meta.update({"unit": "opening[0=closed,1=open]", "target": target})
     meta["metrics"] = metrics
-    save_checkpoint(run / "model.pt", model, component="head", arch=arch, meta=meta)
-    loaded = LoadedModel(run / "model.pt", cfg, "head")
+    save_checkpoint(run / "model.pt", model, component=component, arch=arch, meta=meta)
+    loaded = LoadedModel(run / "model.pt", cfg, component)
     loaded.export_numpy(run / "model_numpy.npz")
-    metrics["guardian"] = _guardian_sweep(cfg, arm_model=arm, head_model=loaded)
+    metrics["guardian"] = _guardian_sweep(cfg, arm_model=arm, **{f"{component}_model": loaded})
     _write_report(run, metrics, hist, meta)
-    (Path(runs_dir) / "latest_head.txt").write_text(run.name)
+    (Path(runs_dir) / f"latest_{component}.txt").write_text(run.name)
     return run
 
 
@@ -209,10 +230,10 @@ def _meta(cfg, component, joints, norm, K, ex, tr, va, tcfg):
             "synthetic_data": None}  # renseigné par l'appelant
 
 
-def _guardian_sweep(cfg, arm_model, head_model=None, intensities=(0.2, 0.5, 0.8, 1.0)):
+def _guardian_sweep(cfg, arm_model, head_model=None, intensities=(0.2, 0.5, 0.8, 1.0), hands_model=None):
     """Taux de trajectoires générées acceptées par le guardian (geste seul), sur une grille."""
     from .engine import MotionEngine
-    eng = MotionEngine(cfg, arm_model, head_model)
+    eng = MotionEngine(cfg, arm_model, head_model, hands_model=hands_model)
     g = Guardian(cfg)
     events = [EventContext.none(), EventContext(True, 0.6, 0.1, source="test"),
               EventContext(True, -0.4, 0.0, source="test", distance_m=0.6)]
@@ -222,7 +243,7 @@ def _guardian_sweep(cfg, arm_model, head_model=None, intensities=(0.2, 0.5, 0.8,
         for i in intensities:
             for ev in events:
                 gen = eng.generate(e, i, ev)
-                traj = gen.combined if head_model else gen.arms
+                traj = gen.combined if (head_model or hands_model) else gen.arms
                 ctx = None if head_model else dict(zip(cfg.head_joints, cfg.pose("start", cfg.head_joints)))
                 rep = g.validate(traj, context_pose=ctx)
                 total += 1

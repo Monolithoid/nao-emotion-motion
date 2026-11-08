@@ -18,6 +18,14 @@ samples.npz (`ref_t`, `ref_q`), à côté des mesures. `segment` désigne la
 fenêtre d'exécution, sur laquelle bras et tête partagent la même phase.
 `arm_gesture_id` identifie le geste des bras (même geste => même groupe pour le
 découpage entraînement/validation).
+
+Une prise de mains (kind="hands", passage 3) suit le même principe que la tête :
+bras rejoués (prise ou geste généré), tête raide sur place, et mains PILOTÉES par
+l'opérateur depuis l'interface (rien n'est guidé). LHand / RHand valent une
+ouverture entre 0 (fermée) et 1 (ouverte), pas un angle. La consigne envoyée
+(bras + mains, mêmes horodatages que les mesures) est conservée dans samples.npz
+(`ref_*`) : c'est la consigne des mains, l'intention de l'opérateur, qui sert de
+cible à l'apprentissage par défaut (`hands_model.target`).
 """
 from __future__ import annotations
 
@@ -36,7 +44,8 @@ from ..events import EventContext
 from ..trajectory import Trajectory, TrajectoryError, check_samples
 
 FORMAT_VERSION = 1
-KINDS = ("arms", "head")
+KINDS = ("arms", "head", "hands")
+FOLLOWER_KINDS = ("head", "hands")   # prises enregistrées sur une relecture des bras
 STATUSES = ("pending", "accepted", "rejected")
 
 
@@ -65,6 +74,7 @@ class TakeMeta:
     sample_rate_hz: float
     segment: Tuple[float, float]
     head_initial: Optional[List[float]] = None   # [HeadYaw, HeadPitch] au début du segment
+    hands_initial: Optional[List[float]] = None  # [LHand, RHand] mesurées au début du segment (passage 3)
     arm_take_id: Optional[str] = None
     arm_source: Optional[str] = None          # "take" | "generated" (prises de tête)
     arm_gesture_id: Optional[str] = None
@@ -140,7 +150,7 @@ class TakeStore:
             raise TakeError(str(e)) from e
         if traj.joints != meta.joints:
             raise TakeError("Articulations des métadonnées et des échantillons différentes")
-        unknown = set(meta.joints) - set(c.all_joints)
+        unknown = set(meta.joints) - set(c.controlled_joints)
         if unknown:
             raise TakeError(f"Articulations inconnues : {sorted(unknown)}")
         if set(meta.guided_joints) & set(meta.driven_joints):
@@ -155,8 +165,13 @@ class TakeStore:
             if meta.arm_take_id is not None:
                 raise TakeError("Une prise de bras ne référence pas d'autre prise")
         else:
-            if set(c.all_joints) - set(meta.joints):
+            if meta.kind == "head" and set(c.all_joints) - set(meta.joints):
                 raise TakeError("Une prise de tête doit contenir bras (relecture mesurée) et tête")
+            if meta.kind == "hands":
+                if not c.hand_joints or set(c.arm_joints + c.hand_joints) - set(meta.joints):
+                    raise TakeError("Une prise de mains doit contenir bras (relecture mesurée) et mains")
+                if meta.guided_joints:
+                    raise TakeError("Prise de mains : aucune articulation n'est guidée (mains pilotées)")
             src = meta.arm_source or "take"
             if src == "take":
                 if not meta.arm_take_id or not self.exists(meta.arm_take_id):
@@ -169,7 +184,7 @@ class TakeStore:
                     raise TakeError("Prise de tête sur geste généré : arm_generation incomplet")
             else:
                 raise TakeError(f"arm_source inconnu : {src}")
-            if set(meta.guided_joints) != set(c.head_joints):
+            if meta.kind == "head" and set(meta.guided_joints) != set(c.head_joints):
                 raise TakeError("Prise de tête : seules les articulations de la tête sont guidées")
 
     # -- E/S ----------------------------------------------------------------
@@ -246,11 +261,11 @@ class TakeStore:
             out.append(m)
         return out
 
-    def head_takes_for(self, arm_take_id: str) -> List[TakeMeta]:
-        return [m for m in self.list(kind="head") if m.arm_take_id == arm_take_id]
+    def head_takes_for(self, arm_take_id: str, kind: str = "head") -> List[TakeMeta]:
+        return [m for m in self.list(kind=kind) if m.arm_take_id == arm_take_id]
 
     def load_reference(self, take_id: str) -> Optional[Trajectory]:
-        """Consigne des bras envoyée pendant une prise de tête (None si absente)."""
+        """Consigne envoyée pendant une prise de tête (bras) ou de mains (bras + mains). None si absente."""
         with np.load(self.dir / take_id / "samples.npz", allow_pickle=False) as z:
             if "ref_t" not in z.files:
                 return None

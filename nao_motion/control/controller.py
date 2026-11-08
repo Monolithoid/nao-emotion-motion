@@ -70,6 +70,8 @@ class Controller:
         self.rate = float(ex.get("stream_rate_hz", 25))
         self.speed = float(ex.get("max_fraction_speed", 0.3))
         self.tracking_error = float(ex.get("tracking_error_rad", 0.35))
+        # mains : le moteur de la main suit plus lentement qu'une articulation du bras
+        self.hand_tracking_error = float(ex.get("hand_tracking_error", 0.5))
         self.events: List[str] = []
 
     def _log(self, msg):
@@ -187,7 +189,9 @@ class Controller:
         q_cur = np.array([cur[j] for j in joints])
         notes = []
         if from_pose == "rest":
-            far = self._near(cur, "rest", 2 * self.cfg.guardian.start_tolerance_rad)
+            # mains exclues : ouvertes ou fermées, elles rejoignent le départ avec le reste
+            far = [j for j in self._near(cur, "rest", 2 * self.cfg.guardian.start_tolerance_rad)
+                   if not self.cfg.is_hand(j)]
             if far:
                 raise ControllerError(f"Le robot n'est pas mesuré au repos ({far}). "
                                       "Utiliser from_pose='current' en connaissance de cause.")
@@ -227,6 +231,23 @@ class Controller:
         if others:
             notes.append(f"Articulations non commandées (maintenues) : {others}")
         return Plan(full, segments, rep, motion_report, notes)
+
+    def plan_hands_move(self, targets: Dict[str, float]) -> Plan:
+        """Ouverture des mains : posture mesurée -> cible {LHand|RHand: 0..1}, profil à jerk
+        minimal, validé par le guardian (limites, vitesse, accélération). Rien n'est envoyé ici."""
+        joints = [j for j in self.cfg.hand_joints if j in targets]
+        unknown = [j for j in targets if not self.cfg.is_hand(j)]
+        if unknown or not joints:
+            raise ControllerError(f"Mains attendues {self.cfg.hand_joints}, reçu {sorted(targets)}")
+        cur = self.measured(joints)
+        q0 = np.array([cur[j] for j in joints])
+        q1 = np.array([float(targets[j]) for j in joints])
+        g = self.cfg.guardian
+        v = 0.8 * min(g.velocity_limit(j) for j in joints)
+        a = 0.5 * min(g.acceleration_limit(j) for j in joints)
+        traj = min_jerk(q0, q1, joints, v, a, min_duration=0.3)
+        rep = self.guardian.validate(traj, start_state=cur, check_duration=False)
+        return Plan(traj, [("mains", 0.0, round(traj.duration, 4))], rep)
 
     def plan_return_to_rest(self, joints) -> Plan:
         cur = self.measured(joints)
@@ -297,6 +318,8 @@ class Controller:
         t0 = a.now()
         end = traj.t[-1]
         check_every = max(1, int(self.rate / 10))
+        tol = np.array([self.hand_tracking_error if self.cfg.is_hand(j) else self.tracking_error
+                        for j in traj.joints])
         k = 0
         while True:
             if self._stop.is_set():
@@ -313,9 +336,10 @@ class Controller:
                 meas = a.read_angles(traj.joints)
                 # comparaison avec la consigne un pas plus tôt (latence de suivi)
                 ref = traj.sample(np.array([max(0.0, tc - 2 * dt)]))[0]
-                err = float(np.max(np.abs(meas - ref)))
-                if err > self.tracking_error:
-                    raise ControllerError(f"Écart de suivi {err:.2f} rad > {self.tracking_error} rad")
+                dev = np.abs(meas - ref)
+                if np.any(dev > tol):
+                    i = int(np.argmax(dev - tol))
+                    raise ControllerError(f"Écart de suivi {dev[i]:.2f} sur {traj.joints[i]} > {tol[i]}")
             k += 1
             if t >= end:
                 return "done"

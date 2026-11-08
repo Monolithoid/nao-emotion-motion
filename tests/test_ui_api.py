@@ -21,7 +21,7 @@ def test_event_endpoint_and_stats(trained):
     assert ev["present"] and ev["frame"] == "torso" and ev["unit"] == "rad"
     assert api.post_event({"present": False})["present"] is False
     st = api.get_stats({})
-    assert set(st["table"]) == {"arms", "head"}
+    assert set(st["table"]) == {"arms", "head", "hands"}
     take_id = trained["arm_ids"][0]
     d = api.get_take(take_id)
     assert d["replay"]["guardian"]["ok"] and len(d["head_takes"]) >= 1

@@ -14,6 +14,10 @@ guardian du projet :
   - vitesse et accélération maximales, durée minimale et maximale ;
   - premier point proche de l'état mesuré (optionnel).
 
+Mains (LHand, RHand) : leur « angle » est une ouverture entre 0 (fermée) et
+1 (ouverte), bornée par la plage d'usine. Marge et accélération peuvent être
+surchargées par articulation (`per_joint_margin`, `per_joint_acceleration`).
+
 Le trajet complet est vérifié (interpolation linéaire, grille fine), pas
 seulement ses extrémités. Le guardian NE MODIFIE JAMAIS un mouvement : il
 l'accepte ou le refuse en listant les violations. Il ne commande rien et ne
@@ -149,6 +153,10 @@ class Guardian(object):
                 raise GuardianError("Les jambes ne peuvent pas figurer dans le guardian : %s" % j)
             self.limits[j] = (lo, hi)
         self.margin = float(data["limit_margin_rad"])
+        # surcharges optionnelles (mains LHand/RHand : ouverture 0..1, plage entière)
+        self.per_joint_margin = dict((k, float(v)) for k, v in (data.get("per_joint_margin") or {}).items())
+        self.per_joint_acceleration = dict((k, float(v))
+                                           for k, v in (data.get("per_joint_acceleration") or {}).items())
         vel = data["velocity_rad_s"]
         self.max_velocity = float(vel["default"])
         self.per_joint_velocity = dict((k, float(v)) for k, v in (vel.get("per_joint") or {}).items())
@@ -179,10 +187,14 @@ class Guardian(object):
     def allowed_range(self, joint):
         """[min, max] réellement autorisé (marge comprise)."""
         lo, hi = self.limits[joint]
-        return lo + self.margin, hi - self.margin
+        m = self.per_joint_margin.get(joint, self.margin)
+        return lo + m, hi - m
 
     def velocity_limit(self, joint):
         return self.per_joint_velocity.get(joint, self.max_velocity)
+
+    def acceleration_limit(self, joint):
+        return self.per_joint_acceleration.get(joint, self.max_acceleration)
 
     def pose(self, name):
         """Pose calibrée « rest » ou « start » : {articulation: rad}."""
@@ -328,10 +340,11 @@ class Guardian(object):
                    for i in range(len(vel) - 1)]
             max_a = [max(abs(r[k]) for r in acc) for k in range(J)]
             for k, j in enumerate(joints):
-                if max_a[k] > self.max_acceleration:
+                alim = self.acceleration_limit(j)
+                if max_a[k] > alim:
                     i = max(range(len(acc)), key=lambda m: abs(acc[m][k]))
                     v.append(Violation("acceleration", "Accélération excessive", joint=j, time_s=float(ts[i + 1]),
-                                       value=float(max_a[k]), limit=self.max_acceleration))
+                                       value=float(max_a[k]), limit=alim))
 
         # contraintes couplées sur tout le trajet (y compris tête <-> bras via `context`)
         self._coupled(joints, rows, tt, context, v)
@@ -350,7 +363,7 @@ class Guardian(object):
         if any(x.code in ("velocity", "acceleration") for x in v):
             # facteur de ralentissement qui suffirait (information seulement, jamais appliqué)
             sv = max(max_v[k] / self.velocity_limit(j) for k, j in enumerate(joints))
-            sa = math.sqrt(max(max_a) / self.max_acceleration) if max_a else 0.0
+            sa = math.sqrt(max(max_a[k] / self.acceleration_limit(j) for k, j in enumerate(joints))) if max_a else 0.0
             stats["suggested_time_scale"] = round(float(max(sv, sa, 1.0)), 3)
         return Report(not v, v, stats)
 

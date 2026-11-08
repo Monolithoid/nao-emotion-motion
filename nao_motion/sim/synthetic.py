@@ -166,3 +166,37 @@ def head_behaviour(cfg: Config, emotion: str, intensity: float, event: EventCont
         return clipped(y0, p0)
 
     return fn
+
+
+# ouverture des mains (0 fermée, 1 ouverte) visée au cœur du geste, par émotion
+HAND_OPENING = {"joie": 0.85, "surprise": 1.0, "colere": 0.05, "peur": 0.6, "tristesse": 0.15, "calme": 0.5}
+
+
+def hand_behaviour(cfg: Config, emotion: str, intensity: float, event: EventContext, duration: float,
+                   rng: np.random.Generator):
+    """Opérateur simulé du passage 3 : il pilote l'ouverture des mains pendant que les bras
+    rejouent le geste (fonction de la phase u en s -> {LHand, RHand}). Mains ouvertes pour la
+    joie ou la surprise, poings serrés pour la colère ; avec un événement, la main du côté
+    de l'événement s'ouvre davantage (geste tendu vers lui). Arbitraire, pour les tests."""
+    hj = list(cfg.hand_joints)
+    start = dict(zip(hj, cfg.pose("start", hj)))
+    peak = HAND_OPENING.get(emotion, 0.5)
+    lag = rng.uniform(0.0, 0.25)
+    side = None
+    if event is not None and event.present:
+        side = "L" if event.azimuth_rad >= 0 else "R"
+
+    def fn(u: float) -> Dict[str, float]:
+        e = float(_env((u - lag) / max(duration, 1e-3)))
+        out = {}
+        for j in hj:
+            p = peak
+            if side is not None:
+                p = min(1.0, peak + 0.3) if j.startswith(side) else peak * 0.6
+            v = start[j] + intensity * e * (p - start[j])
+            lo, hi = cfg.limits[j]
+            m = cfg.guardian.margin(j)
+            out[j] = float(np.clip(v, lo + m, hi - m))
+        return out
+
+    return fn

@@ -24,6 +24,7 @@ execution:
   stream_rate_hz: 25
   tracking_error_rad: 0.35  # écart consigne/mesure au-delà duquel on arrête et maintient
   max_fraction_speed: 0.3   # utilisé par setAngles
+  hand_tracking_error: 0.5  # mains (fraction d'ouverture) : le moteur de la main suit plus lentement
 recording:
   rate_hz: 50
   countdown_s: 3

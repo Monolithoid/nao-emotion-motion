@@ -6,7 +6,9 @@ rest:
   left_arm:  {LShoulderPitch: 1.45, LShoulderRoll: 0.15, LElbowYaw: -1.20, LElbowRoll: -0.50, LWristYaw: 0.0}
   right_arm: {RShoulderPitch: 1.45, RShoulderRoll: -0.15, RElbowYaw: 1.20, RElbowRoll: 0.50, RWristYaw: 0.0}
   head:      {HeadYaw: 0.0, HeadPitch: 0.0}
+  hands:     {LHand: 0.3, RHand: 0.3}   # ouverture 0..1 ; la calibration ne capture pas les mains
 start:
   left_arm:  {LShoulderPitch: 1.10, LShoulderRoll: 0.20, LElbowYaw: -1.00, LElbowRoll: -0.80, LWristYaw: 0.0}
   right_arm: {RShoulderPitch: 1.10, RShoulderRoll: -0.20, RElbowYaw: 1.00, RElbowRoll: 0.80, RWristYaw: 0.0}
   head:      {HeadYaw: 0.0, HeadPitch: -0.05}
+  hands:     {LHand: 0.3, RHand: 0.3}
