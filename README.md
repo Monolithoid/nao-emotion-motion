@@ -56,6 +56,7 @@ The **ARRÊT** (stop) button interrupts recording, replay and execution. The pos
 - **1 2 3 4** run the take steps of the *Bras*, *Tête* and *Mains* tabs: *Préparer*, *Démarrer*, *Arrêter*, *Raidir sur place*. On an AZERTY keyboard, the top-row keys work with or without Shift, as does the numeric keypad.
 - **→** (right arrow) runs the next step, deduced from the recording state; that step is outlined. The keys press the same buttons, with the same server-side checks.
 - **Enter** accepts the take shown in preview (*Accepter* button) in the *Bras*, *Tête* and *Mains* tabs, with no confirmation. It also works from the take's *Annotation* field: type the note, then Enter. In these tabs, Enter never presses the button that kept the focus.
+- **0** runs the *Tirage aléatoire* (random draw) button of the *Bras*, *Tête*, *Mains* and *Génération* tabs: emotion, intensity, angle and distance are drawn at random. Like the button, it only fills in the instruction and the event: no movement. On an AZERTY keyboard, the top-row key works with or without Shift, as does the numeric keypad.
 
 In simulation, a synthetic demonstrator replaces your hand. The takes it produces are marked `synthetic: true`.
 
