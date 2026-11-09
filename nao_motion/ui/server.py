@@ -178,6 +178,16 @@ class Api:
                                  segment=d.get("segment"), intention=d.get("intention", "__keep__"))
         return m.to_dict()
 
+    def post_draw(self, d):
+        """Tirage aléatoire équilibré : propose une consigne, ne commande rien."""
+        from ..data.balance import balanced_draw
+        kind = d.get("kind")
+        if kind not in ("arms", "head", "hands", "gen", None):
+            raise ValueError(f"Passage inconnu : {kind}")
+        kind = None if kind == "gen" else kind
+        metas = self.wb.store.list(kind=kind) if kind else []
+        return balanced_draw(self.wb.cfg, metas, kind, allow_none=bool(d.get("allow_none")))
+
     def post_event(self, d):
         ev = self.wb.set_event(d, d.get("ttl_s"))
         return ev.to_dict()

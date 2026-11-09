@@ -45,3 +45,16 @@ events:
   distance_m: [0.3, 3.0]      # distance minimale / maximale (m)
   azimuth_deg: [-90, 90]      # azimut, positif vers la gauche du robot
   elevation_deg: [-30, 45]    # élévation, positive vers le haut
+  # Tirage aléatoire ÉQUILIBRÉ (voir nao_motion/data/balance.py) : l'espace est
+  # découpé en cases émotion × tranche d'intensité × zone (azimut × élévation ×
+  # distance, + « sans événement ») ; les cases les moins remplies du passage en
+  # cours (prises non rejetées) sont favorisées.
+  balance:
+    intensity: [0.1, 1.0]     # plage d'intensité tirée
+    intensity_bins: 3         # faible / moyenne / forte
+    azimuth_bins: 3           # droite / devant / gauche
+    elevation_bins: 2         # bas / haut
+    distance_bins: 2          # proche / loin (coupure à la moyenne géométrique)
+    none_share: 0.2           # part visée des prises sans événement (si la case est cochée)
+    cell_weight: 4.0          # poids du retard de la case face aux retards par émotion / intensité / zone
+    strength: 2.0             # 0 = uniforme ; 2 = une émotion en retard d'une prise est e²≈7× plus probable
