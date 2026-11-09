@@ -7,7 +7,7 @@
 //   →          déclenche l'étape suivante, déduite de l'état de l'enregistrement ;
 //   Entrée     valide (« Accepter ») la prise affichée en aperçu, y compris depuis le champ
 //              Annotation de la prise (on tape la note puis Entrée) ;
-//   0          lance le « Tirage aléatoire » (émotion, intensité, angle, distance) des
+//   0          lance le « Tirage aléatoire » équilibré (émotion, intensité, angle, distance) des
 //              onglets Bras, Tête, Mains et Génération. Le tirage ne fait que remplir la
 //              consigne et l'événement : aucun mouvement.
 // Les touches sont ignorées quand le focus est dans un champ de saisie (texte, nombre,

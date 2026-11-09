@@ -138,16 +138,24 @@
     return `événement ${h}, ${v}, ${d}`;
   }
 
-  // Tirage : émotion, intensité, angle et distance (log-uniforme : autant de proches que de lointains).
-  function draw(allowNone) {
-    const e = CFG.events, u = (a, b) => a + Math.random() * (b - a);
-    const emotion = CFG.emotions[Math.floor(Math.random() * CFG.emotions.length)].id;
-    const intensity = Math.round(u(0.1, 1) * 20) / 20;
-    const ev = allowNone && Math.random() < 0.2 ? {present: false, source: "tirage"} : {
-      present: true, unit: "deg", frame: "torso", source: "tirage",
-      azimuth: Math.round(u(e.azimuth_deg[0], e.azimuth_deg[1])), elevation: Math.round(u(e.elevation_deg[0], e.elevation_deg[1])),
-      distance_m: Math.round(Math.exp(u(Math.log(e.distance_m[0]), Math.log(e.distance_m[1]))) * 100) / 100};
-    return {emotion, intensity, ev};
+  // Tirage ÉQUILIBRÉ (serveur, nao_motion/data/balance.py) : favorise les cases
+  // émotion × intensité × zone d'événement les moins enregistrées du passage, en
+  // restant aléatoire. Ne commande aucun mouvement.
+  async function draw(kind, allowNone) {
+    const d = await api("draw", {kind, allow_none: !!allowNone});
+    showBalance(kind, d.balance);
+    return {emotion: d.emotion, intensity: d.intensity, ev: d.event};
+  }
+
+  function showBalance(kind, b) {
+    const el = $({arms: "a", head: "h", hands: "m", gen: "g"}[kind] + "-random-info");
+    if (!el || !b) return;
+    const n = (x) => String(Math.round(x * 10) / 10).replace(".", ",");
+    const c = b.cell;
+    el.textContent = b.kind
+      ? `Case visée : ${label(c.emotion)} · intensité ${c.intensity} · ${c.zone} — ${n(b.cell_takes)} prise(s) ici ` +
+        `(part équitable ${n(b.cell_fair_share)}), ${n(b.takes)} prise(s) au total, ${b.empty_cells}/${b.cells} cases vides.`
+      : `${label(c.emotion)} · intensité ${c.intensity} · ${c.zone}`;
   }
 
   async function applyDraw(d) {
@@ -162,27 +170,27 @@
     for (const id of ["a-fov", "h-fov", "m-fov", "g-fov"]) { const el = $(id); if (el) show(build(el), {present: false}); }
     api("event").then((ev) => widgets.forEach((w) => show(w, ev)));
     $("a-random").onclick = async () => {
-      const d = draw($("a-random-none").checked);
+      const d = await draw("arms", $("a-random-none").checked);
       $("a-emotion").value = d.emotion; $("a-intensity").value = d.intensity;
       await applyDraw(d);
       updateConsigne();
     };
     $("h-random").onclick = async () => {
-      const d = draw($("h-random-none").checked);
+      const d = await draw("head", $("h-random-none").checked);
       document.querySelector("input[name=hsrc][value=generated]").checked = true;
       $("h-emotion").value = d.emotion; $("h-intensity").value = d.intensity;
       await applyDraw(d);
       $("h-emotion").oninput();
     };
     $("m-random").onclick = async () => {
-      const d = draw($("m-random-none").checked);
+      const d = await draw("hands", $("m-random-none").checked);
       document.querySelector("input[name=msrc][value=generated]").checked = true;
       $("m-emotion").value = d.emotion; $("m-intensity").value = d.intensity;
       await applyDraw(d);
       $("m-emotion").oninput();
     };
     $("g-random").onclick = async () => {
-      const d = draw(false);
+      const d = await draw("gen", false);
       $("g-emotion").value = d.emotion; $("g-emotion2").value = ""; $("g-intensity").value = d.intensity;
       $("g-intensity").oninput(); $("g-event").checked = true;
       await applyDraw(d);

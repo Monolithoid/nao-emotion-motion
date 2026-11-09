@@ -42,8 +42,9 @@
     (pointer du doigt, se protéger d'un côté, tendre la main), faites-le vers la direction et à la distance indiquées.
     Décocher « événement présent » pour un geste sans direction.</p>
     <div class="row">
-      <button id="a-random" class="ok" title="Tire émotion, intensité, angle et distance au hasard (touche 0)">Tirage aléatoire</button>
+      <button id="a-random" class="ok" title="Tire au hasard émotion, intensité, angle et distance, en favorisant ce qui a été le moins enregistré (touche 0)">Tirage aléatoire</button>
       <label><input type="checkbox" id="a-random-none"> parfois sans événement</label>
+      <span id="a-random-info" class="hint"></span>
     </div>
     <div id="a-fov"></div>
   </fieldset>
@@ -90,8 +91,9 @@
   <fieldset>
     <legend>Événement (repère torse : azimut + à gauche, élévation + en haut, distance en mètres)</legend>
     <div class="row">
-      <button id="h-random" class="ok" title="Tire émotion, intensité, angle et distance au hasard (geste généré, touche 0)">Tirage aléatoire</button>
+      <button id="h-random" class="ok" title="Tire au hasard émotion, intensité, angle et distance, en favorisant ce qui a été le moins enregistré (geste généré, touche 0)">Tirage aléatoire</button>
       <label><input type="checkbox" id="h-random-none"> parfois sans événement</label>
+      <span id="h-random-info" class="hint"></span>
     </div>
     <div id="h-fov"></div>
   </fieldset>
@@ -164,8 +166,9 @@
   </fieldset>
   <details><summary>Événement (repère torse)</summary>
     <div class="row">
-      <button id="m-random" class="ok" title="Tire émotion, intensité, angle et distance au hasard (geste généré, touche 0)">Tirage aléatoire</button>
+      <button id="m-random" class="ok" title="Tire au hasard émotion, intensité, angle et distance, en favorisant ce qui a été le moins enregistré (geste généré, touche 0)">Tirage aléatoire</button>
       <label><input type="checkbox" id="m-random-none"> parfois sans événement</label>
+      <span id="m-random-info" class="hint"></span>
     </div>
     <div id="m-fov"></div>
   </details>
