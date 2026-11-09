@@ -1,3 +1,10 @@
+<h1>
+  <img src="./assets/nao-emotion-motion-icon.png" alt="" width="48" height="48" align="middle">
+  nao-emotion-motion
+</h1>
+
+![NAO en mouvement, avec des trajectoires lumineuses autour de la tête et des bras](./assets/nao-emotion-motion-social.jpg)
+
 # nao-emotion-motion
 
 Learning and generating expressive **arm** and **head** movements for NAO from physical demonstrations, conditioned on an **emotion** and an **intensity** (0 to 1).
