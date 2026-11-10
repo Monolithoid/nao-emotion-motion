@@ -17,6 +17,11 @@
   <button id="stop" class="stop" title="Arrêt : interrompt et maintient la posture">ARRÊT</button>
 </header>
 <div id="warn" class="warn"></div>
+<div id="bridge-lost" class="alert hidden" role="status">
+  <b>Pont perdu</b> <span id="bridge-lost-msg"></span>
+  <button id="bridge-reconnect" title="Reconnecte le même pont et le même robot, sans mouvement">Reconnecter</button>
+  <span id="bridge-reconnect-msg"></span>
+</div>
 <nav>
   <button data-tab="arms" class="active">1 · Bras</button>
   <button data-tab="head">2 · Tête</button>

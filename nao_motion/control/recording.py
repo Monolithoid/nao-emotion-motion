@@ -19,6 +19,12 @@ Chaque enregistrement dure jusqu'à « Arrêter » (ou la durée maximale) ; le
 segment utile est proposé automatiquement à la sauvegarde.
 
 Aucune articulation n'est à la fois relâchée et commandée.
+
+Coupure du pont pendant un passage : la boucle s'arrête (jamais d'état
+« enregistrement » orphelin), le contrôleur passe en défaut et désarmé, et les
+mesures déjà reçues sont gardées comme prise INCOMPLÈTE, que l'opérateur peut
+accepter, rejeter ou jeter comme les autres. Côté robot, le pont arrête et
+maintient la posture (chien de garde).
 """
 from __future__ import annotations
 
@@ -94,6 +100,22 @@ class RecordingSession:
     def request_stop(self):
         self._stop.set()
 
+    def _interrupted(self, e: Exception, lost: bool):
+        """Fin anormale de la boucle (coupure du pont ou autre erreur) : état cohérent,
+        contrôleur en défaut et désarmé, cause visible dans l'interface."""
+        what = "Connexion au pont perdue" if lost else "Erreur"
+        self.error = f"{what} pendant l'enregistrement : {e}"
+        ctrl = self.ctrl
+        ctrl.armed = False
+        ctrl.state = State.FAULT
+        ctrl.last_error = self.error
+        ctrl._log(self.error)
+
+    @staticmethod
+    def _partial(ts) -> bool:
+        """Assez de mesures pour garder une prise incomplète ?"""
+        return len(ts) >= 2 and ts[-1] > ts[0]
+
     def _countdown(self, seconds: float):
         self.state = RecState.COUNTDOWN
         a = self.adapter
@@ -132,12 +154,12 @@ class GuidedRecording(RecordingSession):
             raise ControllerError("Préparer l'enregistrement d'abord")
         a = self.adapter
         joints = self.guided
+        ts, qs = [], []
         try:
             if not self._countdown(countdown_s):
                 self.state = RecState.ABORTED
                 return None
             self.state = RecState.RECORDING
-            ts, qs = [], []
             t0 = a.now()
             k = 0
             while True:
@@ -150,15 +172,22 @@ class GuidedRecording(RecordingSession):
                     break
                 k += 1
                 a.sleep(max(0.0, t0 + k / self.rate - a.now()))
-        except ConnectionLost as e:
-            self.error = f"Connexion perdue pendant l'enregistrement : {e}"
-            self.state = RecState.ABORTED
-            raise
-        traj = Trajectory(joints, np.array(ts), np.array(qs))
-        init = None
-        if self.kind == "head":
-            init = traj.q[0].tolist()
-        self.result = RecordingResult(traj, (0.0, float(ts[-1])), self.guided, self.driven, init, True)
+        except Exception as e:
+            # jamais d'état « enregistrement » orphelin : sinon l'interface refuse toute
+            # reconnexion (« enregistrement en cours ») jusqu'au redémarrage du serveur
+            self._interrupted(e, isinstance(e, ConnectionLost))
+            if not self._partial(ts):
+                self.state = RecState.ABORTED
+                raise
+            return self._finish(ts, qs, complete=False,
+                                message=f"Incomplète : {self.error} (après {ts[-1]:.1f} s)")
+        return self._finish(ts, qs, complete=True)
+
+    def _finish(self, ts, qs, complete: bool, message: str = "") -> RecordingResult:
+        traj = Trajectory(self.guided, np.array(ts), np.array(qs))
+        init = traj.q[0].tolist() if self.kind == "head" else None
+        self.result = RecordingResult(traj, (0.0, float(ts[-1])), self.guided, self.driven, init, complete,
+                                      message)
         self.state = RecState.DONE
         return self.result
 
@@ -257,6 +286,7 @@ class HandRecording(RecordingSession):
         a = self.adapter
         hj = self.hand_joints
         self.ctrl.state = State.EXECUTING
+        ts, qs = [], []
         try:
             if not self._countdown(countdown_s):
                 self.state = RecState.ABORTED
@@ -269,41 +299,43 @@ class HandRecording(RecordingSession):
             self._vel = np.zeros(len(hj))
             self._last_t = 0.0
             self._ref_rows = []
-            ts, qs = [], []
             t0 = a.now()
             k = 0
             while True:
                 t = a.now() - t0
                 a.heartbeat()
                 self._follow(t)
+                q = a.read_angles(hj)
                 ts.append(t)
-                qs.append(a.read_angles(hj))
+                qs.append(q)
                 self.elapsed = t
                 if self._stop.is_set() or t >= max_duration_s:
                     break
                 k += 1
                 a.sleep(max(0.0, t0 + k / self.rate - a.now()))
-        except ConnectionLost as e:
-            self.error = f"Connexion perdue pendant l'enregistrement : {e}"
-            self.state = RecState.ABORTED
-            self.ctrl.state = State.FAULT
-            self.ctrl.armed = False
-            raise
         except Exception as e:
-            self.error = str(e)
-            try:
-                a.stop_motion()
-            except Exception:
-                pass
-            self.state = RecState.ABORTED
-            self.ctrl.state = State.FAULT
-            self.ctrl.armed = False
-            raise
+            lost = isinstance(e, ConnectionLost)
+            if not lost:
+                try:
+                    a.stop_motion()
+                except Exception:
+                    pass
+            self._interrupted(e, lost)
+            if not self._partial(ts):
+                self.state = RecState.ABORTED
+                raise
+            return self._finish(ts, qs, complete=False,
+                                message=f"Incomplète : {self.error} (après {ts[-1]:.1f} s)")
         if self.ctrl.state == State.EXECUTING:  # un arrêt global l'a déjà mis en maintien
             self.ctrl.state = State.IDLE
+        return self._finish(ts, qs, complete=True)
+
+    def _finish(self, ts, qs, complete: bool, message: str = "") -> RecordingResult:
+        hj = self.hand_joints
         traj = Trajectory(hj, np.array(ts), np.array(qs))
-        ref = Trajectory(hj, traj.t.copy(), np.array(self._ref_rows))
-        self.result = RecordingResult(traj, (0.0, float(ts[-1])), [], self.driven, None, True,
+        # consigne envoyée à chaque mesure (même horloge) ; une coupure peut survenir entre les deux
+        ref = Trajectory(hj, traj.t.copy(), np.array(self._ref_rows[:len(ts)]))
+        self.result = RecordingResult(traj, (0.0, float(ts[-1])), [], self.driven, None, complete, message,
                                       hands_initial=traj.q[0].tolist(), reference=ref)
         self.state = RecState.DONE
         return self.result

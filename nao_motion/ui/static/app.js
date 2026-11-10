@@ -3,11 +3,14 @@ const $ = (id) => document.getElementById(id);
 let CFG = null, STATUS = null, lastPlan = null, currentTake = null;
 const COLORS = ["#2f62d8","#d8572f","#1d8a4b","#9b3fc4","#c49b1f","#1f9bc4","#c41f6b","#6b7a1f","#555","#e08a00","#0aa","#a33"];
 
-async function api(path, body) {
+async function api(path, body, {quiet = false, timeoutMs = 0} = {}) {
   const opt = body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)};
+  // délai côté page : une requête bloquée ne fige jamais l'interface
+  const ctl = timeoutMs ? new AbortController() : null;
+  if (ctl) { opt.signal = ctl.signal; setTimeout(() => ctl.abort(), timeoutMs); }
   const r = await fetch("/api/" + path, opt);
   const d = await r.json();
-  if (!r.ok) { const msg = d.error + (d.report ? "\n" + JSON.stringify(d.report.violations, null, 1) : ""); alert(msg); throw new Error(msg); }
+  if (!r.ok) { const msg = d.error + (d.report ? "\n" + JSON.stringify(d.report.violations, null, 1) : ""); if (!quiet) alert(msg); throw new Error(msg); }
   return d;
 }
 const real = () => STATUS && STATUS.real_robot;
@@ -42,8 +45,18 @@ function plot(el, t, series, names, opts = {}) {
 const cols = (q) => q[0].map((_, j) => q.map((r) => r[j]));
 
 // ---- état ----------------------------------------------------------------------
+let statusPending = false, statusFails = 0;
 async function refreshStatus() {
-  try { STATUS = await api("status"); } catch (e) { return; }
+  if (statusPending) return;  // pas d'empilement de requêtes si le serveur tarde
+  statusPending = true;
+  try { STATUS = await api("status", undefined, {quiet: true, timeoutMs: 4000}); statusFails = 0; }
+  catch (e) { if (++statusFails >= 3) $("status").textContent = "Serveur de l'interface injoignable…"; return; }
+  finally { statusPending = false; }
+  const b = STATUS.bridge || {};
+  $("bridge-lost").classList.toggle("hidden", !(b.used && !b.connected && b.lost));
+  if (b.lost) $("bridge-lost-msg").textContent = `(${b.address}) : ${b.lost}` +
+    (b.lost_at ? ` — il y a ${Math.round(Date.now() / 1000 - b.lost_at)} s` : "") +
+    ". Le pont arrête et maintient la posture côté robot ; une prise en cours est gardée comme incomplète.";
   const r = STATUS.recording;
   $("status").textContent = `${STATUS.adapter}${STATUS.real_robot ? ` (ROBOT RÉEL ${STATUS.robot_name || ""} ${STATUS.robot_address || "— adresse non fournie"})` : " (simulation)"} · ${STATUS.connected ? "connecté" : "déconnecté"} · contrôleur : ${STATUS.controller}` +
     (STATUS.last_error ? ` · erreur : ${STATUS.last_error}` : "") +
@@ -56,7 +69,7 @@ async function refreshStatus() {
   $("warn").textContent = w.join(" ");
   const txt = r.state === "none" ? "" : r.state === "countdown" ? `Départ dans ${Math.ceil(r.countdown_left)}…` :
     r.state === "recording" ? `● Enregistrement ${r.elapsed.toFixed(1)} s` : r.state === "prepared" ? "Prêt" :
-    r.state === "done" ? `Terminé (${r.elapsed.toFixed(1)} s)${r.complete === false ? " — incomplet" : ""}` : r.state + (r.error ? " : " + r.error : "");
+    r.state === "done" ? `Terminé (${r.elapsed.toFixed(1)} s)${r.complete === false ? " — incomplet" + (r.error ? " : " + r.error : "") : ""}` : r.state + (r.error ? " : " + r.error : "");
   if (r.state !== "none") pid(r.kind, "rec").textContent = txt;
   if (r.state === "done") showDraft(r.kind);
   $("r-status").textContent = JSON.stringify(STATUS, null, 1);
@@ -284,6 +297,20 @@ async function init() {
   $("r-bloc").value = stored.bloc || (CFG.bridge && CFG.bridge.location) || "robot";
   const syncBloc = () => { $("r-bhost-l").classList.toggle("hidden", $("r-bloc").value === "robot"); $("r-bport-l").classList.toggle("hidden", $("r-bloc").value !== "robot"); };
   $("r-bloc").onchange = syncBloc; syncBloc();
+  // bandeau « Pont perdu » : reconnexion au même pont, sans boîte de dialogue ni mouvement
+  $("bridge-reconnect").onclick = async () => {
+    const msg = $("bridge-reconnect-msg");
+    let v = {};
+    try { v = JSON.parse(localStorage.getItem("nao-robot") || "{}"); } catch (e) {}
+    v = {host: v.host || $("r-host").value.trim(), port: v.port || parseInt($("r-port").value), bhost: v.bhost || $("r-bhost").value.trim(),
+         bport: v.bport || parseInt($("r-bport").value), bloc: v.bloc || $("r-bloc").value};
+    msg.textContent = "reconnexion…";
+    try {
+      await api("connect", {mode: "robot", robot_host: v.host, robot_port: v.port, bridge_host: v.bhost, bridge_port: v.bport, bridge_on_robot: v.bloc === "robot"},
+                {quiet: true, timeoutMs: 20000});
+      msg.textContent = "";
+    } catch (e) { msg.textContent = "échec : " + e.message; }
+  };
   $("r-connect-robot").onclick = async () => {
     const v = {host: $("r-host").value.trim(), port: parseInt($("r-port").value), bhost: $("r-bhost").value.trim(), bport: parseInt($("r-bport").value), bloc: $("r-bloc").value};
     if (!v.host) return alert("Indiquer l'adresse du robot (IP ou nom DNS)");
