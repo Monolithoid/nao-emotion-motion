@@ -185,12 +185,71 @@ def active_calibration_path(config_root) -> Optional[Path]:
     return f
 
 
-def activate(config_root, cal_path) -> Path:
-    cal_path = Path(cal_path)
-    Calibration.load(cal_path)  # valide avant activation
+def is_simulated(cal: "Calibration") -> bool:
+    """Calibration produite en simulation (démonstrateur synthétique) : jamais activable."""
+    r = cal.robot or {}
+    return r.get("adapter") == "sim" or r.get("backend") == "sim"
+
+
+def check_compatible(config_root, cal_path, allow_simulated: bool = False) -> "Calibration":
+    """Vérifie qu'un fichier de calibration est utilisable avec la configuration ACTUELLE
+    (format, articulations, poses dans les limites…) sans rien activer. Lève
+    CalibrationError avec le motif sinon."""
+    from .config import ConfigError, load_config
+    cal = Calibration.load(cal_path)
+    if is_simulated(cal) and not allow_simulated:
+        raise CalibrationError("calibration simulée : valeurs sans portée réelle, activation impossible")
+    try:
+        load_config(config_root, calibration_file=cal_path)
+    except ConfigError as e:
+        raise CalibrationError(str(e)) from e
+    return cal
+
+
+def list_calibrations(config_root, allow_simulated: bool = False) -> List[dict]:
+    """Fichiers de configs/calibration/, du plus récent au plus ancien, avec leur état :
+    active, activable (sinon le motif), groupes calibrés et poses présentes."""
     d = Path(config_root) / "calibration"
+    try:
+        active = active_calibration_path(config_root)
+    except CalibrationError:
+        active = None
+    out = []
+    for f in sorted(d.glob("*.yaml")) if d.exists() else []:
+        e = {"file": f.name, "active": bool(active and f.resolve() == active.resolve())}
+        try:
+            cal = Calibration.load(f)
+        except Exception as ex:  # fichier illisible ou d'un autre type
+            e.update(version=None, valid=False, activable=False, reason=str(ex))
+            out.append(e)
+            continue
+        e.update(version=cal.version, created_at=cal.created_at, robot=cal.robot, valid=True,
+                 simulated=is_simulated(cal), joints=sorted(cal.limits),
+                 poses={n: sorted((cal.poses or {}).get(n, {})) for n in ("rest", "start")},
+                 notes=cal.notes)
+        try:
+            check_compatible(config_root, f, allow_simulated)
+            e.update(activable=True, reason=None)
+        except CalibrationError as ex:
+            e.update(activable=False, reason=str(ex))
+        out.append(e)
+    out.sort(key=lambda e: (e.get("created_at") or "", e["file"]), reverse=True)
+    return out
+
+
+def activate(config_root, cal_path, allow_simulated: bool = False) -> Path:
+    """Désigne un fichier de configs/calibration/ au guardian. Le fichier doit être lisible,
+    compatible avec la configuration actuelle et, sauf `allow_simulated` (essais en
+    simulation), issu du robot réel : sinon rien ne change."""
+    cal_path = Path(cal_path)
+    d = Path(config_root) / "calibration"
+    if not cal_path.is_absolute() and not cal_path.exists():
+        cal_path = d / cal_path  # nom seul : fichier de configs/calibration/
     if cal_path.resolve().parent != d.resolve():
         raise CalibrationError("Le fichier doit se trouver dans configs/calibration/")
+    if not cal_path.exists():
+        raise CalibrationError(f"Calibration introuvable : {cal_path.name}")
+    check_compatible(config_root, cal_path, allow_simulated)  # valide AVANT d'écrire ACTIVE
     (d / "ACTIVE").write_text(cal_path.name + "\n", encoding="utf-8")
     return d / "ACTIVE"
 
@@ -198,8 +257,13 @@ def activate(config_root, cal_path) -> Path:
 # -- calcul --------------------------------------------------------------------------
 def compute_calibration(sweeps: Dict[str, Dict[str, np.ndarray]], joints: Sequence[str], proc: dict,
                         factory: Optional[Dict[str, Sequence[float]]] = None, poses=None, robot=None,
-                        version: Optional[str] = None) -> Calibration:
-    """sweeps : {groupe: {"joints": [...], "q": (N, J)}} mesurés pendant l'exploration."""
+                        version: Optional[str] = None, imported: Optional[Dict[str, dict]] = None) -> Calibration:
+    """sweeps : {groupe: {"joints": [...], "q": (N, J)}} mesurés pendant l'exploration.
+    imported : {groupe: import_group(...)} groupes repris tels quels d'une calibration
+    enregistrée (limites, mesures, contraintes couplées) au lieu d'être explorés à nouveau."""
+    imported = imported or {}
+    imp_lim = {j: tuple(v) for g in imported.values() for j, v in g["limits"].items()}
+    imp_meas = {j: dict(m, imported_from=g["source"]) for g in imported.values() for j, m in g["measured"].items()}
     margin = float(proc.get("margin_rad", 0.05))
     min_range = float(proc.get("min_range_rad", 0.2))
     min_samples = int(proc.get("min_samples", 50))
@@ -212,12 +276,15 @@ def compute_calibration(sweeps: Dict[str, Dict[str, np.ndarray]], joints: Sequen
             raise CalibrationError(f"Groupe {g} : mesures non finies")
         for k, j in enumerate(s["joints"]):
             samples[j] = q[:, k]
-    missing = [j for j in joints if j not in samples]
+    missing = [j for j in joints if j not in samples and j not in imp_lim]
     if missing:
         raise CalibrationError(f"Articulations non explorées : {missing}")
     tol = float(proc.get("factory_tolerance_rad", 0.005))  # bruit capteur
     limits, measured, warnings = {}, {}, []
     for j in joints:
+        if j in imp_lim and j not in samples:
+            limits[j], measured[j] = imp_lim[j], imp_meas.get(j) or {}
+            continue
         lo, hi = float(samples[j].min()), float(samples[j].max())
         if hi - lo < min_range:
             raise CalibrationError(f"{j} : amplitude explorée {hi - lo:.2f} rad < {min_range} rad. "
@@ -240,7 +307,11 @@ def compute_calibration(sweeps: Dict[str, Dict[str, np.ndarray]], joints: Sequen
         measured[j] = {"min": lo, "max": hi, "factory": [float(flo), float(fhi)] if factory and j in factory else None,
                        "n": int(samples[j].size), "beyond_factory": bool(beyond)}
     coupled = []
+    for g in imported.values():
+        coupled.extend(dict(c) for c in g["coupled"])
     for a, b in proc.get("pairs", []):
+        if a in imp_lim or b in imp_lim:
+            continue  # enveloppe reprise avec le groupe
         if a not in samples or b not in samples or len(samples[a]) != len(samples[b]):
             continue  # couple non exploré ensemble (groupes différents)
         pts = np.stack([samples[a], samples[b]], axis=1)
@@ -256,9 +327,9 @@ def compute_calibration(sweeps: Dict[str, Dict[str, np.ndarray]], joints: Sequen
             for g, jq in groups.items():
                 for j, v in jq.items():
                     if name == "rest":
-                        m = measured[j]
-                        flo, fhi = m["factory"] if m.get("factory") else (min(m["min"], limits[j][0]),
-                                                                          max(m["max"], limits[j][1]))
+                        m = measured.get(j) or {}
+                        flo, fhi = m["factory"] if m.get("factory") else (min(m.get("min", limits[j][0]), limits[j][0]),
+                                                                          max(m.get("max", limits[j][1]), limits[j][1]))
                         if not flo - tol <= v <= fhi + tol:
                             raise CalibrationError(f"Pose rest/{j}={v:.3f} hors des limites d'usine [{flo:.3f}, {fhi:.3f}]")
                         continue
@@ -277,8 +348,29 @@ def compute_calibration(sweeps: Dict[str, Dict[str, np.ndarray]], joints: Sequen
                                                "explorer une zone plus large autour de cette pose")
     robot = robot or {}
     version = version or f"{robot.get('name') or 'nao'}-{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    notes = "; ".join(f"groupe {g} repris de la calibration {d['source']}" for g, d in sorted(imported.items()))
     return Calibration(version=version, robot=robot, limits=limits, measured=measured, poses=poses or {},
-                       coupled=coupled, margin_rad=margin, warnings=warnings)
+                       coupled=coupled, margin_rad=margin, warnings=warnings, notes=notes)
+
+
+def import_group(cal: "Calibration", group: str, joints: Sequence[str]) -> dict:
+    """Extrait d'une calibration enregistrée tout ce qui concerne un groupe : limites,
+    mesures, contraintes couplées portant uniquement sur ses articulations, et poses
+    (si elles y sont). Sert à garder un groupe déjà calibré sans l'explorer à nouveau."""
+    if is_simulated(cal):
+        raise CalibrationError("Calibration simulée : ses valeurs ne peuvent pas être reprises")
+    js = list(joints)
+    missing = [j for j in js if j not in cal.limits]
+    if missing:
+        raise CalibrationError(f"{cal.version} ne calibre pas {missing}")
+    poses = {n: {j: float(v) for j, v in (cal.poses or {}).get(n, {}).get(group, {}).items()}
+             for n in ("rest", "start")}
+    poses = {n: p for n, p in poses.items() if set(js) <= set(p)}
+    return {"source": cal.version, "file": cal.path.name if cal.path else None,
+            "limits": {j: [float(cal.limits[j][0]), float(cal.limits[j][1])] for j in js},
+            "measured": {j: dict((cal.measured or {}).get(j) or {}) for j in js},
+            "coupled": [c for c in (cal.coupled or []) if set(c.get("terms", {})) <= set(js)],
+            "poses": poses}
 
 
 # -- procédure sur le robot ------------------------------------------------------------
@@ -291,6 +383,7 @@ class CalibrationSession:
         self.rate = float(proc.get("rate_hz", 50))
         self.sweeps: Dict[str, dict] = {}
         self.poses: Dict[str, Dict[str, Dict[str, float]]] = {}
+        self.imported: Dict[str, dict] = {}   # groupes repris d'une calibration enregistrée
         self._stop = threading.Event()
         self.current: Optional[str] = None
         self.n = 0
@@ -318,6 +411,7 @@ class CalibrationSession:
             raise CalibrationError(f"Confirmer que le groupe {group} est tenu avant de le relâcher")
         joints = self.cfg.groups[group]
         others = [j for j in self.cfg.all_joints if j not in joints]
+        self.imported.pop(group, None)  # explorer un groupe remplace sa reprise
         self.adapter.set_roles(guided=joints, driven=others)
         self._stop.clear()
         self.current = group
@@ -350,6 +444,19 @@ class CalibrationSession:
     def clear_sweep(self, group: str):
         self.sweeps.pop(group, None)
 
+    def import_group(self, cal: "Calibration", group: str) -> dict:
+        """Reprend un groupe d'une calibration enregistrée (remplace son exploration ; ses
+        poses aussi si le fichier les porte, sinon les capturer)."""
+        imp = import_group(cal, group, self.cfg.groups[group])
+        self.sweeps.pop(group, None)
+        self.imported[group] = imp
+        for n, p in imp["poses"].items():
+            self.poses.setdefault(n, {})[group] = dict(p)
+        return imp
+
+    def drop_import(self, group: str):
+        self.imported.pop(group, None)
+
     def capture_pose(self, name: str, group: str, samples: int = 5, interval_s: float = 0.02) -> Dict[str, float]:
         """Moyenne de `samples` lectures capteurs (aucune commande)."""
         js = self.cfg.groups[group]
@@ -368,7 +475,7 @@ class CalibrationSession:
         if missing:
             raise CalibrationError(f"Poses à capturer : {missing}")
         return compute_calibration(self.sweeps, self.cfg.all_joints, self.proc, self.factory_limits(),
-                                   self.poses, self.robot_info(), version)
+                                   self.poses, self.robot_info(), version, imported=self.imported)
 
 
 def load_procedure(config_root) -> dict:

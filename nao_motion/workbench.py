@@ -51,6 +51,10 @@ class Workbench:
         self.rng = np.random.default_rng(0)
         self.lock = threading.RLock()
         self.calibration = None  # CalibrationWizard ouvert depuis l'interface
+        # Guardian au rejeu (passages 2 et 3) : actif à chaque démarrage. L'opérateur peut le
+        # désactiver depuis l'interface quand il est à côté du robot ; la génération,
+        # l'exécution de plans et l'export restent toujours protégés.
+        self.replay_guardian = True
         self._hands_pending: Optional[dict] = None  # dernière cible d'ouverture des mains (hors enregistrement)
         self._hands_thread: Optional[threading.Thread] = None
 
@@ -162,6 +166,43 @@ class Workbench:
             raise ControllerError("Aucune calibration ouverte")
         return self.calibration
 
+    def set_replay_guardian(self, enabled: bool) -> bool:
+        """Active / désactive le guardian pour le rejeu des passages 2 et 3 (aucun mouvement)."""
+        rec = self.recording
+        if rec is not None and rec.state in (RecState.COUNTDOWN, RecState.RECORDING):
+            raise ControllerError("Enregistrement en cours : changer le guardian au rejeu après l'arrêt")
+        self.replay_guardian = bool(enabled)
+        self.ctrl._log("guardian au rejeu " + ("ACTIVÉ" if enabled else "DÉSACTIVÉ (opérateur à côté du robot)"))
+        return self.replay_guardian
+
+    def list_calibrations(self) -> list:
+        from .calibration import list_calibrations
+        return list_calibrations(self.cfg.root, allow_simulated=self._sim_adapter())
+
+    def _sim_adapter(self) -> bool:
+        # une calibration simulée ne s'active qu'en simulation (essais de l'interface)
+        return not getattr(self.adapter, "is_real", False)
+
+    def activate_calibration(self, file) -> dict:
+        """Active un fichier de configs/calibration/ (enregistré lors d'une session précédente
+        ou à l'instant) puis recharge la configuration. Aucun mouvement ; si le rechargement
+        échoue, l'activation précédente est rétablie."""
+        from .calibration import activate
+        if self._busy():
+            raise ControllerError("Mouvement ou enregistrement en cours : arrêter d'abord")
+        marker = self.cfg.root / "calibration" / "ACTIVE"
+        previous = marker.read_text(encoding="utf-8") if marker.exists() else None
+        activate(self.cfg.root, file, allow_simulated=self._sim_adapter())
+        try:
+            self.reload_config()
+        except Exception:
+            if previous is None:
+                marker.unlink(missing_ok=True)
+            else:
+                marker.write_text(previous, encoding="utf-8")
+            raise
+        return {"active": self.cfg.calibration_version, "file": Path(str(file)).name}
+
     def reload_config(self):
         """Recharge configs/ (après activation d'une calibration). Contrôleur désarmé, aucun mouvement."""
         if self._busy():
@@ -236,10 +277,13 @@ class Workbench:
             arm = self.store.load(arm_take_id)
             rec = cls.from_take(self.cfg, self.ctrl, arm, ev)
             emotion, intensity, intention = arm.meta.emotion, arm.meta.intensity, arm.meta.intention
-        rec.prepare(confirm=confirm)  # approche motorisée validée, contrôleur armé requis
+        rec.guardian_enabled = bool(self.replay_guardian)
+        rec.prepare(confirm=confirm)  # approche motorisée validée (sauf guardian désactivé), contrôleur armé requis
         self.recording = rec
         self.rec_info = {"kind": kind, "emotion": emotion, "intensity": intensity, "intention": intention,
                          "event": ev.to_dict(), **rec.source}
+        if not rec.guardian_enabled:
+            self.rec_info["guardian_replay"] = False
         return {k: v for k, v in self.rec_info.items()}
 
     def prepare_hands_take(self, arm_take_id=None, confirm=False, generated: Optional[dict] = None):
@@ -552,4 +596,4 @@ class Workbench:
                 "recording": self.recording_status(), "event": self.current_event().to_dict(),
                 "roles": self.adapter.roles, "calibrated": self.cfg.calibrated,
                 "poses_calibrated": self.cfg.poses_calibrated, "log": self.ctrl.events[-10:],
-                "sim_demonstration": self.sim_demonstration}
+                "sim_demonstration": self.sim_demonstration, "replay_guardian": self.replay_guardian}

@@ -25,7 +25,7 @@ def calibrated(tmp_path_factory, cfg):
     (d / "calibration" / "ACTIVE").unlink(missing_ok=True)
     wb = make_wb(tmp / "w", load_config(d))
     path = simulate_calibration(wb).save(d / "calibration" / "export-test.yaml")
-    activate(d, path)
+    activate(d, path, allow_simulated=True)
     c = load_config(d)
     out = export_guardian(c, tmp / "out")
     return c, out, ng.Guardian.load(out["guardian"])

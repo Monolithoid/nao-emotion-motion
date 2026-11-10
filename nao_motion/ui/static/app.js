@@ -50,6 +50,12 @@ async function refreshStatus() {
     (STATUS.event.present ? ` · événement az ${(STATUS.event.azimuth_rad * 180 / Math.PI).toFixed(0)}° el ${(STATUS.event.elevation_rad * 180 / Math.PI).toFixed(0)}°` +
       (STATUS.event.distance_m != null ? ` à ${(+STATUS.event.distance_m).toFixed(2)} m` : "") : " · aucun événement");
   $("armed").checked = STATUS.armed;
+  const guardOn = STATUS.replay_guardian !== false;
+  $("replay-guardian").checked = guardOn;
+  $("guard-off").textContent = guardOn ? "" :
+    "⚠ Guardian DÉSACTIVÉ pour le rejeu (passages 2 Tête et 3 Mains) : le geste rejoué et l'approche ne sont plus " +
+    "bloqués par les limites calibrées ni par les vitesses. Restez à côté du robot, prêt à le retenir ou à appuyer sur ARRÊT. " +
+    "Génération, exécution de plans et export restent protégés.";
   const w = [];
   if (!STATUS.calibrated || !STATUS.poses_calibrated) w.push("Aucune calibration active (onglet Calibration) : limites de remplacement, exécution réelle refusée.");
   if (STATUS.sim_demonstration) w.push("Simulation : un démonstrateur SYNTHÉTIQUE remplace votre main ; les prises sont marquées comme synthétiques.");
@@ -228,6 +234,11 @@ async function init() {
     if (window.NAOFIG) window.NAOFIG.update();
   });
   $("stop").onclick = () => api("stop", {});
+  // sans confirmation (préférence de l'opérateur) : avertissement permanent en haut de page
+  $("replay-guardian").onchange = async (e) => {
+    await api("guardian_replay", {enabled: e.target.checked}).catch(() => {});
+    refreshStatus();
+  };
   $("armed").onchange = async (e) => {
     const on = e.target.checked;
     if (on && !window.confirm("Autoriser les mouvements motorisés ? Chaque mouvement restera déclenché par un bouton explicite.")) { e.target.checked = false; return; }

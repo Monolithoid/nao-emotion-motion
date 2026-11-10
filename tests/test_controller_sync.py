@@ -185,3 +185,45 @@ def test_rest_outside_motion_zone_is_allowed(tmp_path):
     wb.adapter.q[j] = wb.adapter.target[j] = hi + 0.2
     plan = wb.ctrl.plan_cycle(gesture(cfg, amp=1.5))
     assert not plan.report.ok and any(v.code == "limit" for v in plan.report.violations)
+
+
+def test_replay_guardian_can_be_disabled_for_head_pass(wb, cfg, monkeypatch):
+    """Guardian au rejeu désactivé (opérateur à côté du robot) : la relecture refusée par le
+    guardian est quand même préparée et enregistrée ; réactivé, elle est de nouveau refusée.
+    La génération / exécution de plans reste protégée."""
+    from nao_motion.guardian import GuardianRejection
+    from nao_motion.ui.server import Api
+    meta, tr = arm_take(cfg, duration=2.5, n=126)
+    meta.status = "accepted"
+    wb.store.save(meta, tr)
+    wb.ctrl.hold(cfg.all_joints)
+    wb.ctrl.arm(confirm=True)
+    monkeypatch.setattr(cfg.guardian, "max_velocity_rad_s", 1e-3)  # tout geste devient trop rapide
+    monkeypatch.setattr(cfg.guardian, "per_joint_velocity_rad_s", {})
+    api = Api(wb)
+    assert api.get_status({})["replay_guardian"] is True
+    with pytest.raises(GuardianRejection):
+        wb.prepare_head_take(meta.take_id)
+    assert wb.ctrl.state == State.IDLE
+    st = api.post_guardian_replay({"enabled": False})
+    assert st["replay_guardian"] is False
+    info = wb.prepare_head_take(meta.take_id)
+    assert info["guardian_replay"] is False
+    assert any("DÉSACTIVÉ" in e for e in wb.ctrl.events)
+    wb.start_recording(countdown_s=0.2, background=False)
+    assert wb.recording.result.complete
+    # pendant un enregistrement on ne bascule pas ; ensuite on réactive
+    api.post_guardian_replay({"enabled": True})
+    wb.ctrl.hold(cfg.head_joints)
+    with pytest.raises(GuardianRejection):
+        wb.prepare_head_take(meta.take_id)
+    # les plans (génération / exécution) ne sont jamais contournés, même guardian au rejeu désactivé
+    api.post_guardian_replay({"enabled": False})
+    j = cfg.arm_joints
+    q = np.array(cfg.pose("start", j))
+    fast = Trajectory(j, [0.0, 0.1], [q, q + 0.3])
+    from nao_motion.control.controller import Plan
+    bad = Plan(fast, [("x", 0.0, 0.1)], wb.guardian.validate(fast, check_duration=False))
+    assert not bad.report.ok
+    with pytest.raises(GuardianRejection):
+        wb.ctrl.execute(bad)
