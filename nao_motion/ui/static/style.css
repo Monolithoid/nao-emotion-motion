@@ -79,3 +79,16 @@ button.next{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,va
 .hand-row output{min-width:3em;font-variant-numeric:tabular-nums;font-weight:600}
 .cal-files table{border-collapse:collapse;width:100%}.cal-files td,.cal-files th{border-top:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}
 .cal-files tr.is-active td{font-weight:600}.cal-files .why{color:var(--bad)}
+/* avancement de la collecte (onglet Prises) */
+.progress-list{display:flex;flex-direction:column;gap:14px;max-width:900px;margin-bottom:8px}
+.pg{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px 8px}
+.pg-head{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline}
+.pg-name{font-weight:700;font-size:15px;min-width:4.5em}.pg-count{font-variant-numeric:tabular-nums}.pg-count b{font-size:18px}
+.pg-msg{color:var(--muted);flex:1;min-width:14em}.pg-msg b{color:var(--fg)}
+.pg-bar{position:relative;height:16px;margin:10px 0 22px;background:color-mix(in srgb,var(--line) 55%,var(--card));border-radius:8px}
+.pg-fill{position:absolute;left:0;top:0;bottom:0;background:var(--ok);border-radius:8px;transition:width .3s}
+.pg-pend{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(45deg,color-mix(in srgb,var(--ok) 35%,transparent) 0 4px,transparent 4px 8px)}
+.pg-tick{position:absolute;top:-4px;bottom:-4px;width:0;border-left:2px solid var(--fg)}
+.pg-tick b{position:absolute;top:100%;transform:translateX(-50%);font-size:12px;font-weight:600;color:var(--muted);padding-top:1px;white-space:nowrap}
+.pg-tick:last-child b{transform:translateX(-100%)}.pg-tick.reached{border-color:var(--ok)}.pg-tick.reached b{color:var(--ok)}
+.pg-sub{font-size:12px;color:var(--muted)}.pg-sub b{color:var(--fg)}

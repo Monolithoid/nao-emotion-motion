@@ -153,3 +153,42 @@ def test_api_draw_endpoint(cfg, tmp_path):
     with pytest.raises(ValueError):
         api.post_draw({"kind": "jambes"})
     assert len(wb.adapter.command_log) == n
+
+
+def test_progress_counts_only_accepted_real_takes(cfg):
+    from nao_motion.data.progress import milestones, progress
+    metas = simulate(cfg, 70, 2.0)
+    for m in metas:
+        m.synthetic = False
+    metas[0].status = "pending"
+    metas[1].status = "rejected"
+    sim = [SimpleNamespace(**{**vars(m), "synthetic": True}) for m in metas[:10]]
+    head = [SimpleNamespace(**{**vars(m), "kind": "head"}) for m in metas[2:7]]
+    pr = progress(cfg, metas + sim + head)["kinds"]
+    a = pr["arms"]
+    assert (a["accepted"], a["pending"], a["rejected"], a["synthetic_accepted"]) == (68, 1, 1, 8)
+    assert a["reached"]["takes"] == 60 and a["next"] == {**milestones(cfg)["arms"][1], "remaining": 150 - 68}
+    assert a["goal"] == milestones(cfg)["arms"][-1]["takes"]
+    assert a["coverage"]["event_cells"] == 216 and 60 <= a["coverage"]["event_covered"] <= 68
+    assert sum(a["coverage"]["emotions"].values()) == 68
+    assert pr["head"]["accepted"] == 5 and pr["head"]["next"]["remaining"] == 55
+    assert pr["hands"]["accepted"] == 0 and pr["hands"]["reached"] is None
+
+
+def test_progress_milestones_config(cfg):
+    from nao_motion.data.progress import milestones
+    old = cfg.robot.get("progress")
+    try:
+        cfg.robot["progress"] = {"hands": [80, {"takes": 20, "label": "essai"}]}
+        ms = milestones(cfg)
+        assert [m["takes"] for m in ms["hands"]] == [20, 80] and ms["hands"][0]["label"] == "essai"
+        assert ms["arms"][0]["takes"] == 60  # groupe absent : valeurs par défaut
+        for bad in ([], [0], [20, 20], ["x"]):
+            cfg.robot["progress"] = {"head": bad}
+            with pytest.raises(ValueError):
+                milestones(cfg)
+    finally:
+        if old is None:
+            cfg.robot.pop("progress", None)
+        else:
+            cfg.robot["progress"] = old

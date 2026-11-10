@@ -128,6 +128,7 @@ async function loadTakes() {
       `<td>${fmtInt(m.intensity)}</td><td>${m.duration_s.toFixed(1)} s</td><td>${m.event.present ? `az ${(m.event.azimuth_rad * 180 / Math.PI).toFixed(0)}° el ${(m.event.elevation_rad * 180 / Math.PI).toFixed(0)}°` + (m.event.distance_m != null ? ` ${(+m.event.distance_m).toFixed(2)} m` : "") : "aucun"}</td>` +
       `<td class="${m.status}">${m.status}</td><td>${(m.annotations.notes || "")}</td></tr>`).join("");
   document.querySelectorAll("#t-table tr.clickable").forEach((tr) => tr.onclick = () => openTake(tr.dataset.id));
+  renderProgress(await api("progress", undefined, {quiet: true}).catch((e) => ({error: e.message})));
   const st = await api("stats");
   let h = "";
   for (const kind of ["arms", "head", "hands"]) {
@@ -139,6 +140,38 @@ async function loadTakes() {
     h += "</table>";
   }
   $("stats").innerHTML = h;
+}
+
+// barre de progression à paliers par groupe (prises acceptées) -------------------
+function renderProgress(pr) {
+  const box = $("progress");
+  if (!pr || !pr.kinds) { box.innerHTML = pr && pr.error ? `<div class="alert"><b>Avancement indisponible :</b> ${pr.error}</div>` : ""; return; }
+  const pct = (n, goal) => Math.min(100, (100 * n) / goal);
+  box.innerHTML = ["arms", "head", "hands"].map((kind) => {
+    const k = pr.kinds[kind];
+    if (!k) return "";
+    const goal = k.goal, acc = k.accepted;
+    const ticks = k.milestones.map((m) =>
+      `<span class="pg-tick${m.reached ? " reached" : ""}" style="left:${pct(m.takes, goal)}%" title="${m.takes} : ${m.label}"><b>${m.takes}</b></span>`).join("");
+    const pend = Math.min(k.pending, Math.max(0, goal - acc));
+    const msg = k.next
+      ? `Encore <b>${k.next.remaining}</b> prise${k.next.remaining > 1 ? "s" : ""} acceptée${k.next.remaining > 1 ? "s" : ""} avant le palier <b>${k.next.takes}</b> (${k.next.label})`
+      : `<b>Objectif atteint</b> (${goal} prises)`;
+    const done = k.reached ? ` · palier atteint : ${k.reached.takes} (${k.reached.label})` : "";
+    const cov = k.coverage, emos = Object.entries(cov.emotions);
+    const low = emos.length ? emos.reduce((a, b) => (b[1] < a[1] ? b : a)) : null;
+    const hi = emos.length ? Math.max(...emos.map((e) => e[1])) : 0;
+    const lag = low && hi - low[1] >= 2 ? ` · en retard : ${pr.emotion_labels[low[0]] || low[0]} (${low[1]} contre ${hi})` : "";
+    const extra = [k.pending ? `${k.pending} en attente à trier` : "", k.rejected ? `${k.rejected} rejetée${k.rejected > 1 ? "s" : ""}` : "",
+      k.synthetic_accepted ? `${k.synthetic_accepted} simulée${k.synthetic_accepted > 1 ? "s" : ""} non comptée${k.synthetic_accepted > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ");
+    return `<div class="pg" data-kind="${kind}">
+      <div class="pg-head"><span class="pg-name">${k.label}</span><span class="pg-count"><b>${acc}</b> / ${goal}</span><span class="pg-msg">${msg}${done}</span></div>
+      <div class="pg-bar" role="progressbar" aria-label="${k.label} : prises acceptées" aria-valuemin="0" aria-valuemax="${goal}" aria-valuenow="${acc}">
+        <div class="pg-fill" style="width:${pct(acc, goal)}%"></div><div class="pg-pend" style="left:${pct(acc, goal)}%;width:${pct(pend, goal)}%" title="en attente"></div>${ticks}
+      </div>
+      <div class="pg-sub">Cases couvertes : <b>${cov.event_covered}</b> / ${cov.event_cells} avec événement · ${cov.none_covered} / ${cov.none_cells} sans événement${lag}${extra ? " · " + extra : ""}</div>
+    </div>`;
+  }).join("");
 }
 
 async function openTake(id) {

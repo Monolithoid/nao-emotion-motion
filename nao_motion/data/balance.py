@@ -153,12 +153,22 @@ class Grid:
         return f"{wa} ({alo:.0f}…{ahi:.0f}°), {we} ({elo:.0f}…{ehi:.0f}°), {wd}"
 
 
-def count_takes(grid: Grid, metas: Iterable, kind: Optional[str]):
-    """Comptes (case, émotion, intensité, zone) des prises du passage `kind`, hors rejetées."""
+def count_takes(grid: Grid, metas: Iterable, kind: Optional[str], statuses: Optional[Sequence[str]] = None,
+                include_synthetic: bool = True):
+    """Comptes (case, émotion, intensité, zone) des prises du passage `kind`.
+
+    Par défaut : toutes les prises hors rejetées (tirage). `statuses` restreint
+    aux statuts donnés (ex. ("accepted",) pour la progression) ;
+    `include_synthetic=False` écarte les prises simulées.
+    """
     joint, emo, inten, zone = Counter(), Counter(), Counter(), Counter()
     total = 0.0
     for m in metas:
-        if kind is None or m.kind != kind or m.status == "rejected" or m.emotion not in grid.emotions:
+        if kind is None or m.kind != kind or m.emotion not in grid.emotions:
+            continue
+        if (m.status not in statuses) if statuses is not None else m.status == "rejected":
+            continue
+        if not include_synthetic and getattr(m, "synthetic", False):
             continue
         i = grid.int_bin(float(m.intensity))
         emo[m.emotion] += 1
