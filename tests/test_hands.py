@@ -1,5 +1,5 @@
 """Ouverture des mains (LHand, RHand) : configuration, guardian, commande manuelle,
-passage 3 (bras rejoués + mains pilotées), jeu de données, modèle et génération."""
+passage mains (indépendant : tout raide, mains pilotées), jeu de données, modèle et génération."""
 import numpy as np
 import pytest
 
@@ -67,9 +67,8 @@ def test_cycle_from_rest_accepts_open_hands(wb, cfg):
 def test_hands_pass_dataset_training_generation(trained, cfg, tmp_path):
     src = trained["wb"]
     wb = make_wb(tmp_path, cfg)
-    # mêmes prises de bras et même modèle des bras que le jeu entraîné
+    # mêmes modèles bras et tête que le jeu entraîné (pour la génération combinée)
     import shutil
-    shutil.copytree(src.store.dir, wb.store.dir, dirs_exist_ok=True)
     shutil.copytree(src.runs_dir, wb.runs_dir, dirs_exist_ok=True)
     wb.ctrl.hold(cfg.all_joints)
     wb.ctrl.arm(confirm=True)
@@ -79,20 +78,25 @@ def test_hands_pass_dataset_training_generation(trained, cfg, tmp_path):
     for job in jobs:
         for ev in contexts:
             wb.event = ev
-            info = wb.prepare_hands_take(generated=job)
-            assert info["kind"] == "hands" and info["arm_source"] == "generated"
+            q0 = wb.adapter.read_angles(cfg.all_joints)
+            info = wb.prepare_hands_take(job["emotion"], job["intensity"])
+            assert info["kind"] == "hands"
+            np.testing.assert_allclose(wb.adapter.read_angles(cfg.all_joints), q0, atol=1e-6)  # raidis sur place
+            n = len(wb.adapter.command_log)
             assert isinstance(wb.recording, HandRecording)
             assert all(r != "guided" for r in wb.adapter.roles.values())  # rien n'est relâché
             wb.start_recording(countdown_s=0.2, background=False)
             r = wb.recording.result
             assert r.complete and r.reference is not None and r.reference.t.shape == r.traj.t.shape
+            # seules les mains sont commandées pendant le passage
+            assert all(set(c[1]) <= set(cfg.hand_joints) for c in wb.adapter.command_log[n:])
             ids.append(wb.save_recording(status="accepted"))
     take = wb.store.load(ids[0])
     m = take.meta
     assert m.kind == "hands" and m.guided_joints == [] and set(cfg.hand_joints) <= set(m.joints)
     assert m.hands_initial is not None and m.head_initial is None
     ref = wb.store.load_reference(m.take_id)
-    assert ref.joints == cfg.arm_joints + cfg.hand_joints
+    assert ref.joints == cfg.hand_joints and m.joints == cfg.hand_joints
     # la consigne filtrée reste dans la plage et sous les limites du guardian
     assert ref.select(cfg.hand_joints).q.min() >= 0.0 and ref.select(cfg.hand_joints).q.max() <= 1.0
     seg = take.segment_trajectory(cfg.hand_joints)
@@ -110,6 +114,7 @@ def test_hands_pass_dataset_training_generation(trained, cfg, tmp_path):
     assert eng.hands_model is not None
     gen = eng.generate("joie", 0.9, EventContext.none())
     assert gen.hands is not None and gen.combined.joints == cfg.all_joints + cfg.hand_joints
+    assert set(gen.durations) == {"arms", "head", "hands"}  # trois modèles indépendants combinés
     assert Guardian(cfg).validate(gen.combined).ok
     wb.ctrl.disarm()
     wb.ctrl.hold(cfg.controlled_joints)
@@ -123,13 +128,12 @@ def test_hands_pass_dataset_training_generation(trained, cfg, tmp_path):
 
 def test_hands_live_target_during_recording(trained, cfg, tmp_path):
     wb = make_wb(tmp_path, cfg)
-    src = trained["wb"]
-    import shutil
-    shutil.copytree(src.store.dir, wb.store.dir, dirs_exist_ok=True)
     wb.sim_demonstration = False  # pas d'opérateur simulé : c'est la cible de l'interface qui compte
     wb.ctrl.hold(cfg.all_joints)
+    with pytest.raises(ControllerError):
+        wb.prepare_hands_take("joie", 0.5)  # contrôleur désarmé : pilotage impossible
     wb.ctrl.arm(confirm=True)
-    wb.prepare_hands_take(trained["arm_ids"][0])
+    wb.prepare_hands_take("joie", 0.5)
     rec = wb.recording
     rec.set_target({"LHand": 1.0})
     rec.set_target({"RHand": 5.0})  # bornée à la plage
@@ -138,11 +142,13 @@ def test_hands_live_target_during_recording(trained, cfg, tmp_path):
     seen = []
     orig = rec._follow
 
-    def follow(t, u):
+    def follow(t):
         if not seen:
             wb.set_hands({"LHand": 0.95, "RHand": 0.05})  # même route que l'interface
         seen.append(1)
-        orig(t, u)
+        orig(t)
+        if t > 2.5:
+            rec.request_stop()  # comme le bouton Arrêter
     rec._follow = follow
     wb.start_recording(countdown_s=0.1, background=False)
     ref = rec.result.reference.select(cfg.hand_joints)

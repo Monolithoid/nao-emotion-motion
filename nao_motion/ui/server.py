@@ -88,7 +88,7 @@ class Api:
         return self.wb.current_event().to_dict()
 
     def get_hands(self, q):
-        """Ouverture mesurée des mains (et, pendant le passage 3, cible et consigne). Aucune commande."""
+        """Ouverture mesurée des mains (et, pendant le passage mains, cible et consigne). Aucune commande."""
         return self.wb.hands_state()
 
     def get_calibration(self, q):
@@ -146,13 +146,9 @@ class Api:
         return self.wb.status()
 
     def post_record_prepare(self, d):
-        if d.get("kind") in ("head", "hands"):
-            k = d["kind"]
-            if d.get("generated"):
-                return self.wb.prepare_head_take(generated=d["generated"], confirm=bool(d.get("confirm")), kind=k)
-            return self.wb.prepare_head_take(d["arm_take_id"], confirm=bool(d.get("confirm")), kind=k)
-        return self.wb.prepare_arm_take(d["emotion"], float(d["intensity"]), d.get("intention") or None,
-                                        confirm=bool(d.get("confirm")))
+        """{"kind": "arms"|"head"|"hands", "emotion", "intensity", "intention"?} : passages indépendants."""
+        return self.wb.prepare_take(d.get("kind", "arms"), d["emotion"], float(d["intensity"]),
+                                    d.get("intention") or None, confirm=bool(d.get("confirm")))
 
     def post_record_start(self, d):
         return self.wb.start_recording(d.get("countdown_s"), float(d.get("max_duration_s", 15)))
@@ -169,7 +165,7 @@ class Api:
         return {"discarded": True}
 
     def post_hands(self, d):
-        """{"targets": {"LHand": 0..1, "RHand": 0..1}} : suivi en direct pendant le passage 3,
+        """{"targets": {"LHand": 0..1, "RHand": 0..1}} : suivi en direct pendant le passage mains,
         sinon mouvement court validé par le guardian (contrôleur armé requis)."""
         return self.wb.set_hands(d.get("targets") or {})
 

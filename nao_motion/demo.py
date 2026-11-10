@@ -5,11 +5,11 @@
 2. les consulter et les rejouer virtuellement (validation guardian) ;
 3. entraîner le modèle des bras ;
 4. générer et valider une trajectoire, l'exécuter sur le robot simulé ;
-5. collecte tête : le modèle des bras joue l'émotion, l'opérateur (ici simulé)
-   guide la tête ; jeu (émotion/intensité, bras réalisés, tête enregistrée) ;
-6. entraîner la tête (bras figés) et exécuter le cycle complet simulé ;
-7. collecte mains : le modèle des bras joue l'émotion, l'opérateur (simulé)
-   pilote l'ouverture des mains ; entraîner les mains, cycle complet.
+5. collecte tête, INDÉPENDANTE des bras : l'opérateur (ici simulé) guide la
+   tête pour une émotion, une intensité et un événement, bras raides sur place ;
+6. entraîner la tête seule et exécuter le geste combiné bras + tête ;
+7. collecte mains, indépendante : l'opérateur (simulé) pilote l'ouverture des
+   mains ; entraîner les mains seules, geste combiné bras + tête + mains.
 
 Les données synthétiques vérifient le fonctionnement technique, pas l'expressivité.
 """
@@ -48,64 +48,47 @@ def collect_arms(wb: Workbench, reps=2, intensities=(0.3, 0.7, 1.0), contexts=No
     return arm_ids
 
 
-def collect_heads(wb: Workbench, mode="generated", intensities=(0.3, 0.7, 1.0), variants=1, arm_ids=None,
-                  contexts=None, log=print):
-    """mode="generated" : le modèle des bras produit chaque geste (émotion, intensité,
-    variante), plusieurs contextes de regard par geste. mode="take" : rejoue des prises."""
+def collect_group(wb: Workbench, kind: str, intensities=(0.3, 0.7, 1.0), reps=1, contexts=None, log=print):
+    """Passage tête ou mains INDÉPENDANT : une prise par (émotion, intensité, contexte,
+    répétition), sans aucun geste des bras ni modèle."""
     cfg = wb.cfg
     contexts = contexts or DEFAULT_CONTEXTS
-    wb.ctrl.hold(cfg.all_joints)
-    wb.ctrl.arm(confirm=True)
-    head_ids = []
-    if mode == "generated":
-        jobs = [{"emotion": e, "intensity": i, "variation": 0.03 if v else 0.0, "seed": v}
-                for e in cfg.emotions for i in intensities for v in range(variants)]
-    else:
-        jobs = list(arm_ids or [])
-    for job in jobs:
-        for ev in contexts:
-            wb.event = ev
-            if mode == "generated":
-                wb.prepare_head_take(generated=job)
-            else:
-                wb.prepare_head_take(job)
-            wb.start_recording(countdown_s=0.3, background=False)
-            head_ids.append(wb.save_recording(status="accepted", notes="synthétique"))
-            wb.ctrl.hold(cfg.head_joints)  # tête raidie sur place (sans déplacement)
-    wb.event = EventContext.none()
-    wb.ctrl.disarm()
-    log(f"  {len(head_ids)} prises de tête enregistrées ({mode})")
-    return head_ids
-
-
-def collect_hands(wb: Workbench, intensities=(0.3, 0.7, 1.0), contexts=None, log=print):
-    """Passage 3 : le modèle des bras produit chaque geste, l'opérateur (ici simulé)
-    pilote l'ouverture des mains depuis l'interface."""
-    cfg = wb.cfg
-    contexts = contexts or DEFAULT_CONTEXTS[:3]
-    wb.ctrl.hold(cfg.all_joints)
-    wb.ctrl.arm(confirm=True)
+    wb.ctrl.hold(cfg.controlled_joints if kind == "hands" else cfg.all_joints)
+    if kind == "hands":
+        wb.ctrl.arm(confirm=True)  # les mains sont pilotées (motorisées)
     ids = []
     for e in cfg.emotions:
         for i in intensities:
             for ev in contexts:
-                wb.event = ev
-                wb.prepare_hands_take(generated={"emotion": e, "intensity": i})
-                wb.start_recording(countdown_s=0.3, background=False)
-                ids.append(wb.save_recording(status="accepted", notes="synthétique"))
+                for _ in range(reps):
+                    wb.event = ev
+                    wb.prepare_take(kind, e, i)
+                    wb.start_recording(countdown_s=0.3, background=False)
+                    ids.append(wb.save_recording(status="accepted", notes="synthétique"))
+                    if kind == "head":
+                        wb.ctrl.hold(cfg.head_joints)  # tête raidie sur place (sans déplacement)
     wb.event = EventContext.none()
     wb.ctrl.disarm()
-    log(f"  {len(ids)} prises de mains enregistrées")
+    log(f"  {len(ids)} prises de {'tête' if kind == 'head' else 'mains'} enregistrées")
     return ids
 
 
-def collect_synthetic(wb: Workbench, reps=2, intensities=(0.3, 0.7, 1.0), head_per_arm=None,
-                      head_contexts=None, log=print):
-    """Collecte bras + têtes sur prises rejouées (sans modèle des bras)."""
+def collect_heads(wb: Workbench, intensities=(0.3, 0.7, 1.0), reps=1, contexts=None, log=print):
+    return collect_group(wb, "head", intensities, reps, contexts, log)
+
+
+def collect_hands(wb: Workbench, intensities=(0.3, 0.7, 1.0), reps=1, contexts=None, log=print):
+    return collect_group(wb, "hands", intensities, reps, contexts or DEFAULT_CONTEXTS[:3], log)
+
+
+def collect_synthetic(wb: Workbench, reps=2, intensities=(0.3, 0.7, 1.0), head_contexts=None, log=print,
+                      hands: bool = False):
+    """Collecte synthétique des trois passages, chacun indépendant."""
     arm_ids = collect_arms(wb, reps, intensities, log=log)
-    targets = arm_ids if head_per_arm is None else arm_ids[:head_per_arm]
-    head_ids = collect_heads(wb, "take", arm_ids=targets, contexts=head_contexts, log=log)
-    return arm_ids, head_ids
+    head_ids = collect_heads(wb, intensities, contexts=head_contexts, log=log)
+    if not hands:
+        return arm_ids, head_ids
+    return arm_ids, head_ids, collect_hands(wb, intensities, log=log)
 
 
 def simulate_calibration(wb: Workbench, sweep_s: float = 25.0, activate_in=None):
@@ -169,10 +152,10 @@ def run_demo(workdir="demo_sim", epochs=None, log=print) -> dict:
         log(f"  exécution simulée : état {wb.ctrl.state.value}")
     wb.ctrl.disarm()
 
-    log("5. Collecte tête : le modèle des bras joue l'émotion, la tête est guidée (simulée)")
-    head_ids = collect_heads(wb, "generated", intensities=(0.3, 0.7, 1.0), variants=2, log=log)
+    log("5. Collecte tête indépendante : la tête est guidée (simulée), bras raides sur place")
+    head_ids = collect_heads(wb, intensities=(0.3, 0.7, 1.0), reps=2, log=log)
 
-    log("6. Entraînement de la tête (bras figés) puis cycle complet avec événement")
+    log("6. Entraînement de la tête seule puis geste combiné bras + tête avec événement")
     job_h = wb.train("head", epochs=epochs, background=False)
     if job_h["state"] != "done":
         raise RuntimeError(job_h["error"])
@@ -191,7 +174,7 @@ def run_demo(workdir="demo_sim", epochs=None, log=print) -> dict:
         log(f"  exécution simulée : état {wb.ctrl.state.value}")
     wb.ctrl.disarm()
 
-    log("7. Collecte mains (ouverture pilotée, simulée), entraînement, cycle complet")
+    log("7. Collecte mains indépendante (ouverture pilotée, simulée), entraînement, geste combiné")
     hand_ids = collect_hands(wb, log=log)
     job_m = wb.train("hands", epochs=epochs, background=False)
     if job_m["state"] != "done":

@@ -5,15 +5,16 @@ representation:
 arm_model:
   hidden: [64, 64]
   dropout: 0.0
-head_model:
-  hidden: [96, 64]
-  dropout: 0.0
-  arm_input: recorded       # recorded (bras mesurés pendant la relecture) | predicted (modèle bras figé)
-hands_model:                # ouverture des mains, conditionnée par le geste des bras (passage 3)
+head_model:                 # indépendant des bras : mêmes entrées (émotion, intensité, événement)
   hidden: [64, 64]
   dropout: 0.0
-  arm_input: recorded
+hands_model:                # ouverture des mains, indépendante des bras
+  hidden: [64, 64]
+  dropout: 0.0
   target: command           # command (consigne donnée par l'opérateur) | measured (capteur de la main)
+combine:                    # assemblage bras + tête + mains à la génération
+  timing: hold              # hold : chaque groupe garde sa durée apprise, les plus courts tiennent leur pose finale
+                            # stretch : tous les groupes étirés sur la durée la plus longue
 training:
   epochs: 800
   lr: 0.01
@@ -21,4 +22,4 @@ training:
   val_fraction: 0.25
   seed: 0
   smoothness_weight: 0.01
-  duration_weight: 0.05     # poids de l erreur sur log(durée) (bras)
+  duration_weight: 0.05     # poids de l erreur sur log(durée)

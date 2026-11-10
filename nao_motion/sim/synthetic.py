@@ -138,12 +138,26 @@ def head_behaviour(cfg: Config, emotion: str, intensity: float, event: EventCont
     close = 1.0 / (1.0 + event.distance_m) if event.present and event.distance_m else 0.4  # proximité
     T = 1.6 - 1.2 * close  # 1,2 s à 1 m environ ; plus vite si proche
     lim = cfg.limits
+    # amplitude visée -> durée minimale pour rester sous ~70 % des limites du guardian
+    # (rampe quintique : vitesse max 1,875 A/T, accélération max 5,77 A/T²) ; la tête
+    # n'est plus calée sur la durée d'un geste des bras, elle a son propre tempo
+    if mode == "event":
+        amp = max(abs(np.clip(event.azimuth_rad, -1.2, 1.2) - start["HeadYaw"]),
+                  abs(-event.elevation_rad - start["HeadPitch"]))
+    elif mode == "avert":
+        amp = 0.4 + 0.75 * close
+    else:
+        amp = 0.4
+    g = cfg.guardian
+    vmax = min(g.velocity_limit(j) for j in cfg.head_joints)
+    amax = min(g.acceleration_limit(j) for j in cfg.head_joints)
+    T = max(T, 1.875 * amp / (0.7 * vmax), np.sqrt(5.77 * amp / (0.7 * amax)))
 
     def clipped(y, p):
         return {"HeadYaw": float(np.clip(y, lim["HeadYaw"][0] + m, lim["HeadYaw"][1] - m)),
                 "HeadPitch": float(np.clip(p, lim["HeadPitch"][0] + m, lim["HeadPitch"][1] - m))}
 
-    def ramp(t, T=1.2):
+    def ramp(t, T):
         x = np.clip(t / T, 0, 1)
         return 10 * x**3 - 15 * x**4 + 6 * x**5
 
@@ -174,8 +188,8 @@ HAND_OPENING = {"joie": 0.85, "surprise": 1.0, "colere": 0.05, "peur": 0.6, "tri
 
 def hand_behaviour(cfg: Config, emotion: str, intensity: float, event: EventContext, duration: float,
                    rng: np.random.Generator):
-    """Opérateur simulé du passage 3 : il pilote l'ouverture des mains pendant que les bras
-    rejouent le geste (fonction de la phase u en s -> {LHand, RHand}). Mains ouvertes pour la
+    """Opérateur simulé du passage mains : il pilote l'ouverture des mains, bras et tête raides
+    (fonction du temps u en s -> {LHand, RHand}). Mains ouvertes pour la
     joie ou la surprise, poings serrés pour la colère ; avec un événement, la main du côté
     de l'événement s'ouvre davantage (geste tendu vers lui). Arbitraire, pour les tests."""
     hj = list(cfg.hand_joints)

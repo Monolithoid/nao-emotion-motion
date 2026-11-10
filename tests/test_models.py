@@ -11,7 +11,8 @@ from nao_motion.config import load_config
 from nao_motion.engine import MotionEngine
 from nao_motion.events import EventContext
 from nao_motion.models.datasets import grouped_split, head_examples
-from nao_motion.models.features import arm_input
+from nao_motion.models.features import arm_input, motion_input_dim
+from nao_motion.training import latest as training_latest
 from nao_motion.models.nets import CheckpointError, LoadedModel, NumpyModel, load_model
 
 
@@ -48,11 +49,41 @@ def test_checkpoint_refuses_incompatible_config(trained, cfg, tmp_path):
         load_model(Path(trained["arm_run"]) / "model.pt", cfg, "head")
 
 
-def test_head_checkpoint_references_frozen_arm_model(trained, cfg):
-    arm_p = Path(trained["arm_run"]) / "model.pt"
+def test_head_model_is_independent_of_arms(trained, cfg, tmp_path):
+    """Le modèle de la tête n'a que [émotion, intensité, événement] en entrée et prédit sa durée."""
     head = LoadedModel(Path(trained["head_run"]) / "model.pt", cfg, "head")
-    arm = LoadedModel(arm_p, cfg, "arms")
-    assert head.meta["arm_checkpoint_digest"] == arm.digest  # modèle des bras inchangé par l'entraînement tête
+    assert head.meta["independent"] is True
+    assert "arm_checkpoint" not in head.meta and "arm_joints" not in head.meta
+    assert head.arch["in_dim"] == motion_input_dim(len(cfg.emotions))
+    assert head.arch["out_dim"] == 8 * len(cfg.head_joints) + 1
+    # un ancien modèle tête (dépendant des bras) est refusé avec un message clair
+    ck = torch.load(Path(trained["head_run"]) / "model.pt", map_location="cpu", weights_only=True)
+    del ck["meta"]["independent"]
+    ck["meta"]["arm_joints"] = cfg.arm_joints
+    old = tmp_path / "old_head.pt"
+    torch.save(ck, old)
+    with pytest.raises(CheckpointError, match="ancien format"):
+        LoadedModel(old, cfg, "head")
+
+
+def test_head_trains_without_any_arm_model(trained, cfg, tmp_path):
+    """Tête entraînée seule : aucune prise ni aucun modèle des bras dans le dossier."""
+    import shutil
+    from .conftest import make_wb
+    src = trained["wb"]
+    wb = make_wb(tmp_path, cfg)
+    for m in src.store.list(kind="head"):
+        shutil.copytree(src.store.dir / m.take_id, wb.store.dir / m.take_id)
+    assert wb.store.list(kind="arms") == [] and training_latest(wb.runs_dir, "arms") is None
+    job = wb.train("head", epochs=30, background=False)
+    assert job["state"] == "done", job["error"]
+    eng = wb.get_engine()
+    assert eng.arm_model is None and eng.head_model is not None
+    g = eng.generate("joie", 0.7, EventContext(True, 0.5, 0.0))
+    # bras maintenus en position de départ, tête générée
+    np.testing.assert_allclose(g.arms.q, np.tile(cfg.pose("start", cfg.arm_joints), (len(g.arms.t), 1)))
+    assert any("bras maintenus" in n for n in g.notes)
+    assert g.head.q.std(axis=0).max() > 0
 
 
 def test_no_leakage_between_train_and_val(trained, cfg):
@@ -62,16 +93,22 @@ def test_no_leakage_between_train_and_val(trained, cfg):
     assert len(va) > 0
     assert not ({ex.groups[i] for i in tr} & {ex.groups[i] for i in va})
     head = LoadedModel(Path(trained["head_run"]) / "model.pt", cfg, "head")
-    train_ids, val_ids = set(head.meta["train_take_ids"]), set(head.meta["val_take_ids"])
-    arm_of = {m.take_id: m.arm_take_id for m in wb.store.list(kind="head")}
-    assert not ({arm_of[t] for t in train_ids} & {arm_of[t] for t in val_ids})
+    assert not set(head.meta["train_take_ids"]) & set(head.meta["val_take_ids"])
 
 
 def test_engine_generates_valid_shapes_and_interpolates(trained, cfg):
     eng = MotionEngine.from_paths(cfg, Path(trained["arm_run"]) / "model.pt", Path(trained["head_run"]) / "model.pt")
     g = eng.generate("joie", 0.7, EventContext(True, 0.5, 0.0))
     assert g.combined.joints == cfg.arm_joints + cfg.head_joints
-    assert abs(g.arms.duration - g.head.duration) < 1e-9  # base temporelle commune
+    assert np.array_equal(g.arms.t, g.head.t)  # base temporelle commune pour la fusion
+    # chaque groupe garde sa durée apprise ; le geste dure autant que le plus long
+    assert set(g.durations) == {"arms", "head"}
+    assert g.duration == pytest.approx(max(g.durations.values()), abs=1e-3)
+    short = min(g.durations, key=g.durations.get)
+    tr = getattr(g, short)
+    after = tr.t >= g.durations[short] + 0.01
+    if after.any():  # le groupe le plus court tient sa pose finale
+        np.testing.assert_allclose(tr.q[after], np.tile(tr.q[after][0], (after.sum(), 1)), atol=1e-9)
     a = eng.generate("joie", 0.7).arm_ctrl
     b = eng.generate("tristesse", 0.7).arm_ctrl
     mid = eng.generate({"joie": 0.5, "tristesse": 0.5}, 0.7).arm_ctrl
@@ -91,6 +128,17 @@ def test_engine_generates_valid_shapes_and_interpolates(trained, cfg):
     assert not np.allclose(h_none, h_front)
 
 
+def test_engine_stretch_timing_and_no_model(trained, cfg):
+    eng = MotionEngine.from_paths(cfg, Path(trained["arm_run"]) / "model.pt", Path(trained["head_run"]) / "model.pt")
+    eng.timing = "stretch"
+    g = eng.generate("joie", 0.7)
+    # étirés : aucun groupe ne tient sa pose avant la fin
+    for tr in (g.arms, g.head):
+        assert np.abs(np.diff(tr.q[-6:-1], axis=0)).max() > 0 or np.ptp(tr.q, axis=0).max() < 1e-6
+    with pytest.raises(CheckpointError):
+        MotionEngine(cfg).generate("joie", 0.5)
+
+
 def test_training_triggers_no_motion(trained):
     wb = trained["wb"]
     n = len(wb.adapter.command_log)
@@ -106,67 +154,58 @@ def test_metrics_report(trained):
         assert k in m
 
 
-def test_head_collection_on_generated_arm_gesture(trained, cfg):
-    """Le modèle des bras joue l'émotion ; on enregistre (émotion/intensité, bras réalisés, tête)."""
-    from nao_motion.data.store import TakeError
-    wb = trained["wb"]
-    arm_path = Path(trained["arm_run"]) / "model.pt"
-    wb.engine = MotionEngine.from_paths(cfg, arm_path)  # modèle des bras de référence (figé)
-    wb.ctrl.acknowledge() if wb.ctrl.state.value != "idle" else None
+def test_head_collection_without_arms(trained, cfg, tmp_path):
+    """Passage tête : seule la tête est relâchée, les bras restent raides sur place,
+    aucune commande n'est envoyée ; ni prise de bras ni modèle requis."""
+    from .conftest import make_wb
+    wb = make_wb(tmp_path, cfg)
     wb.ctrl.hold(cfg.all_joints)
-    wb.ctrl.arm(confirm=True)
-    # le modèle de test est peu entraîné : on retient un geste que le guardian accepte
-    # (un geste refusé n'est jamais exécuté, ce qui est testé ailleurs)
-    from nao_motion.data.representation import decode
-    head_start = dict(zip(cfg.head_joints, cfg.pose("start", cfg.head_joints)))
-
-    def accepted(emo, inten, ev):
-        n, d = wb.engine.plan_arms(emo, inten, event=ev)
-        tr = decode(wb.engine.arm_norm.inv(n), d, cfg.arm_joints, 50)
-        return wb.guardian.validate(tr, context_pose=head_start).ok
-
-    candidates = [EventContext(True, az, el, source="test", distance_m=dist)
-                  for az in (-0.5, 0.5, -0.2, 0.2, 0.0) for el in (0.0, 0.2) for dist in (None, 1.5)]
-    gesture = events = None
-    for emo in cfg.emotions:
-        for inten in (0.3, 0.6, 1.0, 0.45, 0.8):
-            if not accepted(emo, inten, EventContext.none()):
-                continue
-            ev = next((c for c in candidates if accepted(emo, inten, c)), None)
-            if ev is not None:
-                gesture = {"emotion": emo, "intensity": inten, "seed": 3}
-                events = (EventContext.none(), EventContext.none(), ev)
-                break
-        if gesture:
-            break
-    assert gesture is not None
-    ids = []
-    for ev in events:
-        wb.event = ev
-        info = wb.prepare_head_take(generated=gesture)
-        assert info["arm_source"] == "generated"
-        wb.start_recording(countdown_s=0.2, background=False)
-        ids.append(wb.save_recording(status="accepted"))
-        wb.ctrl.hold(cfg.head_joints)
-    wb.ctrl.disarm()
-    m1, m2, m3 = (wb.store.load_meta(i) for i in ids)
-    arm_digest = LoadedModel(arm_path, cfg, "arms").digest
-    assert m1.arm_generation["arm_checkpoint_digest"] == arm_digest
-    assert m1.arm_take_id is None and m1.emotion == gesture["emotion"]
-    assert wb.store.group_id(m1) == wb.store.group_id(m2)  # même geste => même groupe
-    # le modèle des bras reçoit l'événement : autre direction => autre geste, autre groupe
-    assert wb.store.group_id(m1) != wb.store.group_id(m3)
-    ref = wb.store.load_reference(ids[0])
-    take = wb.store.load(ids[0])
-    tt = np.linspace(take.meta.segment[0], take.meta.segment[1], 40)
-    meas = take.traj.select(cfg.arm_joints).sample(tt)
-    assert np.abs(meas - ref.sample(tt)).max() < 0.05  # bras réalisés ≈ consigne générée
+    q_arms = wb.adapter.read_angles(cfg.arm_joints)
+    n = len(wb.adapter.command_log)
+    wb.event = EventContext(True, 0.5, 0.1, source="test", distance_m=1.0)
+    info = wb.prepare_head_take("surprise", 0.8)
+    assert info["kind"] == "head" and "arm_source" not in info
+    assert all(wb.adapter.roles[j] == "guided" for j in cfg.head_joints)
+    assert all(wb.adapter.roles[j] == "driven" for j in cfg.arm_joints)
+    wb.start_recording(countdown_s=0.2, background=False)
+    np.testing.assert_allclose(wb.adapter.read_angles(cfg.arm_joints), q_arms, atol=1e-6)  # bras immobiles
+    assert not any(set(c[1]) & set(cfg.head_joints) for c in wb.adapter.command_log[n:])  # tête jamais commandée
+    hid = wb.save_recording(status="accepted")
+    m = wb.store.load_meta(hid)
+    assert m.kind == "head" and m.joints == cfg.head_joints and m.arm_take_id is None and m.arm_source is None
+    assert m.emotion == "surprise" and m.event["present"] and m.head_initial is not None
+    assert m.segment[1] - m.segment[0] > 0.5  # segment proposé là où la tête bouge
     ex = head_examples(wb.store, cfg)
-    assert ids[0] in ex.take_ids
-    m1.arm_generation = {"emotion": gesture["emotion"]}
-    m1.take_id = m1.take_id + "-copie"
-    with pytest.raises(TakeError):
-        wb.store.save(m1, take.traj)
+    assert ex.take_ids == [hid] and ex.X.shape[1] == motion_input_dim(len(cfg.emotions))
+
+
+def test_legacy_head_takes_on_replayed_arms_still_train(trained, cfg, tmp_path):
+    """Les prises de tête déjà validées, enregistrées sur des bras rejoués (ancien format),
+    restent lisibles et servent à l'entraînement : seules les articulations de la tête sont lues."""
+    from nao_motion.data.store import TakeMeta, new_id
+    from nao_motion.trajectory import Trajectory
+    from .conftest import make_wb
+    from .test_data import arm_take
+    wb = make_wb(tmp_path, cfg)
+    am, atr = arm_take(cfg)
+    am.status = "accepted"
+    wb.store.save(am, atr)
+    j = cfg.arm_joints + cfg.head_joints
+    t = np.linspace(0, 2, 101)
+    q = np.tile(cfg.pose("start", j), (101, 1))
+    q[:, -2] += 0.4 * np.sin(np.pi * t / 2) ** 2  # HeadYaw
+    meta = TakeMeta(take_id=new_id("head"), session_id="s", kind="head", emotion="joie", intensity=0.5, joints=j,
+                    guided_joints=cfg.head_joints, driven_joints=cfg.arm_joints, event=EventContext.none().to_dict(),
+                    calibration_version=cfg.calibration_version, config_fingerprint="x", adapter="test",
+                    sample_rate_hz=50, segment=(0.0, 2.0), arm_take_id=am.take_id, arm_source="take",
+                    arm_gesture_id=am.take_id, status="accepted")
+    wb.store.save(meta, Trajectory(j, t, q))
+    assert wb.store.load(meta.take_id).meta.arm_take_id == am.take_id
+    ex = head_examples(wb.store, cfg)
+    assert ex.take_ids == [meta.take_id]
+    assert ex.Y.shape[1] == 8 * len(cfg.head_joints)
+    job = wb.train("head", epochs=20, background=False)
+    assert job["state"] == "done", job["error"]
 
 
 def test_head_model_with_old_event_encoding_is_refused(trained, cfg, tmp_path):
@@ -207,5 +246,5 @@ def test_arm_model_without_event_is_refused(trained, cfg, tmp_path):
     del ck["meta"]["event_features"]
     old = tmp_path / "old_arms.pt"
     torch.save(ck, old)
-    with pytest.raises(CheckpointError, match="réentraîner les bras"):
+    with pytest.raises(CheckpointError, match="le réentraîner"):
         LoadedModel(old, cfg, "arms")

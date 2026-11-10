@@ -177,14 +177,12 @@
     };
     $("h-random").onclick = async () => {
       const d = await draw("head", $("h-random-none").checked);
-      document.querySelector("input[name=hsrc][value=generated]").checked = true;
       $("h-emotion").value = d.emotion; $("h-intensity").value = d.intensity;
       await applyDraw(d);
       $("h-emotion").oninput();
     };
     $("m-random").onclick = async () => {
       const d = await draw("hands", $("m-random-none").checked);
-      document.querySelector("input[name=msrc][value=generated]").checked = true;
       $("m-emotion").value = d.emotion; $("m-intensity").value = d.intensity;
       await applyDraw(d);
       $("m-emotion").oninput();

@@ -1,4 +1,4 @@
-"""Entraînement des modèles bras et tête, avec métriques et checkpoints.
+"""Entraînement des modèles bras, tête et mains (indépendants), avec métriques et checkpoints.
 
 Les métriques sont calculées sur des trajectoires denses (radians), en
 entraînement et en validation, et comparées à une référence simple « moyenne
@@ -21,8 +21,8 @@ from .data.representation import bspline_basis, decode
 from .data.store import TakeStore
 from .events import EVENT_FEATURES, EventContext
 from .guardian import Guardian
-from .models.datasets import Examples, arm_examples, follower_joints, grouped_split, head_examples
-from .models.features import Norm, arm_input_dim, head_input_dim
+from .models.datasets import Examples, group_examples, group_joints, grouped_split
+from .models.features import Norm, motion_input_dim
 from .models.nets import LoadedModel, build, save_checkpoint
 
 
@@ -123,100 +123,77 @@ def _evaluate(model, ex, tr, va, norm, K, predict_duration):
     return m
 
 
-def train_arms(store: TakeStore, cfg: Config, runs_dir, statuses=("accepted",), epochs: Optional[int] = None,
-               log=None) -> Path:
-    K = int(cfg.model["representation"]["n_control_points"])
-    J = len(cfg.arm_joints)
-    ex = arm_examples(store, cfg, statuses)
-    if len(ex) == 0:
-        raise TrainingError("Aucune prise de bras utilisable (statut 'accepted' requis par défaut)")
-    tcfg = dict(cfg.model["training"])
-    if epochs:
-        tcfg["epochs"] = epochs
-    tr, va, val_groups = grouped_split(ex.groups, float(tcfg["val_fraction"]), int(tcfg["seed"]))
-    mc = cfg.model["arm_model"]
-    assert ex.X.shape[1] == arm_input_dim(len(cfg.emotions))
-    arch = {"in_dim": ex.X.shape[1], "out_dim": K * J + 1, "hidden": list(mc["hidden"]),
-            "dropout": float(mc.get("dropout", 0)), "latent_dim": 0}
-    model, hist = _fit(ex, tr, va, arch, K, J, tcfg, True, log)
-    norm = Norm.from_config(cfg, cfg.arm_joints)
-    metrics = _evaluate(model, ex, tr, va, norm, K, True)
-    run = _run_dir(runs_dir, "arms")
-    meta = _meta(cfg, "arms", cfg.arm_joints, norm, K, ex, tr, va, tcfg)
-    meta["synthetic_data"] = any(store.load_meta(t).synthetic for t in ex.take_ids)
-    meta.update({"event_features": EVENT_FEATURES,
-                 "inputs": ["emotion", "intensity", "event[present,sin_az,cos_az,elev,dist_known,proximity]"]})
-    meta["metrics"] = metrics
-    save_checkpoint(run / "model.pt", model, component="arms", arch=arch, meta=meta)
-    loaded = LoadedModel(run / "model.pt", cfg, "arms")
-    loaded.export_numpy(run / "model_numpy.npz")
-    metrics["guardian"] = _guardian_sweep(cfg, arm_model=loaded)
-    _write_report(run, metrics, hist, meta)
-    (Path(runs_dir) / "latest_arms.txt").write_text(run.name)
-    return run
+COMPONENTS = ("arms", "head", "hands")
+_NO_TAKES = {"arms": "Aucune prise de bras utilisable (statut 'accepted' requis par défaut)",
+             "head": "Aucune prise de tête utilisable (statut 'accepted' requis par défaut)",
+             "hands": "Aucune prise de mains utilisable (statut 'accepted' requis par défaut)"}
 
 
-def train_head(store: TakeStore, cfg: Config, runs_dir, arm_checkpoint, statuses=("accepted",),
-               epochs: Optional[int] = None, log=None) -> Path:
-    """Entraîne la tête ; le modèle des bras est chargé et FIGÉ (aucun gradient)."""
-    return train_follower("head", store, cfg, runs_dir, arm_checkpoint, statuses, epochs, log)
+def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, statuses=("accepted",),
+                    epochs: Optional[int] = None, log=None) -> Path:
+    """Entraîne UN groupe (bras, tête ou mains), indépendamment des deux autres.
 
-
-def train_hands(store: TakeStore, cfg: Config, runs_dir, arm_checkpoint, statuses=("accepted",),
-                epochs: Optional[int] = None, log=None) -> Path:
-    """Entraîne l'ouverture des mains (passage 3) ; le modèle des bras est FIGÉ."""
-    return train_follower("hands", store, cfg, runs_dir, arm_checkpoint, statuses, epochs, log)
-
-
-def train_follower(component: str, store: TakeStore, cfg: Config, runs_dir, arm_checkpoint, statuses=("accepted",),
-                   epochs: Optional[int] = None, log=None) -> Path:
-    """Tête ou mains, sur la phase du geste des bras ; le modèle des bras est FIGÉ."""
-    if component not in ("head", "hands"):
+    Entrée : [émotion, intensité, événement] ; sortie : points de contrôle du groupe
+    et log de sa durée. Aucun autre modèle n'est requis ni chargé."""
+    if component not in COMPONENTS:
         raise ValueError(component)
     K = int(cfg.model["representation"]["n_control_points"])
-    fj = follower_joints(cfg, component)
-    if not fj:
+    joints = group_joints(cfg, component)
+    if not joints:
         raise TrainingError("Aucune main configurée (joints.yaml, section hands)")
-    J = len(fj)
-    arm = LoadedModel(arm_checkpoint, cfg, "arms")
-    for p in arm.model.parameters():
-        p.requires_grad_(False)
+    J = len(joints)
     mc = cfg.model.get(f"{component}_model") or cfg.model["head_model"]
-    source = mc.get("arm_input", "recorded")
+    if component == "arms":
+        mc = cfg.model["arm_model"]
     target = mc.get("target", "measured") if component == "hands" else "measured"
-    ex = head_examples(store, cfg, statuses, source, arm, kind=component, target=target)
+    ex = group_examples(store, cfg, component, statuses, target)
     if len(ex) == 0:
-        raise TrainingError("Aucune prise de tête utilisable" if component == "head" else
-                            "Aucune prise de mains utilisable (passage 3, statut 'accepted' requis par défaut)")
+        raise TrainingError(_NO_TAKES[component])
     tcfg = dict(cfg.model["training"])
     if epochs:
         tcfg["epochs"] = epochs
     tr, va, _ = grouped_split(ex.groups, float(tcfg["val_fraction"]), int(tcfg["seed"]))
-    in_dim = head_input_dim(len(cfg.emotions), K, len(cfg.arm_joints), J)
+    in_dim = motion_input_dim(len(cfg.emotions))
     assert ex.X.shape[1] == in_dim
-    arch = {"in_dim": in_dim, "out_dim": K * J, "hidden": list(mc["hidden"]),
+    arch = {"in_dim": in_dim, "out_dim": K * J + 1, "hidden": list(mc["hidden"]),
             "dropout": float(mc.get("dropout", 0)), "latent_dim": 0}
-    model, hist = _fit(ex, tr, va, arch, K, J, tcfg, False, log)
-    norm = Norm.from_config(cfg, fj)
-    metrics = _evaluate(model, ex, tr, va, norm, K, False)
+    model, hist = _fit(ex, tr, va, arch, K, J, tcfg, True, log)
+    norm = Norm.from_config(cfg, joints)
+    metrics = _evaluate(model, ex, tr, va, norm, K, True)
     run = _run_dir(runs_dir, component)
-    meta = _meta(cfg, component, fj, norm, K, ex, tr, va, tcfg)
+    meta = _meta(cfg, component, joints, norm, K, ex, tr, va, tcfg)
     meta["synthetic_data"] = any(store.load_meta(t).synthetic for t in ex.take_ids)
-    meta.update({"arm_joints": cfg.arm_joints, "arm_checkpoint": str(arm_checkpoint),
-                 "event_features": EVENT_FEATURES,
-                 "arm_checkpoint_digest": arm.digest, "arm_input": source,
-                 "inputs": ["emotion", "intensity", "arm_ctrl_norm", "arm_log_duration",
-                            f"{component}_current_norm", "event[present,sin_az,cos_az,elev,dist_known,proximity]"]})
+    meta.update({"event_features": EVENT_FEATURES, "independent": True,
+                 "inputs": ["emotion", "intensity", "event[present,sin_az,cos_az,elev,dist_known,proximity]"],
+                 "outputs": [f"{component}_ctrl_norm", "log_duration"]})
     if component == "hands":
         meta.update({"unit": "opening[0=closed,1=open]", "target": target})
     meta["metrics"] = metrics
     save_checkpoint(run / "model.pt", model, component=component, arch=arch, meta=meta)
     loaded = LoadedModel(run / "model.pt", cfg, component)
     loaded.export_numpy(run / "model_numpy.npz")
-    metrics["guardian"] = _guardian_sweep(cfg, arm_model=arm, **{f"{component}_model": loaded})
+    metrics["guardian"] = _guardian_sweep(cfg, **{_ENGINE_ARG[component]: loaded})
     _write_report(run, metrics, hist, meta)
     (Path(runs_dir) / f"latest_{component}.txt").write_text(run.name)
     return run
+
+
+_ENGINE_ARG = {"arms": "arm_model", "head": "head_model", "hands": "hands_model"}
+
+
+def train_arms(store: TakeStore, cfg: Config, runs_dir, statuses=("accepted",), epochs: Optional[int] = None,
+               log=None) -> Path:
+    return train_component("arms", store, cfg, runs_dir, statuses, epochs, log)
+
+
+def train_head(store: TakeStore, cfg: Config, runs_dir, statuses=("accepted",), epochs: Optional[int] = None,
+               log=None) -> Path:
+    return train_component("head", store, cfg, runs_dir, statuses, epochs, log)
+
+
+def train_hands(store: TakeStore, cfg: Config, runs_dir, statuses=("accepted",), epochs: Optional[int] = None,
+                log=None) -> Path:
+    return train_component("hands", store, cfg, runs_dir, statuses, epochs, log)
 
 
 def _meta(cfg, component, joints, norm, K, ex, tr, va, tcfg):
@@ -226,12 +203,13 @@ def _meta(cfg, component, joints, norm, K, ex, tr, va, tcfg):
             "norm": norm.to_dict(), "calibration_version": cfg.calibration_version,
             "config_fingerprint": cfg.fingerprint(),
             "train_take_ids": [ex.take_ids[i] for i in tr], "val_take_ids": [ex.take_ids[i] for i in va],
-            "split": "par groupe (prise de bras source)", "training": tcfg,
+            "split": "par groupe (prise ; anciennes prises tête/mains : geste des bras rejoué)", "training": tcfg,
             "synthetic_data": None}  # renseigné par l'appelant
 
 
-def _guardian_sweep(cfg, arm_model, head_model=None, intensities=(0.2, 0.5, 0.8, 1.0), hands_model=None):
-    """Taux de trajectoires générées acceptées par le guardian (geste seul), sur une grille."""
+def _guardian_sweep(cfg, arm_model=None, head_model=None, intensities=(0.2, 0.5, 0.8, 1.0), hands_model=None):
+    """Taux de gestes générés acceptés par le guardian, sur une grille. Les groupes sans
+    modèle restent en position de départ (ce qui est évalué : le ou les modèles fournis)."""
     from .engine import MotionEngine
     eng = MotionEngine(cfg, arm_model, head_model, hands_model=hands_model)
     g = Guardian(cfg)
@@ -243,9 +221,7 @@ def _guardian_sweep(cfg, arm_model, head_model=None, intensities=(0.2, 0.5, 0.8,
         for i in intensities:
             for ev in events:
                 gen = eng.generate(e, i, ev)
-                traj = gen.combined if (head_model or hands_model) else gen.arms
-                ctx = None if head_model else dict(zip(cfg.head_joints, cfg.pose("start", cfg.head_joints)))
-                rep = g.validate(traj, context_pose=ctx)
+                rep = g.validate(gen.combined)
                 total += 1
                 ok += rep.ok
                 for v in rep.violations:

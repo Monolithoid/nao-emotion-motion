@@ -2,7 +2,7 @@
 // Onglet 3 · Mains : ouverture des doigts de NAO (LHand, RHand), de 0 (fermée) à 1 (ouverte).
 // Une main de NAO ne se guide pas à la main : on la pilote d'ici, par les curseurs, les
 // boutons ou le clavier (↑ ↓ O F dans l'onglet Mains).
-//   - pendant le passage 3 (compte à rebours ou enregistrement), chaque réglage est envoyé
+//   - pendant le passage mains (compte à rebours ou enregistrement), chaque réglage est envoyé
 //     en continu et suivi en direct par la boucle d'enregistrement ;
 //   - sinon, un réglage = un mouvement court validé par le guardian, envoyé au relâchement
 //     du curseur (contrôleur armé requis : « Mouvements autorisés »).
@@ -63,7 +63,7 @@
 
   for (const j of HANDS) {
     const s = slider(j);
-    s.addEventListener("input", () => setHands(linked(j, s.value)));            // en direct pendant le passage 3
+    s.addEventListener("input", () => setHands(linked(j, s.value)));            // en direct pendant le passage mains
     s.addEventListener("change", () => { if (!recording()) setHands(linked(j, s.value), {commit: true}); });
     show(j);
   }

@@ -1,13 +1,10 @@
 """Petits réseaux PyTorch (MLP) et rechargement des checkpoints.
 
-Modèle des bras : [émotion, intensité, événement] -> [points de contrôle (K×Ja), log durée].
-Modèle de la tête : [émotion, intensité, bras planifiés, tête actuelle, événement]
-                    -> points de contrôle de la tête (K×Jh), sur la MÊME phase que
-                    les bras (même durée), ce qui permet d'apprendre anticipation
-                    ou retard par rapport au geste des bras.
-Modèle des mains : même forme que la tête, [..., ouverture actuelle des mains, ...]
-                    -> ouverture des mains (K×2, 0 fermée .. 1 ouverte), sur la
-                    phase des bras : la main s'ouvre au bon moment du geste.
+Trois modèles INDÉPENDANTS, de même entrée [émotion, intensité, événement (6)] :
+  bras  -> [points de contrôle (K×Ja), log durée]
+  tête  -> [points de contrôle (K×Jh), log durée]
+  mains -> [ouverture des mains (K×2, 0 fermée .. 1 ouverte), log durée]
+Chacun s'entraîne seul ; le moteur combine leurs sorties en un geste unique.
 
 Référence déterministe : une régression par moindres carrés produit la MOYENNE
 des gestes portant la même étiquette. Si « joie » a été démontrée de deux
@@ -119,13 +116,12 @@ class LoadedModel:
         expected = {"arms": cfg.arm_joints, "head": cfg.head_joints, "hands": cfg.hand_joints}.get(self.component)
         if m["joints"] != expected:
             raise CheckpointError("Articulations du modèle différentes de la configuration")
-        if self.component in ("head", "hands") and m["arm_joints"] != cfg.arm_joints:
-            raise CheckpointError(f"Articulations des bras du modèle {self.component} différentes de la configuration")
-        if self.component == "arms" and m.get("event_features", 0) != EVENT_FEATURES:
-            raise CheckpointError("Modèle des bras entraîné sans l'événement (angle, distance) : "
-                                  "réentraîner les bras, puis la tête")
-        if self.component in ("head", "hands") and m.get("event_features", 4) != EVENT_FEATURES:
-            raise CheckpointError("Encodage de l'événement différent (distance ajoutée) : réentraîner le modèle de la tête")
+        name = {"arms": "des bras", "head": "de la tête", "hands": "des mains"}.get(self.component, self.component)
+        if self.component in ("head", "hands") and not m.get("independent"):
+            raise CheckpointError(f"Modèle {name} de l'ancien format (il dépendait du modèle des bras) : "
+                                  "le réentraîner, il n'a plus besoin des bras")
+        if m.get("event_features", 0) != EVENT_FEATURES:
+            raise CheckpointError(f"Modèle {name} entraîné sans l'événement complet (angle, distance) : le réentraîner")
         if m["calibration_version"] != cfg.calibration_version:
             self.warnings.append(f"Calibration différente : modèle {m['calibration_version']}, "
                                  f"config {cfg.calibration_version}")
