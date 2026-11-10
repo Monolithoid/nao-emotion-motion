@@ -101,42 +101,28 @@ def test_guided_joint_cannot_be_commanded(wb, cfg):
         wb.adapter.read_angles(["LKneePitch"])
 
 
-def test_head_take_synchronised_with_arm_replay(wb, cfg):
-    """La prise de tête conserve les bras mesurés pendant la relecture ; le segment
-    correspond exactement à la fenêtre de relecture sur la même horloge."""
-    meta, tr = arm_take(cfg, duration=2.5, n=126)
-    meta.status = "accepted"
-    wb.store.save(meta, tr)
+def test_head_pass_releases_only_head_without_motion(wb, cfg):
+    """Passage tête : aucun geste des bras requis ; la tête est relâchée, les bras restent
+    raides sur leur posture mesurée, rien n'est envoyé aux moteurs."""
     wb.ctrl.hold(cfg.all_joints)
-    wb.ctrl.arm(confirm=True)
     wb.event = EventContext(True, 0.5, 0.0, source="test")
-    wb.prepare_head_take(meta.take_id)
+    q_arms = wb.adapter.read_angles(cfg.arm_joints)
+    n = len(wb.adapter.command_log)
+    wb.prepare_head_take("joie", 0.6)
     rec = wb.recording
     assert isinstance(rec, HeadRecording)
     assert all(wb.adapter.roles[j] == "guided" for j in cfg.head_joints)
     assert all(wb.adapter.roles[j] == "driven" for j in cfg.arm_joints)
-    wb.start_recording(countdown_s=0.5, background=False)
-    res = rec.result
-    assert res.complete
-    s0, s1 = res.segment
-    assert abs((s1 - s0) - rec.replay.duration) < 1e-6
-    # bras mesurés dans le segment ≈ relecture (latence du simulateur comprise)
-    tt = np.linspace(s0, s1, 50)
-    meas = res.traj.select(cfg.arm_joints).sample(tt)
-    ref = rec.replay.sample(tt - s0)
-    assert np.abs(meas - ref).max() < 0.05
-    head_id = wb.save_recording(status="accepted")
-    hm = wb.store.load_meta(head_id)
-    assert hm.arm_take_id == meta.take_id and hm.kind == "head"
-    assert hm.event["present"] and hm.segment == (s0, min(s1, res.traj.t[-1]))
-    assert set(hm.guided_joints) == set(cfg.head_joints)
-    # 2e contexte de regard sur le même mouvement des bras
-    wb.ctrl.hold(cfg.head_joints)
-    wb.event = EventContext.none()
-    wb.prepare_head_take(meta.take_id)
     wb.start_recording(countdown_s=0.2, background=False)
-    wb.save_recording(status="accepted")
-    assert len(wb.store.head_takes_for(meta.take_id)) == 2
+    assert rec.result.complete and rec.result.traj.joints == cfg.head_joints
+    # bras seulement maintenus sur leur posture mesurée : aucune consigne ne les déplace
+    for _, joints, angles in wb.adapter.command_log[n:]:
+        assert not set(joints) & set(cfg.head_joints)
+        np.testing.assert_allclose(angles[:len(cfg.arm_joints)], q_arms, atol=1e-6)
+    np.testing.assert_allclose(wb.adapter.read_angles(cfg.arm_joints), q_arms, atol=1e-6)
+    hm = wb.store.load_meta(wb.save_recording(status="accepted"))
+    assert hm.kind == "head" and hm.arm_take_id is None and hm.event["present"]
+    assert set(hm.guided_joints) == set(cfg.head_joints)
 
 
 def test_refused_plan_is_never_executed(wb, cfg):
@@ -185,45 +171,3 @@ def test_rest_outside_motion_zone_is_allowed(tmp_path):
     wb.adapter.q[j] = wb.adapter.target[j] = hi + 0.2
     plan = wb.ctrl.plan_cycle(gesture(cfg, amp=1.5))
     assert not plan.report.ok and any(v.code == "limit" for v in plan.report.violations)
-
-
-def test_replay_guardian_can_be_disabled_for_head_pass(wb, cfg, monkeypatch):
-    """Guardian au rejeu désactivé (opérateur à côté du robot) : la relecture refusée par le
-    guardian est quand même préparée et enregistrée ; réactivé, elle est de nouveau refusée.
-    La génération / exécution de plans reste protégée."""
-    from nao_motion.guardian import GuardianRejection
-    from nao_motion.ui.server import Api
-    meta, tr = arm_take(cfg, duration=2.5, n=126)
-    meta.status = "accepted"
-    wb.store.save(meta, tr)
-    wb.ctrl.hold(cfg.all_joints)
-    wb.ctrl.arm(confirm=True)
-    monkeypatch.setattr(cfg.guardian, "max_velocity_rad_s", 1e-3)  # tout geste devient trop rapide
-    monkeypatch.setattr(cfg.guardian, "per_joint_velocity_rad_s", {})
-    api = Api(wb)
-    assert api.get_status({})["replay_guardian"] is True
-    with pytest.raises(GuardianRejection):
-        wb.prepare_head_take(meta.take_id)
-    assert wb.ctrl.state == State.IDLE
-    st = api.post_guardian_replay({"enabled": False})
-    assert st["replay_guardian"] is False
-    info = wb.prepare_head_take(meta.take_id)
-    assert info["guardian_replay"] is False
-    assert any("DÉSACTIVÉ" in e for e in wb.ctrl.events)
-    wb.start_recording(countdown_s=0.2, background=False)
-    assert wb.recording.result.complete
-    # pendant un enregistrement on ne bascule pas ; ensuite on réactive
-    api.post_guardian_replay({"enabled": True})
-    wb.ctrl.hold(cfg.head_joints)
-    with pytest.raises(GuardianRejection):
-        wb.prepare_head_take(meta.take_id)
-    # les plans (génération / exécution) ne sont jamais contournés, même guardian au rejeu désactivé
-    api.post_guardian_replay({"enabled": False})
-    j = cfg.arm_joints
-    q = np.array(cfg.pose("start", j))
-    fast = Trajectory(j, [0.0, 0.1], [q, q + 0.3])
-    from nao_motion.control.controller import Plan
-    bad = Plan(fast, [("x", 0.0, 0.1)], wb.guardian.validate(fast, check_duration=False))
-    assert not bad.report.ok
-    with pytest.raises(GuardianRejection):
-        wb.ctrl.execute(bad)

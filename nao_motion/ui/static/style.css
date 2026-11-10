@@ -79,5 +79,3 @@ button.next{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,va
 .hand-row output{min-width:3em;font-variant-numeric:tabular-nums;font-weight:600}
 .cal-files table{border-collapse:collapse;width:100%}.cal-files td,.cal-files th{border-top:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}
 .cal-files tr.is-active td{font-weight:600}.cal-files .why{color:var(--bad)}
-.guard-off{background:var(--bad);color:#fff;padding:6px 16px;font-weight:600}.guard-off:empty{display:none}
-label.guard{margin-left:8px}

@@ -50,12 +50,6 @@ async function refreshStatus() {
     (STATUS.event.present ? ` · événement az ${(STATUS.event.azimuth_rad * 180 / Math.PI).toFixed(0)}° el ${(STATUS.event.elevation_rad * 180 / Math.PI).toFixed(0)}°` +
       (STATUS.event.distance_m != null ? ` à ${(+STATUS.event.distance_m).toFixed(2)} m` : "") : " · aucun événement");
   $("armed").checked = STATUS.armed;
-  const guardOn = STATUS.replay_guardian !== false;
-  $("replay-guardian").checked = guardOn;
-  $("guard-off").textContent = guardOn ? "" :
-    "⚠ Guardian DÉSACTIVÉ pour le rejeu (passages 2 Tête et 3 Mains) : le geste rejoué et l'approche ne sont plus " +
-    "bloqués par les limites calibrées ni par les vitesses. Restez à côté du robot, prêt à le retenir ou à appuyer sur ARRÊT. " +
-    "Génération, exécution de plans et export restent protégés.";
   const w = [];
   if (!STATUS.calibrated || !STATUS.poses_calibrated) w.push("Aucune calibration active (onglet Calibration) : limites de remplacement, exécution réelle refusée.");
   if (STATUS.sim_demonstration) w.push("Simulation : un démonstrateur SYNTHÉTIQUE remplace votre main ; les prises sont marquées comme synthétiques.");
@@ -104,20 +98,18 @@ function updateConsigne() {
   const ev = window.FOV && window.FOV.current();
   $("a-consigne").textContent = `${label($("a-emotion").value)} — ${fmtInt($("a-intensity").value)}` + ($("a-intention").value ? ` (${$("a-intention").value})` : "") +
     (ev ? ` · ${window.FOV.describe(ev)}` : "");
+  // tête et mains : même consigne (émotion, intensité, événement), passages indépendants
+  for (const p of ["h", "m"]) {
+    $(p + "-int-val").textContent = fmtInt($(p + "-intensity").value);
+    $(p + "-consigne").textContent = `${label($(p + "-emotion").value)} — ${fmtInt($(p + "-intensity").value)}` +
+      (ev ? ` · ${window.FOV.describe(ev)}` : "");
+  }
 }
 
 // ---- prises ----------------------------------------------------------------------
 let TAKES = [];
 async function loadTakes() {
   TAKES = await api("takes" + ($("t-kind").value ? "?kind=" + $("t-kind").value : ""));
-  const all = await api("takes");
-  const armOpts = all.filter((m) => m.kind === "arms" && m.status !== "rejected")
-    .map((m) => `<option value="${m.take_id}">${label(m.emotion)} ${fmtInt(m.intensity)} · ${m.take_id} · ${m.status}</option>`).join("");
-  for (const id of ["h-arm", "m-arm"]) {
-    const sel = $(id), prev = sel.value;
-    sel.innerHTML = armOpts;
-    if (prev) sel.value = prev;
-  }
   $("t-table").innerHTML = "<tr><th>Prise</th><th>Type</th><th>Émotion</th><th>Int.</th><th>Durée</th><th>Événement</th><th>Statut</th><th>Notes</th></tr>" +
     TAKES.map((m) => `<tr class="clickable" data-id="${m.take_id}"><td>${m.take_id}${m.synthetic ? " <span class='tag'>synth</span>" : ""}</td><td>${m.kind}</td><td>${label(m.emotion)}</td>` +
       `<td>${fmtInt(m.intensity)}</td><td>${m.duration_s.toFixed(1)} s</td><td>${m.event.present ? `az ${(m.event.azimuth_rad * 180 / Math.PI).toFixed(0)}° el ${(m.event.elevation_rad * 180 / Math.PI).toFixed(0)}°` + (m.event.distance_m != null ? ` ${(+m.event.distance_m).toFixed(2)} m` : "") : "aucun"}</td>` +
@@ -134,7 +126,6 @@ async function loadTakes() {
     h += "</table>";
   }
   $("stats").innerHTML = h;
-  showArmForHead();
 }
 
 async function openTake(id) {
@@ -148,7 +139,7 @@ async function openTake(id) {
     (m.event.distance_m != null ? `, ${(+m.event.distance_m).toFixed(2)} m` : ", distance inconnue") + " (repère torse)" : "aucun événement";
   $("t-info").textContent = `session ${m.session_id} · ${m.n_samples} échantillons · ${m.sample_rate_hz} Hz · segment ${m.segment.map((x) => x.toFixed(2)).join("–")} s · calibration ${m.calibration_version}\n` +
     `guidées : ${m.guided_joints.join(", ")} · pilotées : ${m.driven_joints.join(", ") || "—"} · ${ev}` +
-    (m.arm_take_id ? `\nprise de bras rejouée : ${m.arm_take_id}` : "") +
+    (m.arm_take_id || m.arm_source ? `\nancienne prise enregistrée sur des bras rejoués${m.arm_take_id ? " : " + m.arm_take_id : " (geste généré)"} — seules les articulations ${m.kind === "head" ? "de la tête" : "des mains"} servent à l'entraînement` : "") +
     (currentTake.head_takes.length ? `\n${currentTake.head_takes.length} prise(s) de tête sur ce mouvement` : "") +
     ((currentTake.hand_takes || []).length ? `\n${currentTake.hand_takes.length} prise(s) de mains sur ce mouvement` : "") +
     (currentTake.replay ? `\nrelecture (guardian) : ${currentTake.replay.guardian.ok ? "acceptée" : "refusée " + JSON.stringify(currentTake.replay.guardian.violations)}` : "");
@@ -165,17 +156,6 @@ function animate(el, t0, t1) {
     if (t < t1) requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
-}
-
-async function showArmForHead() {
-  const id = $("h-arm").value;
-  if (!id) { $("h-arm-plot").innerHTML = ""; return; }
-  const tk = await api("takes/" + id);
-  plot($("h-arm-plot"), tk.t, cols(tk.q), tk.meta.joints, {segment: tk.meta.segment});
-  $("h-arm-info").textContent = `${tk.head_takes.length} contexte(s) de tête déjà enregistré(s) · démonstration faite avec : ` +
-    (window.FOV ? window.FOV.describe(tk.meta.event) : (tk.meta.event.present ? "un événement" : "aucun événement"));
-  if (document.querySelector("input[name=hsrc]:checked").value === "take")
-    $("h-consigne").textContent = `${label(tk.meta.emotion)} — ${fmtInt(tk.meta.intensity)} (démonstration rejouée)`;
 }
 
 // ---- entraînement ---------------------------------------------------------------
@@ -216,12 +196,8 @@ async function init() {
   CFG = await api("config");
   const opts = CFG.emotions.map((e) => `<option value="${e.id}">${e.label}</option>`).join("");
   $("a-emotion").innerHTML = opts; $("g-emotion").innerHTML = opts; $("h-emotion").innerHTML = opts; $("m-emotion").innerHTML = opts;
-  const hcons = () => { $("h-int-val").textContent = fmtInt($("h-intensity").value);
-    if (document.querySelector("input[name=hsrc]:checked").value === "generated")
-      $("h-consigne").textContent = `${label($("h-emotion").value)} — ${fmtInt($("h-intensity").value)} (geste généré)`; else showArmForHead(); };
-  ["h-emotion", "h-intensity"].forEach((id) => $(id).oninput = hcons);
-  document.querySelectorAll("input[name=hsrc]").forEach((r) => r.onchange = hcons);
-  hcons(); $("g-emotion2").innerHTML += opts;
+  ["h-emotion", "h-intensity", "m-emotion", "m-intensity"].forEach((id) => $(id).oninput = updateConsigne);
+  $("g-emotion2").innerHTML += opts;
   $("a-intention").innerHTML += CFG.intentions.map((i) => `<option>${i}</option>`).join("");
   ["a-emotion", "a-intensity", "a-intention"].forEach((id) => $(id).oninput = updateConsigne);
   $("g-intensity").oninput = () => $("g-int-val").textContent = fmtInt($("g-intensity").value);
@@ -235,10 +211,6 @@ async function init() {
   });
   $("stop").onclick = () => api("stop", {});
   // sans confirmation (préférence de l'opérateur) : avertissement permanent en haut de page
-  $("replay-guardian").onchange = async (e) => {
-    await api("guardian_replay", {enabled: e.target.checked}).catch(() => {});
-    refreshStatus();
-  };
   $("armed").onchange = async (e) => {
     const on = e.target.checked;
     if (on && !window.confirm("Autoriser les mouvements motorisés ? Chaque mouvement restera déclenché par un bouton explicite.")) { e.target.checked = false; return; }
@@ -255,39 +227,24 @@ async function init() {
   $("a-pending").onclick = () => saveDraft("arms", "pending");
   $("a-reject").onclick = () => saveDraft("arms", "rejected");
   $("a-retry").onclick = async () => { await saveDraft("arms", "rejected"); $("a-prepare").onclick(); };
-  // tête
-  $("h-arm").onchange = showArmForHead;
-  // pas de confirmation : l'avertissement de la page (#h-alert) la remplace
+  // tête (indépendante des bras) ; pas de confirmation : l'avertissement de la page (#h-alert) la remplace
   $("h-prepare").onclick = () =>
-    api("record/prepare", document.querySelector("input[name=hsrc]:checked").value === "generated"
-      ? {kind: "head", confirm: true, generated: {emotion: $("h-emotion").value, intensity: parseFloat($("h-intensity").value),
-          variation: parseFloat($("h-var").value), seed: parseInt($("h-seed").value)}}
-      : {kind: "head", arm_take_id: $("h-arm").value, confirm: true}).then(() => { draftShown = null; });
+    api("record/prepare", {kind: "head", emotion: $("h-emotion").value, intensity: parseFloat($("h-intensity").value), confirm: true})
+      .then(() => { draftShown = null; });
   $("h-start").onclick = () => api("record/start", {});
-  $("h-stop").onclick = () => api("stop", {});
+  $("h-stop").onclick = () => api("record/stop", {});
   $("h-hold").onclick = () => api("hold", {groups: ["head"]});
   $("h-accept").onclick = () => saveDraft("head", "accepted");
   $("h-pending").onclick = () => saveDraft("head", "pending");
   $("h-reject").onclick = () => saveDraft("head", "rejected");
   $("h-retry").onclick = async () => { await saveDraft("head", "rejected"); $("h-prepare").onclick(); };
-  // mains (passage 3) : curseurs et clavier dans hands.js
-  const mcons = () => { $("m-int-val").textContent = fmtInt($("m-intensity").value);
-    const take = document.querySelector("input[name=msrc]:checked").value === "take";
-    const opt = $("m-arm").selectedOptions[0];
-    $("m-consigne").textContent = take ? (opt ? `${opt.textContent.split(" · ")[0]} (démonstration rejouée)` : "Aucune prise de bras")
-      : `${label($("m-emotion").value)} — ${fmtInt($("m-intensity").value)} (geste généré)`; };
-  ["m-emotion", "m-intensity", "m-arm"].forEach((id) => $(id).oninput = mcons);
-  $("m-arm").onchange = mcons;
-  document.querySelectorAll("input[name=msrc]").forEach((r) => r.onchange = mcons);
-  mcons();
+  // mains (indépendantes des bras) : curseurs et clavier dans hands.js
   // pas de confirmation : l'avertissement de la page (#m-alert) la remplace
   $("m-prepare").onclick = () =>
-    api("record/prepare", document.querySelector("input[name=msrc]:checked").value === "generated"
-      ? {kind: "hands", confirm: true, generated: {emotion: $("m-emotion").value, intensity: parseFloat($("m-intensity").value),
-          variation: parseFloat($("m-var").value), seed: parseInt($("m-seed").value)}}
-      : {kind: "hands", arm_take_id: $("m-arm").value, confirm: true}).then(() => { draftShown = null; });
+    api("record/prepare", {kind: "hands", emotion: $("m-emotion").value, intensity: parseFloat($("m-intensity").value), confirm: true})
+      .then(() => { draftShown = null; });
   $("m-start").onclick = () => api("record/start", {});
-  $("m-stop").onclick = () => api("stop", {});
+  $("m-stop").onclick = () => api("record/stop", {});
   $("m-hold").onclick = () => api("hold", {});
   $("m-accept").onclick = () => saveDraft("hands", "accepted");
   $("m-pending").onclick = () => saveDraft("hands", "pending");
@@ -310,8 +267,6 @@ async function init() {
   $("t-accept").onclick = () => upd({status: "accepted"});
   $("t-reject").onclick = () => upd({status: "rejected"});
   $("t-save-notes").onclick = () => upd({notes: $("t-notes").value});
-  $("t-use-hands").onclick = () => { if (currentTake.meta.kind !== "arms") return alert("Choisir une prise de bras"); document.querySelector("nav button[data-tab=hands]").click(); setTimeout(() => { document.querySelector("input[name=msrc][value=take]").checked = true; $("m-arm").value = currentTake.meta.take_id; $("m-arm").onchange(); }, 300); };
-  $("t-use-head").onclick = () => { if (currentTake.meta.kind !== "arms") return alert("Choisir une prise de bras"); document.querySelector("nav button[data-tab=head]").click(); setTimeout(() => { $("h-arm").value = currentTake.meta.take_id; showArmForHead(); }, 300); };
   // entraînement
   const train = (c) => api("train", {component: c, epochs: parseInt($("tr-epochs").value), include_pending: $("tr-pending").checked}).then(refreshTrain);
   $("tr-arms").onclick = () => train("arms"); $("tr-head").onclick = () => train("head"); $("tr-hands").onclick = () => train("hands");

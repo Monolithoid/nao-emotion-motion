@@ -24,7 +24,6 @@ from .events import EventContext
 from .guardian import Guardian
 from .models.nets import load_model
 from .sim.synthetic import arm_gesture, hand_behaviour, head_behaviour
-from .trajectory import Trajectory
 from . import training
 
 
@@ -51,10 +50,6 @@ class Workbench:
         self.rng = np.random.default_rng(0)
         self.lock = threading.RLock()
         self.calibration = None  # CalibrationWizard ouvert depuis l'interface
-        # Guardian au rejeu (passages 2 et 3) : actif à chaque démarrage. L'opérateur peut le
-        # désactiver depuis l'interface quand il est à côté du robot ; la génération,
-        # l'exécution de plans et l'export restent toujours protégés.
-        self.replay_guardian = True
         self._hands_pending: Optional[dict] = None  # dernière cible d'ouverture des mains (hors enregistrement)
         self._hands_thread: Optional[threading.Thread] = None
 
@@ -166,15 +161,6 @@ class Workbench:
             raise ControllerError("Aucune calibration ouverte")
         return self.calibration
 
-    def set_replay_guardian(self, enabled: bool) -> bool:
-        """Active / désactive le guardian pour le rejeu des passages 2 et 3 (aucun mouvement)."""
-        rec = self.recording
-        if rec is not None and rec.state in (RecState.COUNTDOWN, RecState.RECORDING):
-            raise ControllerError("Enregistrement en cours : changer le guardian au rejeu après l'arrêt")
-        self.replay_guardian = bool(enabled)
-        self.ctrl._log("guardian au rejeu " + ("ACTIVÉ" if enabled else "DÉSACTIVÉ (opérateur à côté du robot)"))
-        return self.replay_guardian
-
     def list_calibrations(self) -> list:
         from .calibration import list_calibrations
         return list_calibrations(self.cfg.root, allow_simulated=self._sim_adapter())
@@ -242,59 +228,45 @@ class Workbench:
         return ev
 
     # -- collecte ---------------------------------------------------------------
-    def prepare_arm_take(self, emotion, intensity, intention=None, confirm=False):
+    def prepare_take(self, kind, emotion, intensity, intention=None, confirm=False):
+        """Prépare un passage INDÉPENDANT : kind = "arms" (bras guidés), "head" (tête guidée)
+        ou "hands" (mains pilotées). Consigne : émotion, intensité, événement courant.
+        Aucun geste des bras préalable, aucun modèle requis, aucun mouvement motorisé."""
         self.check_no_calibration()
         if self.recording is not None and self.recording.state in (RecState.COUNTDOWN, RecState.RECORDING):
             raise ControllerError("Un enregistrement est déjà en cours")
+        if kind not in ("arms", "head", "hands"):
+            raise ControllerError(f"Passage inconnu : {kind}")
         self.cfg.emotion_index(emotion)
-        rec = ArmRecording(self.cfg, self.ctrl)
+        intensity = float(intensity)
+        if not 0.0 <= intensity <= 1.0:
+            raise ControllerError("Intensité hors de [0, 1]")
+        if intention is not None and intention not in self.cfg.intentions:
+            raise ControllerError(f"Intention inconnue : {intention}")
+        rec = {"arms": ArmRecording, "head": HeadRecording, "hands": HandRecording}[kind](self.cfg, self.ctrl)
         rec.prepare(confirm=confirm)
         self.recording = rec
-        self.rec_info = {"kind": "arms", "emotion": emotion, "intensity": float(intensity), "intention": intention,
-                         "event": self.current_event().to_dict()}
-        return self.rec_info
-
-    def prepare_head_take(self, arm_take_id=None, confirm=False, generated: Optional[dict] = None,
-                          kind: str = "head"):
-        """Passage 2 (kind="head") ou 3 (kind="hands"). `generated={"emotion", "intensity",
-        "variation"?, "seed"?}` : le modèle des bras existant (figé) produit le geste ; sinon
-        `arm_take_id` : démonstration rejouée."""
-        self.check_no_calibration()
-        if self.recording is not None and self.recording.state in (RecState.COUNTDOWN, RecState.RECORDING):
-            raise ControllerError("Un enregistrement est déjà en cours")
-        cls = {"head": HeadRecording, "hands": HandRecording}[kind]
-        ev = self.current_event()
-        if generated is not None:
-            g = dict(generated)
-            self.cfg.emotion_index(g["emotion"])
-            eng = self.get_engine()
-            if getattr(eng, "arm_model", None) is None:
-                raise ControllerError("Aucun modèle des bras entraîné : entraîner les bras d'abord")
-            rec = cls.from_generated(self.cfg, self.ctrl, eng, g["emotion"], float(g["intensity"]), ev,
-                                     float(g.get("variation", 0.0)), g.get("seed"))
-            emotion, intensity, intention = g["emotion"], float(g["intensity"]), g.get("intention")
-        else:
-            arm = self.store.load(arm_take_id)
-            rec = cls.from_take(self.cfg, self.ctrl, arm, ev)
-            emotion, intensity, intention = arm.meta.emotion, arm.meta.intensity, arm.meta.intention
-        rec.guardian_enabled = bool(self.replay_guardian)
-        rec.prepare(confirm=confirm)  # approche motorisée validée (sauf guardian désactivé), contrôleur armé requis
-        self.recording = rec
         self.rec_info = {"kind": kind, "emotion": emotion, "intensity": intensity, "intention": intention,
-                         "event": ev.to_dict(), **rec.source}
-        if not rec.guardian_enabled:
-            self.rec_info["guardian_replay"] = False
-        return {k: v for k, v in self.rec_info.items()}
+                         "event": self.current_event().to_dict()}
+        return dict(self.rec_info)
 
-    def prepare_hands_take(self, arm_take_id=None, confirm=False, generated: Optional[dict] = None):
-        """Passage 3 : bras rejoués, tête raide sur place, mains pilotées depuis l'interface."""
-        return self.prepare_head_take(arm_take_id, confirm, generated, kind="hands")
+    def prepare_arm_take(self, emotion, intensity, intention=None, confirm=False):
+        """Passage bras : bras relâchés (guidés), tête raide sur place."""
+        return self.prepare_take("arms", emotion, intensity, intention, confirm)
+
+    def prepare_head_take(self, emotion, intensity, intention=None, confirm=False):
+        """Passage tête : tête relâchée (guidée), bras raides sur place."""
+        return self.prepare_take("head", emotion, intensity, intention, confirm)
+
+    def prepare_hands_take(self, emotion, intensity, intention=None, confirm=False):
+        """Passage mains : tout raide sur place, mains pilotées depuis l'interface (contrôleur armé)."""
+        return self.prepare_take("hands", emotion, intensity, intention, confirm)
 
     # -- ouverture des mains ------------------------------------------------------
     def set_hands(self, targets: dict, background: bool = True) -> dict:
         """Ouverture des mains {LHand|RHand: 0 (fermée) .. 1 (ouverte)}.
 
-        Pendant le passage 3 (compte à rebours ou enregistrement), la cible est suivie en
+        Pendant le passage mains (compte à rebours ou enregistrement), la cible est suivie en
         direct par la boucle d'enregistrement. Sinon, c'est un mouvement motorisé court :
         validé par le guardian et exécuté par le contrôleur, qui doit être armé
         (« Mouvements autorisés »). Une nouvelle cible reçue pendant le mouvement est
@@ -311,7 +283,7 @@ class Workbench:
         if not self.ctrl.armed:
             raise ControllerError("Contrôleur désarmé : cocher « Mouvements autorisés » pour bouger les mains")
         if rec is not None and rec.state in (RecState.COUNTDOWN, RecState.RECORDING):
-            raise ControllerError("Enregistrement en cours : les mains ne sont pilotables que pendant le passage 3")
+            raise ControllerError("Enregistrement en cours : les mains ne sont pilotables que pendant le passage mains")
         with self.lock:
             self._hands_pending = dict(self._hands_pending or {}, **targets)
             if self._hands_thread is not None:  # le mouvement en cours enchaînera sur cette cible
@@ -347,7 +319,7 @@ class Workbench:
                 return
 
     def hands_state(self) -> dict:
-        """Ouverture mesurée et, pendant le passage 3, cible et consigne en cours. Aucune commande."""
+        """Ouverture mesurée et, pendant le passage mains, cible et consigne en cours. Aucune commande."""
         hj = self.cfg.hand_joints
         out = {"joints": hj, "limits": {j: list(self.cfg.limits[j]) for j in hj}, "measured": None}
         rec = self.recording
@@ -363,26 +335,26 @@ class Workbench:
         return out
 
     def _sim_demonstrator(self, countdown_s):
-        """En simulation, un démonstrateur synthétique remplace la main de l'opérateur."""
+        """En simulation, un démonstrateur synthétique remplace la main de l'opérateur.
+        Retourne la durée du geste simulé (l'enregistrement s'arrête peu après)."""
         if not self.sim_demonstration:
             return None
         info, rec = self.rec_info, self.recording
+        ev = EventContext.from_dict(info["event"])
         if info["kind"] == "arms":
-            fn, dur = arm_gesture(self.cfg, info["emotion"], info["intensity"], self.rng,
-                                  event=EventContext.from_dict(info["event"]))
+            fn, dur = arm_gesture(self.cfg, info["emotion"], info["intensity"], self.rng, event=ev)
             self.adapter.set_demonstrator(lambda t: fn(t - countdown_s))
             return dur
-        replay = rec.replay
         if info["kind"] == "hands":
             # l'opérateur simulé pilote les mains (aucune articulation guidée)
-            rec.target_fn = hand_behaviour(self.cfg, info["emotion"], info["intensity"], rec.event,
-                                           replay.duration, self.rng)
-            return None
-        arm_fn = lambda t: dict(zip(replay.joints, replay.sample(np.array([min(max(t, 0), replay.duration)]))[0]))
-        hfn = head_behaviour(self.cfg, info["emotion"], info["intensity"], rec.event, arm_fn, self.rng)
-        off = countdown_s + rec.pre_roll
-        self.adapter.set_demonstrator(lambda t: hfn(t - off))
-        return None
+            dur = float(self.rng.uniform(2.4, 3.4))
+            rec.target_fn = hand_behaviour(self.cfg, info["emotion"], info["intensity"], ev, dur, self.rng)
+            return dur
+        # tête : bras raides en position de départ, la tête suit sa propre politique
+        start = dict(zip(self.cfg.arm_joints, self.cfg.pose("start", self.cfg.arm_joints)))
+        hfn = head_behaviour(self.cfg, info["emotion"], info["intensity"], ev, lambda t: start, self.rng)
+        self.adapter.set_demonstrator(lambda t: hfn(t - countdown_s))
+        return float(self.rng.uniform(2.0, 3.0))
 
     def start_recording(self, countdown_s=None, max_duration_s=15.0, background=True):
         rec = self.recording
@@ -395,10 +367,7 @@ class Workbench:
 
         def work():
             try:
-                if isinstance(rec, ArmRecording):
-                    rec.run(cd, max_duration_s)
-                else:
-                    rec.run(cd)
+                rec.run(cd, max_duration_s)
             except Exception as e:
                 rec.error = f"{e}"
                 traceback.print_exc()
@@ -426,30 +395,20 @@ class Workbench:
         if rec is None or rec.result is None:
             raise ControllerError("Aucun enregistrement terminé à sauvegarder")
         r, info = rec.result, self.rec_info
-        if info["kind"] == "arms":
-            seg = suggest_segment(r.traj)
-            take_id = new_id("arms")
-        else:
-            seg = r.segment
-            take_id = new_id(info["kind"])
+        # segment utile proposé : là où le groupe bouge (mains : d'après la consigne pilotée)
+        seg = suggest_segment(r.reference if r.reference is not None else r.traj)
+        take_id = new_id(info["kind"])
         meta = TakeMeta(
             take_id=take_id, session_id=self.session_id, kind=info["kind"], emotion=info["emotion"],
             intensity=float(info["intensity"]), joints=r.traj.joints, guided_joints=r.guided,
             driven_joints=r.driven, event=info["event"], calibration_version=self.cfg.calibration_version,
             config_fingerprint=self.cfg.fingerprint(), adapter=self.adapter.name,
             sample_rate_hz=rec.rate, segment=seg, head_initial=r.head_initial, hands_initial=r.hands_initial,
-            arm_take_id=info.get("arm_take_id"), intention=info.get("intention"),
-            arm_source=info.get("arm_source"), arm_gesture_id=info.get("arm_gesture_id"),
-            arm_generation=info.get("arm_generation"),
+            intention=info.get("intention"),
             synthetic=self.sim_demonstration if synthetic is None else synthetic, status=status,
             annotations={"notes": notes or ("" if r.complete else r.message), "tags": [] if r.complete else ["incomplete"]},
         )
-        ref = None  # consigne, même horloge que les mesures
-        if info["kind"] == "head":
-            ref = rec.replay.shifted(r.segment[0])
-        elif info["kind"] == "hands":
-            ref = r.reference
-        self.store.save(meta, r.traj, reference=ref)
+        self.store.save(meta, r.traj, reference=r.reference)  # consigne des mains, même horloge
         self.recording = None
         return take_id
 
@@ -464,7 +423,8 @@ class Workbench:
         return d
 
     # -- entraînement -----------------------------------------------------------
-    def train(self, component, epochs=None, include_pending=False, background=True, arm_checkpoint=None):
+    def train(self, component, epochs=None, include_pending=False, background=True):
+        """Entraîne UN groupe (bras, tête ou mains), indépendamment des deux autres."""
         statuses = ("accepted", "pending") if include_pending else ("accepted",)
         job_id = new_id(f"train-{component}")
         job = {"id": job_id, "component": component, "state": "running", "progress": [], "run": None,
@@ -477,16 +437,8 @@ class Workbench:
 
         def work():
             try:
-                if component == "arms":
-                    run = training.train_arms(self.store, self.cfg, self.runs_dir, statuses, epochs, log)
-                elif component in ("head", "hands"):
-                    ac = arm_checkpoint or training.latest(self.runs_dir, "arms")
-                    if ac is None:
-                        raise training.TrainingError("Entraîner d'abord le modèle des bras")
-                    run = training.train_follower(component, self.store, self.cfg, self.runs_dir, ac, statuses,
-                                                  epochs, log)
-                else:
-                    raise ValueError(component)
+                run = training.train_component(component, self.store, self.cfg, self.runs_dir, statuses,
+                                               epochs, log)
                 job["run"] = str(run)
                 job["state"] = "done"
                 self.engine = None  # rechargé à la prochaine génération ; AUCUNE exécution
@@ -596,4 +548,4 @@ class Workbench:
                 "recording": self.recording_status(), "event": self.current_event().to_dict(),
                 "roles": self.adapter.roles, "calibrated": self.cfg.calibrated,
                 "poses_calibrated": self.cfg.poses_calibrated, "log": self.ctrl.events[-10:],
-                "sim_demonstration": self.sim_demonstration, "replay_guardian": self.replay_guardian}
+                "sim_demonstration": self.sim_demonstration}

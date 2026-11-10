@@ -7,25 +7,24 @@ Organisation sur disque :
 Les échantillons bruts ne sont jamais réécrits après enregistrement ; seules
 les métadonnées (statut, annotations, segment utile) peuvent évoluer.
 
-Une prise de bras (kind="arms") contient les articulations des deux bras
-guidées à la main. Une prise de tête (kind="head") contient TOUTES les
-articulations mesurées pendant l'exécution des bras : bras pilotés et tête
-guidée. La trajectoire des bras vient soit d'une démonstration enregistrée
-(`arm_source="take"`, `arm_take_id`), soit du modèle des bras
-(`arm_source="generated"`, `arm_generation` : émotion, intensité, empreinte du
-checkpoint, variation, graine). La consigne envoyée aux bras est conservée dans
-samples.npz (`ref_t`, `ref_q`), à côté des mesures. `segment` désigne la
-fenêtre d'exécution, sur laquelle bras et tête partagent la même phase.
-`arm_gesture_id` identifie le geste des bras (même geste => même groupe pour le
-découpage entraînement/validation).
+Les trois passages sont INDÉPENDANTS : chaque prise porte une consigne
+(émotion, intensité, événement) et les mesures d'un seul groupe.
 
-Une prise de mains (kind="hands", passage 3) suit le même principe que la tête :
-bras rejoués (prise ou geste généré), tête raide sur place, et mains PILOTÉES par
-l'opérateur depuis l'interface (rien n'est guidé). LHand / RHand valent une
-ouverture entre 0 (fermée) et 1 (ouverte), pas un angle. La consigne envoyée
-(bras + mains, mêmes horodatages que les mesures) est conservée dans samples.npz
-(`ref_*`) : c'est la consigne des mains, l'intention de l'opérateur, qui sert de
-cible à l'apprentissage par défaut (`hands_model.target`).
+- kind="arms" : bras guidés à la main, tête raide sur place.
+- kind="head" : tête guidée à la main, bras raides sur place.
+- kind="hands" : mains PILOTÉES par l'opérateur depuis l'interface (rien n'est
+  guidé), bras et tête raides sur place. LHand / RHand valent une ouverture entre
+  0 (fermée) et 1 (ouverte), pas un angle. La consigne envoyée (mêmes horodatages
+  que les mesures) est conservée dans samples.npz (`ref_*`) : c'est l'intention
+  de l'opérateur, qui sert de cible à l'apprentissage par défaut
+  (`hands_model.target`).
+
+Anciennes prises (format accepté en lecture) : prises de tête ou de mains
+enregistrées pendant que les bras rejouaient une démonstration
+(`arm_source="take"`, `arm_take_id`) ou un geste généré (`arm_source="generated"`,
+`arm_generation`). Elles restent utilisables : l'apprentissage ne lit que les
+articulations du groupe. `arm_gesture_id` les regroupe pour le découpage
+entraînement/validation.
 """
 from __future__ import annotations
 
@@ -74,9 +73,9 @@ class TakeMeta:
     sample_rate_hz: float
     segment: Tuple[float, float]
     head_initial: Optional[List[float]] = None   # [HeadYaw, HeadPitch] au début du segment
-    hands_initial: Optional[List[float]] = None  # [LHand, RHand] mesurées au début du segment (passage 3)
+    hands_initial: Optional[List[float]] = None  # [LHand, RHand] mesurées au début du segment (passage mains)
     arm_take_id: Optional[str] = None
-    arm_source: Optional[str] = None          # "take" | "generated" (prises de tête)
+    arm_source: Optional[str] = None          # ancien format : "take" | "generated" ; None = prise indépendante
     arm_gesture_id: Optional[str] = None
     arm_generation: Optional[dict] = None
     intention: Optional[str] = None
@@ -165,34 +164,36 @@ class TakeStore:
             if meta.arm_take_id is not None:
                 raise TakeError("Une prise de bras ne référence pas d'autre prise")
         else:
-            if meta.kind == "head" and set(c.all_joints) - set(meta.joints):
-                raise TakeError("Une prise de tête doit contenir bras (relecture mesurée) et tête")
-            if meta.kind == "hands":
-                if not c.hand_joints or set(c.arm_joints + c.hand_joints) - set(meta.joints):
-                    raise TakeError("Une prise de mains doit contenir bras (relecture mesurée) et mains")
-                if meta.guided_joints:
-                    raise TakeError("Prise de mains : aucune articulation n'est guidée (mains pilotées)")
-            src = meta.arm_source or "take"
-            if src == "take":
-                if not meta.arm_take_id or not self.exists(meta.arm_take_id):
-                    raise TakeError("Prise de tête : arm_take_id manquant ou introuvable")
-                if self.load_meta(meta.arm_take_id).kind != "arms":
-                    raise TakeError("arm_take_id doit désigner une prise de bras")
-            elif src == "generated":
-                g = meta.arm_generation or {}
-                if g.get("emotion") not in c.emotions or not g.get("arm_checkpoint_digest"):
-                    raise TakeError("Prise de tête sur geste généré : arm_generation incomplet")
-            else:
-                raise TakeError(f"arm_source inconnu : {src}")
+            joints = c.head_joints if meta.kind == "head" else c.hand_joints
+            if not joints or set(joints) - set(meta.joints):
+                raise TakeError("Une prise de tête doit contenir la tête" if meta.kind == "head" else
+                                "Une prise de mains doit contenir les deux mains")
+            if meta.kind == "hands" and meta.guided_joints:
+                raise TakeError("Prise de mains : aucune articulation n'est guidée (mains pilotées)")
             if meta.kind == "head" and set(meta.guided_joints) != set(c.head_joints):
                 raise TakeError("Prise de tête : seules les articulations de la tête sont guidées")
+            src = meta.arm_source
+            if src is None and meta.arm_take_id is not None:
+                src = "take"
+            if src == "take":  # ancien format : bras rejoués
+                if not meta.arm_take_id or not self.exists(meta.arm_take_id):
+                    raise TakeError("Prise sur bras rejoués : arm_take_id manquant ou introuvable")
+                if self.load_meta(meta.arm_take_id).kind != "arms":
+                    raise TakeError("arm_take_id doit désigner une prise de bras")
+            elif src == "generated":  # ancien format : geste des bras généré
+                g = meta.arm_generation or {}
+                if g.get("emotion") not in c.emotions or not g.get("arm_checkpoint_digest"):
+                    raise TakeError("Prise sur geste généré : arm_generation incomplet")
+            elif src is not None:
+                raise TakeError(f"arm_source inconnu : {src}")
 
     # -- E/S ----------------------------------------------------------------
     def exists(self, take_id: str) -> bool:
         return (self.dir / take_id / "meta.json").exists()
 
     def group_id(self, meta: TakeMeta) -> str:
-        """Identifiant du geste des bras (groupe de découpage entraînement/validation)."""
+        """Groupe de découpage entraînement/validation : la prise elle-même, ou pour les anciennes
+        prises tête/mains, le geste des bras rejoué pendant l'enregistrement."""
         if meta.kind == "arms":
             return meta.take_id
         return meta.arm_gesture_id or meta.arm_take_id or meta.take_id
@@ -265,7 +266,7 @@ class TakeStore:
         return [m for m in self.list(kind=kind) if m.arm_take_id == arm_take_id]
 
     def load_reference(self, take_id: str) -> Optional[Trajectory]:
-        """Consigne envoyée pendant une prise de tête (bras) ou de mains (bras + mains). None si absente."""
+        """Consigne envoyée pendant une prise (mains ; anciennes prises : bras rejoués). None si absente."""
         with np.load(self.dir / take_id / "samples.npz", allow_pickle=False) as z:
             if "ref_t" not in z.files:
                 return None

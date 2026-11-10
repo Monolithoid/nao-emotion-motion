@@ -69,28 +69,20 @@ def check_intensity(x: float) -> float:
     return x
 
 
-def arm_input(emotions, emotion, intensity, event: Optional[EventContext] = None) -> np.ndarray:
-    """[émotion, intensité, événement (6)] : la direction et la distance de l'événement
-    permettent d'apprendre un geste orienté (pointer, se protéger d'un côté...)."""
+def motion_input(emotions, emotion, intensity, event: Optional[EventContext] = None) -> np.ndarray:
+    """Entrée COMMUNE aux trois modèles (bras, tête, mains) : [émotion, intensité,
+    événement (6)]. La direction et la distance de l'événement permettent d'apprendre
+    un geste orienté (pointer, regarder, se protéger d'un côté...). Aucun modèle ne
+    reçoit la sortie d'un autre : chacun s'entraîne seul."""
     ev = event if event is not None else EventContext.none()
     return np.concatenate([emotion_vector(emotions, emotion), [check_intensity(intensity)],
                            ev.features()]).astype(np.float32)
 
 
-def arm_input_dim(n_emotions) -> int:
+def motion_input_dim(n_emotions) -> int:
     return n_emotions + 1 + EVENT_FEATURES
 
 
-def head_input(emotions, emotion, intensity, arm_ctrl_norm: np.ndarray, arm_log_dur: float,
-               head_current_norm: np.ndarray, event: EventContext) -> np.ndarray:
-    """[émotion, intensité, points de contrôle bras (K×Ja, normalisés), log durée,
-    orientation actuelle de la tête (normalisée), événement (4)]."""
-    return np.concatenate([
-        emotion_vector(emotions, emotion), [check_intensity(intensity)],
-        np.asarray(arm_ctrl_norm, dtype=np.float32).ravel(), [arm_log_dur],
-        np.asarray(head_current_norm, dtype=np.float32).ravel(), event.features(),
-    ]).astype(np.float32)
-
-
-def head_input_dim(n_emotions, n_ctrl, n_arm_joints, n_head_joints) -> int:
-    return n_emotions + 1 + n_ctrl * n_arm_joints + 1 + n_head_joints + EVENT_FEATURES
+# noms historiques (modèle des bras)
+arm_input = motion_input
+arm_input_dim = motion_input_dim

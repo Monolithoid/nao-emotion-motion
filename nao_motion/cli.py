@@ -118,8 +118,7 @@ def cmd_takes(a):
 
 def cmd_train(a):
     wb = _wb(a, adapter="sim")
-    job = wb.train(a.component, epochs=a.epochs, include_pending=a.include_pending, background=False,
-                   arm_checkpoint=a.arm_checkpoint)
+    job = wb.train(a.component, epochs=a.epochs, include_pending=a.include_pending, background=False)
     if job["state"] != "done":
         print("Échec :", job["error"], file=sys.stderr)
         return 1
@@ -333,9 +332,9 @@ def main(argv=None):
     s = sub.add_parser("takes", help="lister les prises")
     s.add_argument("--kind", choices=["arms", "head", "hands"]); s.add_argument("--stats", action="store_true")
     s.set_defaults(fn=cmd_takes)
-    s = sub.add_parser("train", help="entraîner arms, head ou hands (sans aucun mouvement)")
+    s = sub.add_parser("train", help="entraîner arms, head ou hands, chacun indépendamment (sans aucun mouvement)")
     s.add_argument("component", choices=["arms", "head", "hands"]); s.add_argument("--epochs", type=int)
-    s.add_argument("--include-pending", action="store_true"); s.add_argument("--arm-checkpoint")
+    s.add_argument("--include-pending", action="store_true")
     s.set_defaults(fn=cmd_train)
     s = sub.add_parser("generate", help="générer et valider (simulation uniquement)")
     s.add_argument("--emotion", default="joie"); s.add_argument("--mix", help='mélange JSON ex. {"joie":0.5,"surprise":0.5}')

@@ -24,7 +24,7 @@ def test_event_endpoint_and_stats(trained):
     assert set(st["table"]) == {"arms", "head", "hands"}
     take_id = trained["arm_ids"][0]
     d = api.get_take(take_id)
-    assert d["replay"]["guardian"]["ok"] and len(d["head_takes"]) >= 1
+    assert d["replay"]["guardian"]["ok"]
 
 
 def test_static_nao_figure_served():

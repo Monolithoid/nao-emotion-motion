@@ -14,10 +14,8 @@
   <div class="brand">NAO · émotion → mouvement</div>
   <div id="status" class="status"></div>
   <label class="arm"><input type="checkbox" id="armed"> Mouvements autorisés</label>
-  <label class="arm guard" title="Validation par le guardian du geste rejoué pendant les passages 2 (Tête) et 3 (Mains). La génération et l'export restent toujours protégés."><input type="checkbox" id="replay-guardian" checked> Guardian au rejeu</label>
   <button id="stop" class="stop" title="Arrêt : interrompt et maintient la posture">ARRÊT</button>
 </header>
-<div id="guard-off" class="guard-off"></div>
 <div id="warn" class="warn"></div>
 <nav>
   <button data-tab="arms" class="active">1 · Bras</button>
@@ -75,38 +73,30 @@
 </section>
 
 <section id="tab-head" class="tab">
-  <p class="hint">Passage 2 : les bras sont motorisés pendant que vous guidez uniquement la tête. On enregistre
-  émotion/intensité, bras réellement mesurés et tête. Plusieurs contextes de regard peuvent être enregistrés pour un même geste.
-  Le modèle des bras reçoit aussi l'événement ci-dessous : un geste généré pointe vers lui. Pour une démonstration
-  enregistrée, garder l'événement de la démonstration si le geste est orienté (il est rappelé à côté de la prise).</p>
-  <fieldset>
-    <legend>Source du mouvement des bras</legend>
-    <label><input type="radio" name="hsrc" value="generated" checked> Geste généré par le modèle des bras :</label>
-    <select id="h-emotion"></select>
-    intensité <input type="range" id="h-intensity" min="0" max="1" step="0.05" value="0.7"> <span id="h-int-val"></span>
-    variation <input type="number" id="h-var" value="0" step="0.02" min="0" class="num">
-    graine <input type="number" id="h-seed" value="0" class="num">
-    <br><label><input type="radio" name="hsrc" value="take"> Démonstration enregistrée :</label>
-    <select id="h-arm"></select> <span id="h-arm-info"></span>
-  </fieldset>
-  <div class="plot" id="h-arm-plot"></div>
+  <div class="row">
+    <label>Émotion <select id="h-emotion"></select></label>
+    <label>Intensité <input type="range" id="h-intensity" min="0" max="1" step="0.05" value="0.7"> <span id="h-int-val"></span></label>
+  </div>
   <fieldset>
     <legend>Événement (repère torse : azimut + à gauche, élévation + en haut, distance en mètres)</legend>
+    <p class="hint">L'événement est enregistré avec la prise et donné au modèle de la tête : regardez-le, détournez-vous
+    de lui, selon l'émotion. Décocher « événement présent » pour une réaction sans direction.</p>
     <div class="row">
-      <button id="h-random" class="ok" title="Tire au hasard émotion, intensité, angle et distance, en favorisant ce qui a été le moins enregistré (geste généré, touche 0)">Tirage aléatoire</button>
+      <button id="h-random" class="ok" title="Tire au hasard émotion, intensité, angle et distance, en favorisant ce qui a été le moins enregistré (touche 0)">Tirage aléatoire</button>
       <label><input type="checkbox" id="h-random-none"> parfois sans événement</label>
       <span id="h-random-info" class="hint"></span>
     </div>
     <div id="h-fov"></div>
   </fieldset>
   <div class="consigne" id="h-consigne"></div>
-  <div class="alert" id="h-alert"><b>Attention :</b> <kbd>1</kbd> Préparer <b>déplace les bras au moteur</b> vers le début
-  de la relecture puis relâche la tête, et <kbd>Espace</kbd> relâche la tête : <b>immédiatement, sans confirmation</b>.
-  Dégagez les bras et tenez la tête avant d'appuyer.</div>
+  <p class="hint">Passage tête, indépendant des bras : la tête est relâchée (tenez-la) et seuls ses capteurs sont lus ;
+  les bras restent raides sur place, aucun geste des bras n'est rejoué. Le modèle de la tête apprend seul.</p>
+  <div class="alert" id="h-alert"><b>Attention :</b> <kbd>1</kbd> Préparer et <kbd>Espace</kbd> relâchent la tête
+  <b>immédiatement, sans confirmation</b>. Tenez la tête avant d'appuyer.</div>
   <div class="row">
-    <button id="h-prepare"><kbd>1</kbd> Préparer (approche motorisée des bras, puis tête relâchée — mouvements autorisés requis)</button>
-    <button id="h-start"><kbd>2</kbd> Démarrer (compte à rebours + relecture)</button>
-    <button id="h-stop"><kbd>3</kbd> Arrêter</button>
+    <button id="h-prepare"><kbd>1</kbd> Préparer (relâcher la tête)</button>
+    <button id="h-start"><kbd>2</kbd> Démarrer (compte à rebours)</button>
+    <button id="h-stop"><kbd>3</kbd> Arrêter l'enregistrement</button>
     <button id="h-hold"><kbd>4</kbd> Raidir la tête sur place</button>
   </div>
   <div class="recstate" id="h-rec"></div>
@@ -124,11 +114,27 @@
 </section>
 
 <section id="tab-hands" class="tab">
-  <p class="hint">Passage 3 : les doigts de NAO ne se guident pas à la main, on les pilote d'ici. Les bras rejouent un
-  geste (motorisés), la tête reste raide sur place, et vous réglez en direct l'ouverture de chaque main, de
-  <b>0 (fermée)</b> à <b>1 (ouverte)</b>, avec toutes les valeurs intermédiaires. La consigne et la mesure sont enregistrées
-  sur la même horloge que les bras : le modèle des mains apprend à ouvrir ou fermer au bon moment du geste.
-  Hors enregistrement, les mêmes commandes bougent les mains tout de suite (« Mouvements autorisés » requis).</p>
+  <p class="hint">Passage mains, indépendant des bras : les doigts de NAO ne se guident pas à la main, on les pilote d'ici.
+  Bras et tête restent raides sur place ; vous réglez en direct l'ouverture de chaque main, de
+  <b>0 (fermée)</b> à <b>1 (ouverte)</b>, avec toutes les valeurs intermédiaires, jusqu'à « Arrêter ».
+  La position de l'événement est donnée au modèle des mains : un événement à droite peut faire ouvrir la main droite
+  et fermer la gauche. Hors enregistrement, les mêmes commandes bougent les mains tout de suite
+  (« Mouvements autorisés » requis).</p>
+  <div class="row">
+    <label>Émotion <select id="m-emotion"></select></label>
+    <label>Intensité <input type="range" id="m-intensity" min="0" max="1" step="0.05" value="0.7"> <span id="m-int-val"></span></label>
+  </div>
+  <fieldset>
+    <legend>Événement (repère torse : azimut + à gauche, élévation + en haut, distance en mètres)</legend>
+    <p class="hint">Gauche et droite sont celles du robot. Réagissez avec la main du côté de l'événement si l'émotion
+    s'y prête (tendre la main ouverte, serrer le poing, se protéger).</p>
+    <div class="row">
+      <button id="m-random" class="ok" title="Tire au hasard émotion, intensité, angle et distance, en favorisant ce qui a été le moins enregistré (touche 0)">Tirage aléatoire</button>
+      <label><input type="checkbox" id="m-random-none"> parfois sans événement</label>
+      <span id="m-random-info" class="hint"></span>
+    </div>
+    <div id="m-fov"></div>
+  </fieldset>
   <fieldset class="hands">
     <legend>Ouverture des mains</legend>
     <div class="hand-row" data-hand="LHand">
@@ -156,32 +162,13 @@
     à vitesse limitée par le guardian.</p>
     <div id="m-live" class="hint"></div>
   </fieldset>
-  <fieldset>
-    <legend>Source du mouvement des bras</legend>
-    <label><input type="radio" name="msrc" value="generated" checked> Geste généré par le modèle des bras :</label>
-    <select id="m-emotion"></select>
-    intensité <input type="range" id="m-intensity" min="0" max="1" step="0.05" value="0.7"> <span id="m-int-val"></span>
-    variation <input type="number" id="m-var" value="0" step="0.02" min="0" class="num">
-    graine <input type="number" id="m-seed" value="0" class="num">
-    <br><label><input type="radio" name="msrc" value="take"> Démonstration enregistrée :</label>
-    <select id="m-arm"></select>
-  </fieldset>
-  <details><summary>Événement (repère torse)</summary>
-    <div class="row">
-      <button id="m-random" class="ok" title="Tire au hasard émotion, intensité, angle et distance, en favorisant ce qui a été le moins enregistré (geste généré, touche 0)">Tirage aléatoire</button>
-      <label><input type="checkbox" id="m-random-none"> parfois sans événement</label>
-      <span id="m-random-info" class="hint"></span>
-    </div>
-    <div id="m-fov"></div>
-  </details>
   <div class="consigne" id="m-consigne"></div>
-  <div class="alert" id="m-alert"><b>Attention :</b> <kbd>1</kbd> Préparer <b>déplace les bras au moteur</b> vers le début
-  de la relecture, sans confirmation. Ce passage ne relâche rien (<kbd>Espace</kbd> relâche toujours bras et tête).
-  Dégagez les bras avant d'appuyer.</div>
+  <div class="alert" id="m-alert"><b>Attention :</b> <kbd>1</kbd> Préparer raidit bras, tête et mains sur place, sans
+  confirmation ni déplacement. Ce passage ne relâche rien (<kbd>Espace</kbd> relâche toujours bras et tête).</div>
   <div class="row">
-    <button id="m-prepare"><kbd>1</kbd> Préparer (approche motorisée des bras — mouvements autorisés requis)</button>
-    <button id="m-start"><kbd>2</kbd> Démarrer (compte à rebours + relecture)</button>
-    <button id="m-stop"><kbd>3</kbd> Arrêter</button>
+    <button id="m-prepare"><kbd>1</kbd> Préparer (tout raide sur place — mouvements autorisés requis)</button>
+    <button id="m-start"><kbd>2</kbd> Démarrer (compte à rebours)</button>
+    <button id="m-stop"><kbd>3</kbd> Arrêter l'enregistrement</button>
     <button id="m-hold"><kbd>4</kbd> Raidir tout sur place</button>
   </div>
   <div class="recstate" id="m-rec"></div>
@@ -215,8 +202,6 @@
       <button class="ok" id="t-accept">Accepter</button>
       <button class="bad" id="t-reject">Rejeter</button>
       <button id="t-save-notes">Enregistrer l'annotation</button>
-      <button id="t-use-head">Enregistrer une tête sur cette prise</button>
-      <button id="t-use-hands">Enregistrer les mains sur cette prise</button>
     </div>
     <div id="t-info" class="mono"></div>
   </div>
@@ -224,13 +209,14 @@
 
 <section id="tab-train" class="tab">
   <p class="hint">L'entraînement n'entraîne aucun mouvement. Par défaut, seules les prises acceptées sont utilisées ;
-  la validation est faite par groupes (une prise de bras et ses prises de tête restent ensemble).</p>
+  bras, tête et mains s'entraînent <b>indépendamment</b>, dans n'importe quel ordre ; la génération combine ensuite
+  les modèles disponibles (un groupe sans modèle reste en position de départ).</p>
   <div class="row">
     <label>Époques <input type="number" id="tr-epochs" value="800" class="num"></label>
     <label><input type="checkbox" id="tr-pending"> inclure les prises en attente</label>
     <button id="tr-arms">Entraîner les bras</button>
-    <button id="tr-head">Entraîner la tête (bras figés)</button>
-    <button id="tr-hands">Entraîner les mains (bras figés)</button>
+    <button id="tr-head">Entraîner la tête</button>
+    <button id="tr-hands">Entraîner les mains</button>
   </div>
   <div id="tr-jobs"></div>
   <h3>Résultats</h3>

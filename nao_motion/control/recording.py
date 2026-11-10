@@ -1,20 +1,22 @@
-"""Enregistrement des démonstrations en deux passages.
+"""Enregistrement des démonstrations : un passage par groupe, INDÉPENDANTS.
 
-Passage 1 (bras) : bras GUIDÉS (relâchés, lus), tête maintenue raide sur sa
-posture mesurée. On enregistre les angles mesurés et leurs horodatages.
+Chaque passage enregistre un seul groupe pour une consigne (émotion, intensité,
+événement) ; aucun ne demande de geste des bras déjà enregistré ni de modèle.
 
-Passage 2 (tête) : bras PILOTÉS qui rejouent une prise de bras, tête GUIDÉE.
-La même boucle échantillonne les capteurs et envoie les consignes des bras,
-sur la même horloge : la fenêtre de relecture (segment) est donc connue
-exactement dans le temps de l'enregistrement. On conserve les bras MESURÉS
-pendant la relecture, c'est-à-dire le mouvement réellement exécuté.
+Passage bras : bras GUIDÉS (relâchés, lus), tête maintenue raide sur sa posture
+mesurée.
 
-Passage 3 (mains) : comme le passage 2, mais rien n'est relâché. Les bras
-rejouent le geste, la tête reste raide sur place et l'opérateur PILOTE
-l'ouverture des mains depuis l'interface (curseurs, boutons, clavier) : une
-main de NAO ne se guide pas à la main. La consigne de l'opérateur est filtrée
-en ligne (bornes, vitesse, accélération du guardian) avant d'être envoyée, et
-conservée à côté des mesures.
+Passage tête : tête GUIDÉE, bras maintenus raides sur leur posture mesurée.
+Aucun mouvement motorisé : la préparation ne fait que relâcher la tête.
+
+Passage mains : rien n'est relâché, bras et tête restent raides sur place et
+l'opérateur PILOTE l'ouverture des mains depuis l'interface (curseurs, boutons,
+clavier) : une main de NAO ne se guide pas à la main. La consigne de l'opérateur
+est filtrée en ligne (bornes, vitesse, accélération du guardian) avant d'être
+envoyée, et conservée à côté des mesures.
+
+Chaque enregistrement dure jusqu'à « Arrêter » (ou la durée maximale) ; le
+segment utile est proposé automatiquement à la sauvegarde.
 
 Aucune articulation n'est à la fois relâchée et commandée.
 """
@@ -55,7 +57,7 @@ class RecordingResult:
     complete: bool
     message: str = ""
     hands_initial: Optional[List[float]] = None
-    reference: Optional[Trajectory] = None   # consignes envoyées (passage 3 : bras + mains)
+    reference: Optional[Trajectory] = None   # consignes envoyées (passage mains : ouverture des mains)
 
 
 def replay_trajectory(take: Take, joints, ctrl_per_s: float = 6.0, rate_hz: float = 50.0) -> Trajectory:
@@ -106,15 +108,21 @@ class RecordingSession:
         return True
 
 
-class ArmRecording(RecordingSession):
+class GuidedRecording(RecordingSession):
+    """Un groupe GUIDÉ à la main (relâché, lu) pendant que l'autre est maintenu raide."""
+    kind = "arms"
+
+    def _groups(self):
+        return self.cfg.arm_joints, self.cfg.head_joints
+
     def prepare(self, confirm: bool = False):
-        """Relâche les bras (ils tombent si personne ne les tient) et maintient la tête."""
+        """Relâche le groupe guidé (il tombe si personne ne le tient) et maintient l'autre."""
         if getattr(self.adapter, "is_real", False) and not confirm:
-            raise ControllerError("Robot réel : confirmer que les bras sont tenus avant de les relâcher")
+            what = {"arms": "les bras sont tenus", "head": "la tête est tenue"}[self.kind]
+            raise ControllerError(f"Robot réel : confirmer que {what} avant de relâcher")
         if self.ctrl.state not in (State.IDLE, State.HOLDING):
             raise ControllerError(f"Préparation impossible dans l'état {self.ctrl.state.value}")
-        self.guided = self.cfg.arm_joints
-        self.driven = self.cfg.head_joints
+        self.guided, self.driven = self._groups()
         self.adapter.set_roles(guided=self.guided, driven=self.driven)
         self._stop.clear()
         self.state = RecState.PREPARED
@@ -147,221 +155,69 @@ class ArmRecording(RecordingSession):
             self.state = RecState.ABORTED
             raise
         traj = Trajectory(joints, np.array(ts), np.array(qs))
-        self.result = RecordingResult(traj, (0.0, float(ts[-1])), self.guided, self.driven, None, True)
+        init = None
+        if self.kind == "head":
+            init = traj.q[0].tolist()
+        self.result = RecordingResult(traj, (0.0, float(ts[-1])), self.guided, self.driven, init, True)
         self.state = RecState.DONE
         return self.result
 
 
-class HeadRecording(RecordingSession):
-    """Passage 2. La trajectoire des bras exécutée pendant que l'opérateur guide la
-    tête provient soit d'une démonstration enregistrée (`from_take`), soit du
-    MODÈLE DES BRAS existant pour une émotion/intensité (`from_generated`).
-    Dans les deux cas, ce sont les bras MESURÉS pendant l'exécution qui sont
-    conservés et servent à l'apprentissage de la tête."""
+class ArmRecording(GuidedRecording):
+    """Passage bras : bras guidés, tête raide sur place."""
+    kind = "arms"
+
+
+class HeadRecording(GuidedRecording):
+    """Passage tête : tête guidée, bras raides sur place (aucun geste des bras requis)."""
     kind = "head"
-    # False : l'opérateur a désactivé le guardian pour le rejeu (interface, case « Guardian
-    # au rejeu ») ; la relecture et l'approche sont validées pour information seulement.
-    guardian_enabled = True
 
-    def __init__(self, cfg, controller, replay: Trajectory, event: EventContext, source: dict,
-                 pre_roll_s: float = 0.5, post_roll_s: float = 0.5):
-        super().__init__(cfg, controller)
-        if replay.joints != cfg.arm_joints:
-            raise ControllerError("La trajectoire des bras doit couvrir exactement les articulations des bras")
-        self.source = source  # {"arm_source": "take"|"generated", ...}
-        self.event = event
-        self.pre_roll = pre_roll_s
-        self.post_roll = post_roll_s
-        self.replay = replay.shifted(-replay.t[0])
-        self.guided = cfg.head_joints
-        self.driven = cfg.arm_joints
-        self.follower_joints = cfg.head_joints   # ce que l'opérateur démontre pendant la relecture
-        self.record_joints = cfg.arm_joints + cfg.head_joints
-        self.approach_plan = None
-        self.replay_report = None
-
-    @classmethod
-    def from_take(cls, cfg, controller, arm_take: Take, event: EventContext, **kw) -> "HeadRecording":
-        if arm_take.meta.kind != "arms":
-            raise ControllerError("La relecture exige une prise de bras")
-        rp = replay_trajectory(arm_take, cfg.arm_joints)
-        return cls(cfg, controller, rp, event, {"arm_source": "take", "arm_take_id": arm_take.meta.take_id,
-                                                "arm_gesture_id": arm_take.meta.take_id}, **kw)
-
-    @classmethod
-    def from_generated(cls, cfg, controller, engine, emotion: str, intensity: float, event: EventContext,
-                       variation: float = 0.0, seed=None, **kw) -> "HeadRecording":
-        """Le modèle des bras (figé) produit le geste ; il est validé puis exécuté."""
-        from ..data.representation import decode
-        import hashlib
-        arm_n, dur = engine.plan_arms(emotion, intensity, variation, seed, event)
-        ctrl = engine.arm_norm.inv(arm_n)
-        traj = decode(ctrl, dur, cfg.arm_joints, 50.0)
-        digest = getattr(engine.arm_model, "digest", None)
-        gid = "gen-" + hashlib.sha256(np.round(ctrl, 6).tobytes() + str(dur).encode()).hexdigest()[:12]
-        src = {"arm_source": "generated", "arm_take_id": None, "arm_gesture_id": gid,
-               "arm_generation": {"arm_checkpoint_digest": digest, "emotion": emotion, "intensity": float(intensity),
-                                  "variation": float(variation), "seed": seed, "duration_s": float(dur)}}
-        return cls(cfg, controller, traj, event, src, **kw)
-
-    def plan_approach(self):
-        """Valide la relecture et planifie l'approche repos/courant -> départ -> 1er point de la relecture."""
-        c = self.ctrl
-        head_now = c.measured(self.cfg.head_joints)
-        self.replay_report = c.guardian.validate(self.replay, context_pose=head_now)
-        if not self.replay_report.ok:
-            if self.guardian_enabled:
-                from ..guardian import GuardianRejection
-                raise GuardianRejection(self.replay_report)
-            c._log(f"guardian DÉSACTIVÉ (rejeu) : relecture acceptée malgré {self.replay_report.summary()}")
-        arms_now = c.measured(self.cfg.arm_joints)
-        from .transitions import min_jerk
-        g = self.cfg.guardian
-        start = np.array(self.cfg.pose("start", self.cfg.arm_joints))
-        q0 = np.array([arms_now[j] for j in self.cfg.arm_joints])
-        approach = Trajectory.concat([
-            min_jerk(q0, start, self.cfg.arm_joints, g.transition_velocity_rad_s, g.max_acceleration_rad_s2 / 2),
-            min_jerk(start, self.replay.q[0], self.cfg.arm_joints, g.transition_velocity_rad_s,
-                     g.max_acceleration_rad_s2 / 2)])
-        rep = c.guardian.validate(approach, start_state=arms_now, check_duration=False, context_pose=head_now)
-        from .controller import Plan
-        self.approach_plan = Plan(approach, [("approche", 0.0, approach.duration)], rep)
-        return self.approach_plan
-
-    def prepare(self, confirm: bool = False):
-        """Amène les bras (motorisés) au début de la relecture, puis relâche la tête."""
-        if self.approach_plan is None:
-            self.plan_approach()
-        if getattr(self.adapter, "is_real", False) and not confirm:
-            raise ControllerError("Robot réel : confirmer l'approche motorisée des bras et la tenue de la tête")
-        # exige un contrôleur armé ; guardian contourné seulement si l'opérateur l'a désactivé
-        self.ctrl.execute(self.approach_plan, bypass_guardian=not self.guardian_enabled)
-        self.adapter.set_roles(guided=self.guided, driven=self.driven)
-        self._stop.clear()
-        self.state = RecState.PREPARED
-
-    def run(self, countdown_s: float = 3.0) -> RecordingResult:
-        if self.state != RecState.PREPARED:
-            raise ControllerError("Préparer l'enregistrement d'abord")
-        if not self.ctrl.armed:
-            raise ControllerError("Contrôleur désarmé : relecture impossible")
-        a = self.adapter
-        all_j = self.record_joints
-        arm_j = self.cfg.arm_joints
-        D = self.replay.duration
-        speed = self.ctrl.speed
-        complete = True
-        msg = ""
-        self.ctrl.state = State.EXECUTING
-        try:
-            if not self._countdown(countdown_s):
-                self.state = RecState.ABORTED
-                self.ctrl.state = State.IDLE
-                return None
-            self.state = RecState.RECORDING
-            ts, qs = [], []
-            seg_start = seg_end = None
-            self._begin()
-            t0 = a.now()
-            k = 0
-            while True:
-                t = a.now() - t0
-                u = t - self.pre_roll
-                if self._stop.is_set():
-                    a.stop_motion()
-                    complete = False
-                    msg = "Arrêt demandé pendant la relecture : bras maintenus"
-                    break
-                if 0.0 <= u <= D + 1e-9 or (seg_start is not None and seg_end is None):
-                    uc = min(max(u, 0.0), D)
-                    a.heartbeat()
-                    a.send_angles(arm_j, self.replay.sample(np.array([uc]))[0], speed)
-                    if seg_start is None:
-                        seg_start = t - uc  # instant correspondant à la phase 0 de la relecture
-                    if u >= D:
-                        seg_end = seg_start + D
-                self._follow(t, u)
-                q = a.read_angles(all_j)
-                ts.append(t)
-                qs.append(q)
-                self.elapsed = t
-                if seg_end is not None and t >= seg_end + self.post_roll:
-                    break
-                k += 1
-                a.sleep(max(0.0, t0 + k / self.rate - a.now()))
-        except ConnectionLost as e:
-            self.error = f"Connexion perdue pendant la relecture : {e}"
-            self.state = RecState.ABORTED
-            self.ctrl.state = State.FAULT
-            self.ctrl.armed = False
-            raise
-        except Exception as e:
-            self.error = str(e)
-            try:
-                a.stop_motion()
-            except Exception:
-                pass
-            self.state = RecState.ABORTED
-            self.ctrl.state = State.FAULT
-            self.ctrl.armed = False
-            raise
-        self.ctrl.state = State.HOLDING if not complete else State.IDLE
-        traj = Trajectory(all_j, np.array(ts), np.array(qs))
-        if seg_start is None or seg_end is None:
-            complete = False
-            seg = (0.0, float(ts[-1]))
-        else:
-            seg = (float(seg_start), float(min(seg_end, ts[-1])))
-        fi = traj.select(self.follower_joints).sample(np.array([seg[0]]))[0].tolist()
-        self.result = self._result(traj, seg, fi, complete, msg)
-        self.state = RecState.DONE
-        return self.result
-
-    # -- points d'extension (passage 3) ------------------------------------------
-    def _begin(self):
-        pass
-
-    def _follow(self, t: float, u: float):
-        """Appelé à chaque pas, juste avant la lecture des capteurs. u : phase de la relecture (s)."""
-
-    def _result(self, traj, seg, follower_initial, complete, msg) -> RecordingResult:
-        return RecordingResult(traj, seg, self.guided, self.driven, follower_initial, complete, msg)
+    def _groups(self):
+        return self.cfg.head_joints, self.cfg.arm_joints
 
 
-class HandRecording(HeadRecording):
-    """Passage 3 : bras rejoués (prise ou geste généré), tête raide sur place, mains
-    PILOTÉES en direct par l'opérateur (`set_target`). Rien n'est relâché.
+class HandRecording(RecordingSession):
+    """Passage mains : bras et tête raides sur place, mains PILOTÉES en direct par
+    l'opérateur (`set_target`). Rien n'est relâché.
 
     La cible reçue de l'interface est bornée (limites et marge du guardian) et suivie
     avec une vitesse et une accélération limitées : c'est cette consigne filtrée qui
     est envoyée et conservée (`reference`), à côté des mesures."""
     kind = "hands"
 
-    def __init__(self, cfg, controller, replay, event, source, **kw):
-        super().__init__(cfg, controller, replay, event, source, **kw)
+    def __init__(self, cfg: Config, controller: Controller):
+        super().__init__(cfg, controller)
         if not cfg.hand_joints:
             raise ControllerError("Aucune main configurée (joints.yaml, section hands)")
         hj = list(cfg.hand_joints)
-        self.follower_joints = hj
-        self.guided = []
-        self.driven = cfg.arm_joints + cfg.head_joints + hj   # tête raidie sur place
-        self.record_joints = cfg.arm_joints + cfg.head_joints + hj
+        self.hand_joints = hj
         g = cfg.guardian
         self._lo = np.array([cfg.limits[j][0] + g.margin(j) for j in hj])
         self._hi = np.array([cfg.limits[j][1] - g.margin(j) for j in hj])
         self._vmax = np.array([0.8 * g.velocity_limit(j) for j in hj])
         self._amax = np.array([0.8 * g.acceleration_limit(j) for j in hj])
         self.hand_target: Optional[np.ndarray] = None
-        self.target_fn: Optional[Callable[[float], dict]] = None  # démonstrateur simulé (phase -> cible)
+        self.target_fn: Optional[Callable[[float], dict]] = None  # démonstrateur simulé (t -> cible)
         self.command: Optional[np.ndarray] = None
         self._vel = np.zeros(len(hj))
         self._last_t = 0.0
-        self._last_arm = None
         self._ref_rows: List[np.ndarray] = []
+
+    def prepare(self, confirm: bool = False):
+        """Raidit bras, tête et mains sur leur posture mesurée (aucun déplacement, rien de relâché)."""
+        if self.ctrl.state not in (State.IDLE, State.HOLDING):
+            raise ControllerError(f"Préparation impossible dans l'état {self.ctrl.state.value}")
+        if not self.ctrl.armed:
+            raise ControllerError("Contrôleur désarmé : cocher « Mouvements autorisés » pour piloter les mains")
+        self.guided = []
+        self.driven = self.cfg.arm_joints + self.cfg.head_joints + self.hand_joints
+        self.adapter.set_roles(guided=self.guided, driven=self.driven)
+        self._stop.clear()
+        self.state = RecState.PREPARED
 
     def set_target(self, targets: dict):
         """Nouvelle cible d'ouverture {LHand|RHand: 0..1} ; les mains absentes gardent la leur."""
-        hj = self.follower_joints
+        hj = self.hand_joints
         unknown = [j for j in targets if j not in hj]
         if unknown:
             raise ControllerError(f"Mains attendues {hj}, reçu {unknown}")
@@ -376,20 +232,10 @@ class HandRecording(HeadRecording):
                 tgt[i] = v
         self.hand_target = np.clip(tgt, self._lo, self._hi)
 
-    def _begin(self):
-        hj = self.follower_joints
-        self.command = np.clip(self.adapter.read_angles(hj), self._lo, self._hi)
-        if self.hand_target is None:
-            self.hand_target = self.command.copy()
-        self._vel = np.zeros(len(hj))
-        self._last_t = 0.0
-        self._last_arm = self.replay.q[0].copy()
-        self._ref_rows = []
-
-    def _follow(self, t: float, u: float):
-        hj = self.follower_joints
+    def _follow(self, t: float):
+        hj = self.hand_joints
         if self.target_fn is not None:
-            d = self.target_fn(u)
+            d = self.target_fn(t)
             self.set_target({j: d[j] for j in hj if j in d})
         dt = max(0.0, t - self._last_t)
         self._last_t = t
@@ -401,11 +247,63 @@ class HandRecording(HeadRecording):
         q = np.clip(q + v * dt, self._lo, self._hi)
         self.command, self._vel = q, v
         self.adapter.send_angles(hj, q, self.ctrl.speed)
-        if 0.0 <= u <= self.replay.duration:
-            self._last_arm = self.replay.sample(np.array([u]))[0]
-        self._ref_rows.append(np.concatenate([self._last_arm, q]))
+        self._ref_rows.append(q.copy())
 
-    def _result(self, traj, seg, follower_initial, complete, msg) -> RecordingResult:
-        ref = Trajectory(self.cfg.arm_joints + self.follower_joints, traj.t.copy(), np.array(self._ref_rows))
-        return RecordingResult(traj, seg, self.guided, self.driven, None, complete, msg,
-                               hands_initial=follower_initial, reference=ref)
+    def run(self, countdown_s: float = 3.0, max_duration_s: float = 15.0) -> RecordingResult:
+        if self.state != RecState.PREPARED:
+            raise ControllerError("Préparer l'enregistrement d'abord")
+        if not self.ctrl.armed:
+            raise ControllerError("Contrôleur désarmé : pilotage des mains impossible")
+        a = self.adapter
+        hj = self.hand_joints
+        self.ctrl.state = State.EXECUTING
+        try:
+            if not self._countdown(countdown_s):
+                self.state = RecState.ABORTED
+                self.ctrl.state = State.IDLE
+                return None
+            self.state = RecState.RECORDING
+            self.command = np.clip(a.read_angles(hj), self._lo, self._hi)
+            if self.hand_target is None:
+                self.hand_target = self.command.copy()
+            self._vel = np.zeros(len(hj))
+            self._last_t = 0.0
+            self._ref_rows = []
+            ts, qs = [], []
+            t0 = a.now()
+            k = 0
+            while True:
+                t = a.now() - t0
+                a.heartbeat()
+                self._follow(t)
+                ts.append(t)
+                qs.append(a.read_angles(hj))
+                self.elapsed = t
+                if self._stop.is_set() or t >= max_duration_s:
+                    break
+                k += 1
+                a.sleep(max(0.0, t0 + k / self.rate - a.now()))
+        except ConnectionLost as e:
+            self.error = f"Connexion perdue pendant l'enregistrement : {e}"
+            self.state = RecState.ABORTED
+            self.ctrl.state = State.FAULT
+            self.ctrl.armed = False
+            raise
+        except Exception as e:
+            self.error = str(e)
+            try:
+                a.stop_motion()
+            except Exception:
+                pass
+            self.state = RecState.ABORTED
+            self.ctrl.state = State.FAULT
+            self.ctrl.armed = False
+            raise
+        if self.ctrl.state == State.EXECUTING:  # un arrêt global l'a déjà mis en maintien
+            self.ctrl.state = State.IDLE
+        traj = Trajectory(hj, np.array(ts), np.array(qs))
+        ref = Trajectory(hj, traj.t.copy(), np.array(self._ref_rows))
+        self.result = RecordingResult(traj, (0.0, float(ts[-1])), [], self.driven, None, True,
+                                      hands_initial=traj.q[0].tolist(), reference=ref)
+        self.state = RecState.DONE
+        return self.result

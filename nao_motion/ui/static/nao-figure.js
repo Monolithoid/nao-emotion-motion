@@ -70,13 +70,13 @@
       return {parts: ["left_arm", "right_arm"], live, text};
     }
     if (tab === "head") {
-      const [text, live] = step("head", "Passage 2 : la tête sera relâchée et guidée à la main ; les bras rejouent le geste, motorisés.",
-        "Tête relâchée : tenez-la. Les bras sont motorisés.", "guidez la tête pendant que les bras rejouent le geste.");
+      const [text, live] = step("head", "Passage tête : la tête sera relâchée et guidée à la main ; les bras restent raides sur place.",
+        "Tête relâchée : tenez-la. Les bras restent raides.", "guidez la tête.");
       return {parts: ["head"], live, text};
     }
     if (tab === "hands") {
-      const [text, live] = step("hands", "Passage 3 : les bras rejouent le geste, motorisés, la tête reste raide ; vous pilotez l'ouverture des mains d'ici.",
-        "Bras au début du geste, rien n'est relâché. Réglez l'ouverture de départ si besoin.", "ouvrez ou fermez les mains pendant que les bras rejouent le geste.");
+      const [text, live] = step("hands", "Passage mains : bras et tête restent raides sur place ; vous pilotez l'ouverture des mains d'ici.",
+        "Tout est raide sur place, rien n'est relâché. Réglez l'ouverture de départ si besoin.", "ouvrez ou fermez les mains, puis Arrêter.");
       return {parts: ["hands"], live, text};
     }
     if (tab === "calib") {
