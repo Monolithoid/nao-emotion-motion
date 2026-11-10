@@ -54,14 +54,47 @@ class Workbench:
         self._hands_thread: Optional[threading.Thread] = None
 
     # -- connexion au robot (adresse saisie dans l'interface) -------------------
-    def _busy(self) -> bool:
+    def _recording_active(self) -> bool:
+        """Enregistrement réellement en cours. Un état « enregistrement » sans boucle vivante
+        (fil terminé sur une erreur) est soldé ici : il bloquerait sinon toute reconnexion."""
         rec = self.recording
+        if rec is None or rec.state not in (RecState.COUNTDOWN, RecState.RECORDING):
+            return False
+        th = self.rec_thread
+        if th is not None and not th.is_alive() and rec.state in (RecState.COUNTDOWN, RecState.RECORDING):
+            rec.state = RecState.DONE if rec.result is not None else RecState.ABORTED
+            rec.error = rec.error or "Boucle d'enregistrement interrompue"
+            return False
+        return True
+
+    def _busy(self) -> bool:
         cal = self.calibration
-        return self.ctrl.state == State.EXECUTING or (cal is not None and cal.sweeping) or (
-            rec is not None and rec.state in (RecState.COUNTDOWN, RecState.RECORDING))
+        return self.ctrl.state == State.EXECUTING or (cal is not None and cal.sweeping) or self._recording_active()
+
+    def _wind_down_after_loss(self):
+        """Pont perdu : la boucle d'enregistrement va échouer au plus tard après le délai du
+        pont ; on lui demande de s'arrêter et on l'attend (borné) avant de reconnecter."""
+        ad = self.adapter
+        if ad.name != "bridge" or ad.is_connected():
+            return
+        if self.recording is not None:
+            self.recording.request_stop()
+        th = self.rec_thread
+        if th is not None and th.is_alive():
+            th.join(timeout=float(getattr(ad, "timeout_s", 3.0)) + 2.0)
+        self._recording_active()
+
+    def bridge_state(self) -> dict:
+        """État de la liaison avec le pont, affiché par l'interface."""
+        ad = self.adapter
+        if ad.name != "bridge":
+            return {"used": False}
+        return {"used": True, "address": f"{ad.host}:{ad.port}", "connected": ad.is_connected(),
+                "lost": ad.lost_reason, "lost_at": ad.lost_at}
 
     def use_adapter(self, adapter):
         """Remplace l'adaptateur (simulation <-> pont). Refusé pendant un mouvement ou un enregistrement."""
+        self._wind_down_after_loss()
         if self._busy():
             raise ControllerError("Mouvement ou enregistrement en cours : arrêter d'abord")
         try:
@@ -72,7 +105,9 @@ class Workbench:
         self.adapter = adapter
         self.ctrl = Controller(self.cfg, adapter, self.guardian)
         self.calibration = None  # liée à l'ancien adaptateur
-        self.recording = None
+        rec = self.recording
+        if rec is None or rec.result is None:  # une prise terminée (même incomplète) reste à sauvegarder
+            self.recording = None
         self.engine = None
         self.sim_demonstration = adapter.name == "sim"
 
@@ -94,6 +129,7 @@ class Workbench:
         if bridge_host:
             validate_host(bridge_host)
         ad = BridgeAdapter(self.cfg, host=bridge_host, port=bridge_port)
+        self._wind_down_after_loss()
         if self._busy():
             raise ControllerError("Mouvement ou enregistrement en cours : arrêter d'abord")
         old = self.adapter
@@ -123,6 +159,7 @@ class Workbench:
         info = ad.info if (bridge_on_robot and ad.robot_connected) else ad.connect_robot(naoqi_host, int(robot_port or 9559))
         if self.ctrl.state.value in ("disconnected", "fault"):
             self.ctrl.state = State.IDLE
+            self.ctrl.last_error = None  # la coupure reste dans le journal
         self.ctrl._log(f"reconnecté au robot {host} via le même pont (aucun mouvement envoyé)")
         return info
 
@@ -233,7 +270,7 @@ class Workbench:
         ou "hands" (mains pilotées). Consigne : émotion, intensité, événement courant.
         Aucun geste des bras préalable, aucun modèle requis, aucun mouvement motorisé."""
         self.check_no_calibration()
-        if self.recording is not None and self.recording.state in (RecState.COUNTDOWN, RecState.RECORDING):
+        if self._recording_active():
             raise ControllerError("Un enregistrement est déjà en cours")
         if kind not in ("arms", "head", "hands"):
             raise ControllerError(f"Passage inconnu : {kind}")
@@ -327,7 +364,8 @@ class Workbench:
             for k, v in (("target", rec.hand_target), ("command", rec.command)):
                 out[k] = None if v is None else dict(zip(hj, np.round(v, 3).tolist()))
             return out  # pas de lecture supplémentaire pendant la boucle d'enregistrement
-        if hj and self.adapter.is_connected():
+        if hj and self.adapter.is_connected() and not self._recording_active():
+            # (pendant un passage bras ou tête, la boucle a la priorité sur la liaison)
             try:
                 out["measured"] = dict(zip(hj, np.round(self.adapter.read_angles(hj), 3).tolist()))
             except Exception:
@@ -369,7 +407,7 @@ class Workbench:
             try:
                 rec.run(cd, max_duration_s)
             except Exception as e:
-                rec.error = f"{e}"
+                rec.error = rec.error or f"{e}"
                 traceback.print_exc()
             finally:
                 if self.sim_demonstration:
@@ -388,7 +426,8 @@ class Workbench:
         if self.recording is not None:
             self.recording.request_stop()
         if self.rec_thread is not None:
-            self.rec_thread.join(timeout=5)
+            self.rec_thread.join(timeout=float(getattr(self.adapter, "timeout_s", 3.0)) + 2.0)
+        self._recording_active()  # solde un état orphelin
 
     def save_recording(self, status="pending", notes="", synthetic=None) -> str:
         rec = self.recording
@@ -416,10 +455,12 @@ class Workbench:
         rec = self.recording
         if rec is None:
             return {"state": "none"}
+        self._recording_active()  # un état orphelin n'est jamais affiché comme « en cours »
         d = {"state": rec.state.value, "countdown_left": round(rec.countdown_left, 2),
              "elapsed": round(rec.elapsed, 2), "error": rec.error, **self.rec_info}
         if rec.result is not None:
             d["complete"] = rec.result.complete
+            d["message"] = rec.result.message
         return d
 
     # -- entraînement -----------------------------------------------------------
@@ -543,7 +584,8 @@ class Workbench:
         return {"adapter": self.adapter.name, "real_robot": bool(getattr(self.adapter, "is_real", False)),
                 "robot_address": info.get("robot_address"), "robot_name": info.get("robot_name"),
                 "naoqi_version": info.get("naoqi_version"),
-                "connected": self.adapter.is_connected(), "controller": self.ctrl.state.value,
+                "connected": self.adapter.is_connected(), "bridge": self.bridge_state(),
+                "controller": self.ctrl.state.value,
                 "armed": self.ctrl.armed, "last_error": self.ctrl.last_error,
                 "recording": self.recording_status(), "event": self.current_event().to_dict(),
                 "roles": self.adapter.roles, "calibrated": self.cfg.calibrated,

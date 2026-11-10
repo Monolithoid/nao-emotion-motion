@@ -281,44 +281,99 @@ class Bridge(object):
                         sys.stderr.write("[bridge] echec arret : %s\n" % e)
 
 
-def serve(bridge, host, port, ready_event=None):
+def _set_keepalive(conn):
+    """Keepalive TCP court quand le système le permet (Linux du NAO) : une liaison
+    coupée sans fermeture propre est détectée même sans trafic."""
+    try:
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        for opt, val in (("TCP_KEEPIDLE", 2), ("TCP_KEEPINTVL", 1), ("TCP_KEEPCNT", 3)):
+            if hasattr(socket, opt):
+                conn.setsockopt(socket.IPPROTO_TCP, getattr(socket, opt), val)
+    except Exception:
+        pass
+
+
+def _serve_client(bridge, conn, state, idle_s):
+    """Sert un client jusqu'à sa déconnexion, son silence (> idle_s) ou l'arrivée d'un
+    nouveau client (qui le remplace)."""
+    conn.settimeout(idle_s)
+    _set_keepalive(conn)
+    f = conn.makefile("rwb") if sys.version_info[0] >= 3 else conn.makefile("rw")
+    try:
+        for line in f:
+            if state.get("current") is not conn:
+                break  # remplacé par un nouveau client
+            if not line.strip():
+                continue
+            try:
+                req = json.loads(line.decode("utf-8") if isinstance(line, bytes) else line)
+                resp = {"ok": True, "result": bridge.handle(req)}
+            except Exception as e:
+                resp = {"ok": False, "error": str(e)}
+            out = json.dumps(resp) + "\n"
+            f.write(out.encode("utf-8") if sys.version_info[0] >= 3 else out)
+            f.flush()
+    except socket.timeout:
+        sys.stderr.write("[bridge] client muet depuis %.0f s : connexion fermee\n" % idle_s)
+    except Exception:
+        pass
+    finally:
+        for c in (f, conn):
+            try:
+                c.close()
+            except Exception:
+                pass
+    # client déconnecté : si un mouvement était en cours, arrêt et maintien. Un client
+    # remplacé ne touche à rien : l'arrêt a été fait à l'arrivée du nouveau client.
+    with bridge.lock:
+        if state.get("current") is not conn:
+            return
+        state["current"] = None
+        if bridge.motion_active:
+            sys.stderr.write("[bridge] client deconnecte pendant un mouvement : arret et maintien\n")
+            try:
+                bridge._stop()
+            except Exception as e:
+                sys.stderr.write("[bridge] echec arret : %s\n" % e)
+
+
+def serve(bridge, host, port, ready_event=None, idle_s=10.0):
+    """Un seul client servi à la fois ; un NOUVEAU client remplace l'ancien. Après une
+    coupure réseau, l'ancienne connexion peut rester « ouverte » côté robot (aucune
+    fermeture reçue) : sans ce remplacement, le pont resterait occupé et le PC ne
+    pourrait plus se reconnecter. Un client muet plus de idle_s secondes (le client
+    envoie un battement toutes les 0,2 s) est aussi déconnecté."""
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((host, port))
-    srv.listen(1)
+    srv.listen(4)
     t = threading.Thread(target=bridge.watchdog_loop)
     t.daemon = True
     t.start()
     if ready_event is not None:
         ready_event.port = srv.getsockname()[1]
         ready_event.set()
+    state = {"current": None}
     while True:
-        conn, _ = srv.accept()
-        f = conn.makefile("rwb") if sys.version_info[0] >= 3 else conn.makefile("rw")
-        try:
-            for line in f:
-                if not line.strip():
-                    continue
-                try:
-                    req = json.loads(line.decode("utf-8") if isinstance(line, bytes) else line)
-                    resp = {"ok": True, "result": bridge.handle(req)}
-                except Exception as e:
-                    resp = {"ok": False, "error": str(e)}
-                out = json.dumps(resp) + "\n"
-                f.write(out.encode("utf-8") if sys.version_info[0] >= 3 else out)
-                f.flush()
-        except Exception:
-            pass
-        finally:
+        conn, addr = srv.accept()
+        with bridge.lock:
+            old = state.get("current")
+            state["current"] = conn
+            if old is not None:
+                sys.stderr.write("[bridge] nouveau client %s : l'ancienne connexion est fermee\n" % (addr,))
+                if bridge.motion_active:  # l'ancien client pilotait : arrêt et maintien
+                    try:
+                        bridge._stop()
+                    except Exception as e:
+                        sys.stderr.write("[bridge] echec arret : %s\n" % e)
+        if old is not None:
             try:
-                conn.close()
+                old.shutdown(socket.SHUT_RDWR)  # débloque sa lecture en cours
             except Exception:
                 pass
-        # client déconnecté : si un mouvement était en cours, arrêt et maintien
-        with bridge.lock:
-            if bridge.motion_active:
-                sys.stderr.write("[bridge] client deconnecte pendant un mouvement : arret et maintien\n")
-                bridge._stop()
+        th = threading.Thread(target=_serve_client, args=(bridge, conn, state, idle_s))
+        th.daemon = True
+        th.start()
 
 
 def read_env(path):
@@ -349,6 +404,8 @@ def main():
     p.add_argument("--host", default=env.get("NAO_BRIDGE_HOST") or "127.0.0.1")
     p.add_argument("--port", type=int, default=int(env.get("NAO_BRIDGE_PORT") or 9600))
     p.add_argument("--watchdog", type=float, default=float(env.get("NAO_BRIDGE_WATCHDOG_S") or 0.6))
+    p.add_argument("--idle", type=float, default=float(env.get("NAO_BRIDGE_IDLE_S") or 10.0),
+                   help="client muet plus longtemps (s) : connexion fermee, le pont se libere")
     p.add_argument("--api", choices=("auto", "naoqi", "qi"), default=env.get("NAO_BRIDGE_API") or "auto")
     p.add_argument("--on-robot", action="store_true",
                    help="pont lance sur le NAO : NAOqi en local (127.0.0.1), ecoute sur le reseau (0.0.0.0)")
@@ -364,7 +421,7 @@ def main():
         bridge.handle({"cmd": "connect_robot", "host": a.robot_ip, "port": a.robot_port})
     print("[bridge] pret sur %s:%d, robot : %s. Aucun mouvement n'est envoye au demarrage."
           % (a.host, a.port, bridge.robot_address or "adresse a fournir par l'interface"))
-    serve(bridge, a.host, a.port)
+    serve(bridge, a.host, a.port, idle_s=a.idle)
 
 
 if __name__ == "__main__":
