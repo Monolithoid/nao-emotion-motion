@@ -14,8 +14,10 @@
   <div class="brand">NAO · émotion → mouvement</div>
   <div id="status" class="status"></div>
   <label class="arm"><input type="checkbox" id="armed"> Mouvements autorisés</label>
+  <label class="arm guard" title="Validation par le guardian du geste rejoué pendant les passages 2 (Tête) et 3 (Mains). La génération et l'export restent toujours protégés."><input type="checkbox" id="replay-guardian" checked> Guardian au rejeu</label>
   <button id="stop" class="stop" title="Arrêt : interrompt et maintient la posture">ARRÊT</button>
 </header>
+<div id="guard-off" class="guard-off"></div>
 <div id="warn" class="warn"></div>
 <nav>
   <button data-tab="arms" class="active">1 · Bras</button>
@@ -257,6 +259,13 @@
   d'ici. <b>Rien n'est commandé</b> : un groupe est relâché pour être guidé à la main, ou raidi sur place.
   Fermer ou annuler laisse chaque articulation dans son état (pas de retour au repos). Même calcul que
   <code>nao-motion calibrate</code>.</p>
+  <fieldset class="cal-files">
+    <legend>Calibrations enregistrées</legend>
+    <p class="hint">Fichiers de <code>configs/calibration/</code>, y compris ceux des séances précédentes.
+    « Activer » les désigne au guardian sans rien bouger (le contrôleur reste dans son état). Un fichier
+    refusé indique pourquoi.</p>
+    <div id="c-files" class="hint">Chargement…</div>
+  </fieldset>
   <div class="row">
     <button id="c-open" class="ok">Ouvrir la calibration</button>
     <button id="c-close">Fermer sans enregistrer</button>
@@ -265,6 +274,13 @@
   <div id="c-status" class="cal-status">Aucune calibration ouverte. Connecter le robot (onglet Robot), puis ouvrir.</div>
   <div id="c-body" class="hidden">
     <div class="row" id="c-groups"></div>
+    <div class="row cal-reuse">
+      <label>Reprendre le groupe choisi de <select id="c-import-file"></select></label>
+      <button id="c-import" title="Limites, enveloppes et poses du groupe reprises du fichier, sans nouvelle exploration">Reprendre ce groupe</button>
+      <button id="c-drop-import">Annuler la reprise</button>
+      <button id="c-discard" class="bad" title="Efface explorations, poses et reprises gardées pour ce robot">Repartir de zéro</button>
+      <span id="c-persist" class="hint"></span>
+    </div>
     <div class="cal-grid">
       <div>
         <ol class="cal-steps">

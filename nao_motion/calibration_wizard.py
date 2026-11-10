@@ -14,19 +14,27 @@ Sécurité (inchangée) :
     au repos ;
   - une calibration n'est jamais écrasée ; l'activation est une action à part.
 
+Progression gardée : les explorations, poses capturées et groupes repris sont
+sauvegardés à chaque étape dans configs/calibration/drafts/<robot>.npz et
+repris à la prochaine ouverture (fermeture de l'onglet, redémarrage du serveur).
+Un groupe déjà calibré peut aussi être repris d'un fichier enregistré
+(`import_group`) : on garde par exemple les bras et on refait la tête.
+
 En simulation, un démonstrateur synthétique remplace la main de l'opérateur
 (exploration) et les poses de remplacement sont « placées » avant capture :
 les valeurs obtenues n'ont aucune portée réelle.
 """
 from __future__ import annotations
 
+import json
+import re
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
 
-from .calibration import (Calibration, CalibrationError, CalibrationSession, activate, convex_hull,
+from .calibration import (Calibration, CalibrationError, CalibrationSession, convex_hull,
                           hull_constraints, in_zone, load_procedure, sim_sweeper, simplify_hull, zone_polygon)
 
 POSE_NAMES = ("rest", "start")
@@ -47,6 +55,8 @@ def _downsample(q: np.ndarray, n: int = MAX_POINTS) -> np.ndarray:
 
 
 class CalibrationWizard:
+    PERSIST_SIM = False  # en simulation, la progression n'est pas écrite sur disque (tests : True)
+
     def __init__(self, wb):
         self.wb = wb
         self.cfg = wb.cfg
@@ -67,6 +77,94 @@ class CalibrationWizard:
         self.activated = False
         self.message = "Calibration ouverte : choisir un groupe."
         self._lock = threading.RLock()
+        self.restored = self._restore_draft()
+
+    # -- progression gardée sur disque ---------------------------------------------------
+    @property
+    def draft_path(self) -> Path:
+        name = re.sub(r"[^\w\-]+", "_", str(self.robot.get("name") or "nao")) or "nao"
+        return self.cfg.root / "calibration" / "drafts" / f"{name}.npz"
+
+    def _persist(self) -> bool:
+        return (not self.sim) or self.PERSIST_SIM
+
+    def _save_draft(self):
+        if not self._persist():
+            return
+        s = self.session
+        if not s.sweeps and not s.poses and not s.imported:
+            self.draft_path.unlink(missing_ok=True)
+            return
+        meta = {"robot": self.robot, "poses": s.poses, "imported": s.imported,
+                "sweeps": {g: list(sw["joints"]) for g, sw in s.sweeps.items()}}
+        arrays = {f"q_{g}": np.asarray(sw["q"], dtype=float) for g, sw in s.sweeps.items()}
+        p = self.draft_path
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(p.stem + ".tmp.npz")
+        np.savez(tmp, meta=np.array(json.dumps(meta)), **arrays)
+        tmp.replace(p)
+
+    def _restore_draft(self) -> List[str]:
+        p = self.draft_path
+        if not self._persist() or not p.exists():
+            return []
+        try:
+            with np.load(p, allow_pickle=False) as z:
+                meta = json.loads(str(z["meta"]))
+                sweeps = {g: {"joints": list(js), "q": np.asarray(z[f"q_{g}"], dtype=float)}
+                          for g, js in meta.get("sweeps", {}).items()}
+        except Exception as e:
+            self.message = f"Progression enregistrée illisible ({p.name}) : {e}. Calibration repartie de zéro."
+            return []
+        s = self.session
+        groups = self.cfg.groups
+        s.sweeps = {g: sw for g, sw in sweeps.items() if g in groups and sw["joints"] == list(groups[g])}
+        s.imported = {g: d for g, d in (meta.get("imported") or {}).items() if g in groups}
+        s.poses = {n: {g: {j: float(v) for j, v in jq.items()} for g, jq in gp.items() if g in groups}
+                   for n, gp in (meta.get("poses") or {}).items() if n in POSE_NAMES}
+        done = sorted(set(s.sweeps) | set(s.imported))
+        if done or any(s.poses.values()):
+            self.message = ("Progression précédente reprise : " +
+                            (", ".join(_g(g) for g in done) or "aucun groupe exploré") +
+                            ". « Repartir de zéro » pour tout effacer.")
+        return done
+
+    def discard_draft(self):
+        """Efface toute la progression (explorations, poses, groupes repris)."""
+        self._not_sweeping()
+        s = self.session
+        s.sweeps, s.poses, s.imported = {}, {}, {}
+        self._invalidate()
+        if self._persist():
+            self.draft_path.unlink(missing_ok=True)
+        self.restored = []
+        self.message = "Progression effacée : calibration repartie de zéro."
+
+    def import_group(self, file: str, group: str) -> dict:
+        """Reprend un groupe (limites, enveloppes, poses) d'une calibration enregistrée,
+        sans l'explorer à nouveau. Aucun mouvement."""
+        self._not_sweeping()
+        self._joints(group)
+        d = self.cfg.root / "calibration"
+        f = d / Path(str(file)).name
+        if not f.exists():
+            raise CalibrationError(f"Calibration introuvable : {f.name}")
+        cal = Calibration.load(f)
+        imp = self.session.import_group(cal, group)
+        self._invalidate()
+        self._save_draft()
+        miss = [POSE_LABEL[n] for n in POSE_NAMES if n not in imp["poses"]]
+        self.message = (f"Groupe {_g(group)} repris de {cal.version}" +
+                        (f" ; poses à capturer : {', '.join(miss)}." if miss else " (exploration et poses)."))
+        return imp
+
+    def drop_import(self, group: str):
+        self._not_sweeping()
+        self._joints(group)
+        self.session.drop_import(group)
+        self._invalidate()
+        self._save_draft()
+        self.message = f"Reprise du groupe {_g(group)} annulée : l'explorer ou le reprendre d'un autre fichier."
 
     # -- état -----------------------------------------------------------------------
     @property
@@ -137,6 +235,7 @@ class CalibrationWizard:
         self._joints(group)
         self.session.clear_sweep(group)
         self._invalidate()
+        self._save_draft()
         self.message = f"Exploration du groupe {_g(group)} effacée."
 
     def sweep_stop(self):
@@ -153,6 +252,10 @@ class CalibrationWizard:
             self.adapter.set_roles(driven=self._joints(group))
         except Exception as e:
             self.sweep_error = self.sweep_error or f"raidir le groupe {_g(group)} : {e}"
+        try:
+            self._save_draft()
+        except Exception as e:
+            self.sweep_error = self.sweep_error or f"sauvegarde de la progression : {e}"
         n = len(self.session.sweeps.get(group, {}).get("q", []))
         self.message = f"Exploration du groupe {_g(group)} terminée : {n} mesures. Groupe raidi sur place."
 
@@ -169,6 +272,7 @@ class CalibrationWizard:
                 self.adapter.target[j] = v
         pose = self.session.capture_pose(name, group)
         self._invalidate()
+        self._save_draft()
         self.message = f"Pose de {POSE_LABEL[name]} du groupe {_g(group)} capturée."
         return pose
 
@@ -184,7 +288,7 @@ class CalibrationWizard:
             raise CalibrationError("Calculer la calibration d'abord")
         if self.saved_path is None:
             self.saved_path = self.result.save(self.cfg.root / "calibration" / f"{self.result.version}.yaml")
-        self.message = f"Enregistrée : {self.saved_path.name} (non active)."
+        self.message = f"Enregistrée : {self.saved_path.name} (non active). La progression reste gardée jusqu'à « Repartir de zéro »."
         return str(self.saved_path)
 
     def activate(self) -> str:
@@ -192,7 +296,8 @@ class CalibrationWizard:
             raise CalibrationError("Enregistrer la calibration d'abord")
         if self.sim:
             raise CalibrationError("Calibration simulée : elle ne peut pas être activée")
-        p = activate(self.cfg.root, self.saved_path)
+        self.wb.activate_calibration(self.saved_path)  # valide, active, recharge (rollback si échec)
+        p = self.cfg.root / "calibration" / "ACTIVE"
         self.activated = True
         self.message = f"{self.saved_path.name} activée pour le guardian."
         return str(p)
@@ -290,7 +395,10 @@ class CalibrationWizard:
         missing = [f"{n}/{g}" for n in POSE_NAMES for g in self.cfg.groups if g not in s.poses.get(n, {})]
         return {"active": True, "sim": self.sim, "robot": self.robot, "groups": self.cfg.groups,
                 "sweeping": s.current if self.sweeping else None, "sweep_n": s.n if self.sweeping else 0,
-                "swept": sorted(s.sweeps), "angles": angles, "roles": dict(self.adapter.roles),
+                "swept": sorted(s.sweeps), "imported": {g: {"source": d["source"], "file": d.get("file"),
+                                                            "poses": sorted(d["poses"])}
+                                                        for g, d in s.imported.items()},
+                "restored": list(self.restored), "persist": self._persist(), "angles": angles, "roles": dict(self.adapter.roles),
                 "ranges": ranges, "poses": s.poses,
                 "factory": ({j: [round(float(v[0]), 4), round(float(v[1]), 4)] for j, v in self.factory.items()}
                             if self.factory else None), "missing_poses": missing,

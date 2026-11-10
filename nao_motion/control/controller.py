@@ -265,14 +265,19 @@ class Controller:
         return Plan(full, segments, rep)
 
     # -- exécution -----------------------------------------------------------
-    def execute(self, plan: Plan, on_tick: Optional[Callable[[float, np.ndarray], None]] = None) -> str:
-        """Exécute un plan validé. Retourne 'done', 'stopped' ou lève en cas de faute."""
+    def execute(self, plan: Plan, on_tick: Optional[Callable[[float, np.ndarray], None]] = None,
+                bypass_guardian: bool = False) -> str:
+        """Exécute un plan validé. Retourne 'done', 'stopped' ou lève en cas de faute.
+
+        `bypass_guardian` : réservé au rejeu des passages 2 et 3 quand l'opérateur a
+        désactivé le guardian dans l'interface (il est à côté du robot) ; le rapport est
+        alors seulement consigné. Le contrôleur doit toujours être armé."""
         with self._lock:
             if not self.armed:
                 raise ControllerError("Contrôleur désarmé : aucun mouvement envoyé")
             if self.state != State.IDLE:
                 raise ControllerError(f"Exécution impossible dans l'état {self.state.value}")
-            if not plan.report.ok:
+            if not plan.report.ok and not bypass_guardian:
                 raise GuardianRejection(plan.report)
             self._stop.clear()
             self.state = State.EXECUTING
@@ -280,7 +285,12 @@ class Controller:
         try:
             # revalidation contre l'état mesuré juste avant d'envoyer
             cur = self.measured(joints)
-            self.guardian.require(plan.traj, start_state=cur, check_duration=False)
+            if bypass_guardian:
+                rep = self.guardian.validate(plan.traj, start_state=cur, check_duration=False)
+                if not rep.ok:
+                    self._log(f"guardian DÉSACTIVÉ (rejeu) : exécuté malgré {rep.summary()}")
+            else:
+                self.guardian.require(plan.traj, start_state=cur, check_duration=False)
             self.adapter.set_roles(driven=joints)
             result = self._stream(plan.traj, on_tick)
         except ConnectionLost as e:

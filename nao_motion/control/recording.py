@@ -159,6 +159,9 @@ class HeadRecording(RecordingSession):
     Dans les deux cas, ce sont les bras MESURÉS pendant l'exécution qui sont
     conservés et servent à l'apprentissage de la tête."""
     kind = "head"
+    # False : l'opérateur a désactivé le guardian pour le rejeu (interface, case « Guardian
+    # au rejeu ») ; la relecture et l'approche sont validées pour information seulement.
+    guardian_enabled = True
 
     def __init__(self, cfg, controller, replay: Trajectory, event: EventContext, source: dict,
                  pre_roll_s: float = 0.5, post_roll_s: float = 0.5):
@@ -207,8 +210,10 @@ class HeadRecording(RecordingSession):
         head_now = c.measured(self.cfg.head_joints)
         self.replay_report = c.guardian.validate(self.replay, context_pose=head_now)
         if not self.replay_report.ok:
-            from ..guardian import GuardianRejection
-            raise GuardianRejection(self.replay_report)
+            if self.guardian_enabled:
+                from ..guardian import GuardianRejection
+                raise GuardianRejection(self.replay_report)
+            c._log(f"guardian DÉSACTIVÉ (rejeu) : relecture acceptée malgré {self.replay_report.summary()}")
         arms_now = c.measured(self.cfg.arm_joints)
         from .transitions import min_jerk
         g = self.cfg.guardian
@@ -229,7 +234,8 @@ class HeadRecording(RecordingSession):
             self.plan_approach()
         if getattr(self.adapter, "is_real", False) and not confirm:
             raise ControllerError("Robot réel : confirmer l'approche motorisée des bras et la tenue de la tête")
-        self.ctrl.execute(self.approach_plan)  # exige un contrôleur armé
+        # exige un contrôleur armé ; guardian contourné seulement si l'opérateur l'a désactivé
+        self.ctrl.execute(self.approach_plan, bypass_guardian=not self.guardian_enabled)
         self.adapter.set_roles(guided=self.guided, driven=self.driven)
         self._stop.clear()
         self.state = RecState.PREPARED
