@@ -81,6 +81,11 @@ class Api:
     def get_stats(self, q):
         return self.wb.store.stats()
 
+    def get_progress(self, q):
+        """Avancement de la collecte (prises acceptées par groupe, paliers, couverture)."""
+        from ..data.progress import progress
+        return progress(self.wb.cfg, self.wb.store.list())
+
     def get_train(self, q):
         return {"jobs": list(self.wb.jobs.values())[-10:], "runs": self.wb.runs()[:20]}
 

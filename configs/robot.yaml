@@ -58,3 +58,19 @@ events:
     none_share: 0.2           # part visée des prises sans événement (si la case est cochée)
     cell_weight: 4.0          # poids du retard de la case face aux retards par émotion / intensité / zone
     strength: 2.0             # 0 = uniforme ; 2 = une émotion en retard d'une prise est e²≈7× plus probable
+# Avancement de la collecte (onglet Prises, voir nao_motion/data/progress.py) :
+# paliers de prises ACCEPTÉES par groupe (bras, tête et mains s'entraînent
+# indépendamment). Chaque palier : un nombre ou {takes: N, label: "..."} ;
+# le dernier palier est l'objectif du groupe. Les prises simulées ne comptent pas.
+progress:
+  arms:
+    - {takes: 60, label: "1er entraînement : tester la chaîne"}
+    - {takes: 150, label: "modèle utilisable"}
+    - {takes: 200, label: "objectif"}
+  head:
+    - {takes: 60, label: "1er entraînement : tester la chaîne"}
+    - {takes: 150, label: "modèle utilisable"}
+    - {takes: 200, label: "objectif"}
+  hands:
+    - {takes: 60, label: "1er entraînement : tester la chaîne"}
+    - {takes: 100, label: "objectif"}
