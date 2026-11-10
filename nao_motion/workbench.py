@@ -161,6 +161,34 @@ class Workbench:
             raise ControllerError("Aucune calibration ouverte")
         return self.calibration
 
+    def list_calibrations(self) -> list:
+        from .calibration import list_calibrations
+        return list_calibrations(self.cfg.root, allow_simulated=self._sim_adapter())
+
+    def _sim_adapter(self) -> bool:
+        # une calibration simulée ne s'active qu'en simulation (essais de l'interface)
+        return not getattr(self.adapter, "is_real", False)
+
+    def activate_calibration(self, file) -> dict:
+        """Active un fichier de configs/calibration/ (enregistré lors d'une session précédente
+        ou à l'instant) puis recharge la configuration. Aucun mouvement ; si le rechargement
+        échoue, l'activation précédente est rétablie."""
+        from .calibration import activate
+        if self._busy():
+            raise ControllerError("Mouvement ou enregistrement en cours : arrêter d'abord")
+        marker = self.cfg.root / "calibration" / "ACTIVE"
+        previous = marker.read_text(encoding="utf-8") if marker.exists() else None
+        activate(self.cfg.root, file, allow_simulated=self._sim_adapter())
+        try:
+            self.reload_config()
+        except Exception:
+            if previous is None:
+                marker.unlink(missing_ok=True)
+            else:
+                marker.write_text(previous, encoding="utf-8")
+            raise
+        return {"active": self.cfg.calibration_version, "file": Path(str(file)).name}
+
     def reload_config(self):
         """Recharge configs/ (après activation d'une calibration). Contrôleur désarmé, aucun mouvement."""
         if self._busy():

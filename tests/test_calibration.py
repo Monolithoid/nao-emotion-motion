@@ -57,7 +57,7 @@ def calibrated_cfg(tmp_path, cfg):
     path = cal.save(d / "calibration" / "sim-test.yaml")
     with pytest.raises(CalibrationError):
         cal.save(path)  # jamais écrasée
-    activate(d, path)
+    activate(d, path, allow_simulated=True)
     return load_config(d), cal
 
 

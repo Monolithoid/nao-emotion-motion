@@ -161,3 +161,120 @@ def test_pairs_show_zone_and_poses_and_sweep_accumulates(ui):
     assert pair["poses"]["start"]["inside"] is False
     api.post_calibration_sweep_clear({"group": "head"})
     assert "head" not in api.get_calibration({})["swept"]
+
+
+# -- calibrations enregistrées : liste, activation après coup, reprise de progression ----
+from pathlib import Path
+
+import yaml
+
+from nao_motion.calibration_wizard import CalibrationWizard
+
+OLD_FILE = Path(__file__).parent / "data" / "calibration-v1-5104ddf.yaml"
+
+
+def _as_real(src: Path, dst: Path, version: str):
+    """Copie d'une calibration simulée présentée comme venant du robot réel (pour l'activation)."""
+    d = yaml.safe_load(src.read_text(encoding="utf-8"))
+    d["robot"] = {"robot_name": "nao", "name": "nao", "adapter": "bridge"}
+    d["version"] = version
+    dst.write_text(yaml.safe_dump(d, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return dst
+
+
+def test_old_calibration_files_still_load_and_activate(ui):
+    """Un fichier produit par une version antérieure (avant mains, distance, etc.) reste
+    utilisable : listé comme activable et activable depuis l'onglet, sans séance ouverte."""
+    wb, api = ui
+    d = wb.cfg.root / "calibration"
+    _as_real(OLD_FILE, d / "ancienne.yaml", "ancienne")
+    (d / "sim.yaml").write_text(OLD_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+    (d / "casse.yaml").write_text("kind: autre\n", encoding="utf-8")
+    files = {f["file"]: f for f in api.get_calibrations({})["files"]}
+    assert files["ancienne.yaml"]["activable"] and not files["ancienne.yaml"]["active"]
+    assert files["sim.yaml"]["simulated"]
+    assert not files["casse.yaml"]["valid"] and files["casse.yaml"]["reason"]
+    assert wb.calibration is None  # aucune calibration ouverte
+    res = api.post_calibrations_activate({"file": "ancienne.yaml"})
+    assert res["active"] == "ancienne" and wb.cfg.calibrated and not wb.ctrl.armed
+    assert next(f for f in res["files"] if f["file"] == "ancienne.yaml")["active"]
+    assert wb.guardian.cfg is wb.cfg
+
+
+def test_simulated_or_incompatible_calibration_refused_on_real_robot(ui, monkeypatch):
+    wb, api = ui
+    d = wb.cfg.root / "calibration"
+    (d / "sim.yaml").write_text(OLD_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+    bad = yaml.safe_load(OLD_FILE.read_text(encoding="utf-8"))
+    bad["robot"] = {"name": "nao", "adapter": "bridge"}
+    del bad["limits"]["HeadYaw"]
+    (d / "incomplete.yaml").write_text(yaml.safe_dump(bad), encoding="utf-8")
+    monkeypatch.setattr(type(wb.adapter), "is_real", True, raising=False)
+    files = {f["file"]: f for f in api.get_calibrations({})["files"]}
+    assert not files["sim.yaml"]["activable"] and "simulée" in files["sim.yaml"]["reason"]
+    assert not files["incomplete.yaml"]["activable"] and "HeadYaw" in files["incomplete.yaml"]["reason"]
+    for f in ("sim.yaml", "incomplete.yaml"):
+        with pytest.raises(CalibrationError):
+            api.post_calibrations_activate({"file": f})
+    assert active_calibration_path(wb.cfg.root) is None and not wb.cfg.calibrated
+
+
+def test_failed_reload_restores_previous_activation(ui, monkeypatch):
+    wb, api = ui
+    d = wb.cfg.root / "calibration"
+    _as_real(OLD_FILE, d / "a.yaml", "a")
+    _as_real(OLD_FILE, d / "b.yaml", "b")
+    api.post_calibrations_activate({"file": "a.yaml"})
+
+    def boom():
+        raise RuntimeError("rechargement impossible")
+    monkeypatch.setattr(wb, "reload_config", boom)
+    with pytest.raises(RuntimeError):
+        api.post_calibrations_activate({"file": "b.yaml"})
+    assert active_calibration_path(wb.cfg.root).name == "a.yaml"
+
+
+def test_progress_survives_close_and_can_be_discarded(ui, monkeypatch):
+    wb, api = ui
+    monkeypatch.setattr(CalibrationWizard, "PERSIST_SIM", True)
+    api.post_calibration_open({})
+    cal = wb.require_calibration()
+    cal.sweep_start("left_arm", max_duration_s=20, background=False)
+    api.post_calibration_capture({"pose": "rest", "group": "left_arm"})
+    n = len(cal.session.sweeps["left_arm"]["q"])
+    assert cal.draft_path.exists()
+    api.post_calibration_close({})
+    st = api.post_calibration_open({})  # nouvelle séance (ou serveur relancé)
+    assert st["swept"] == ["left_arm"] and st["restored"] == ["left_arm"]
+    assert "left_arm" in st["poses"]["rest"]
+    assert len(wb.calibration.session.sweeps["left_arm"]["q"]) == n
+    st = api.post_calibration_discard({})
+    assert st["swept"] == [] and not wb.calibration.draft_path.exists()
+
+
+def test_reuse_groups_from_saved_calibration(ui, monkeypatch):
+    """Garder les bras d'une calibration enregistrée et refaire seulement la tête."""
+    wb, api = ui
+    d = wb.cfg.root / "calibration"
+    old = Calibration.load(_as_real(OLD_FILE, d / "bras-ok.yaml", "bras-ok"))
+    api.post_calibration_open({})
+    cal = wb.require_calibration()
+    for g in ("left_arm", "right_arm"):
+        api.post_calibration_import({"file": "bras-ok.yaml", "group": g})
+    st = api.get_calibration({})
+    assert set(st["imported"]) == {"left_arm", "right_arm"}
+    assert st["missing_poses"] == ["rest/head", "start/head"]  # poses des bras reprises aussi
+    cal.sweep_start("head", max_duration_s=20, background=False)
+    for pose in ("rest", "start"):
+        api.post_calibration_capture({"pose": pose, "group": "head"})
+    st = api.post_calibration_compute({"version": "tete-refaite"})
+    res = cal.result
+    for j in wb.cfg.arm_joints:
+        assert res.limits[j] == pytest.approx(old.limits[j])
+        assert res.measured[j]["imported_from"] == "bras-ok"
+    arm_cc = [c for c in old.coupled if set(c["terms"]) <= set(wb.cfg.arm_joints)]
+    assert all(c in res.coupled for c in arm_cc) and len(res.coupled) > len(arm_cc)
+    assert "repris" in res.notes
+    # explorer un groupe repris annule la reprise
+    cal.sweep_start("left_arm", max_duration_s=20, background=False)
+    assert "left_arm" not in api.get_calibration({})["imported"]

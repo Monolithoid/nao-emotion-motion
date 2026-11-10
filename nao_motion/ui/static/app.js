@@ -210,6 +210,7 @@ async function init() {
     if (window.NAOFIG) window.NAOFIG.update();
   });
   $("stop").onclick = () => api("stop", {});
+  // sans confirmation (préférence de l'opérateur) : avertissement permanent en haut de page
   $("armed").onchange = async (e) => {
     const on = e.target.checked;
     if (on && !window.confirm("Autoriser les mouvements motorisés ? Chaque mouvement restera déclenché par un bouton explicite.")) { e.target.checked = false; return; }

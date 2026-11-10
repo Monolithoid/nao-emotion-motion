@@ -48,6 +48,7 @@
       b.disabled = !!CAL.sweeping && g !== CAL.sweeping;
       const marks = [];
       if (CAL.swept.includes(g)) marks.push("exploré");
+      if ((CAL.imported || {})[g]) marks.push("repris de " + CAL.imported[g].source);
       for (const p of ["rest", "start"]) if ((CAL.poses[p] || {})[g]) marks.push(POSE_LABEL[p]);
       $("c-done-" + g).textContent = marks.length ? "✓ " + marks.join(", ") : "";
     }
@@ -56,10 +57,16 @@
     $("c-sweep").disabled = sweeping;
     $("c-sweep-stop").disabled = !sweeping;
     $("c-sweep-clear").disabled = sweeping || !CAL.swept.includes(group);
+    const imported = CAL.imported || {};
+    $("c-import").disabled = sweeping || !$("c-import-file").value;
+    $("c-drop-import").disabled = sweeping || !(group in imported);
+    $("c-discard").disabled = sweeping;
+    $("c-persist").textContent = CAL.persist ? "Progression gardée à chaque étape (reprise à la prochaine ouverture)."
+      : "Simulation : progression non gardée.";
     $("c-sweep-n").textContent = sweeping ? `${CAL.sweep_n} mesures…` : "";
     document.querySelectorAll("[data-cal]").forEach((b) => b.disabled = sweeping);
     const missing = CAL.missing_poses || [];
-    const unswept = Object.keys(CAL.groups).filter((g) => !CAL.swept.includes(g));
+    const unswept = Object.keys(CAL.groups).filter((g) => !CAL.swept.includes(g) && !(g in (CAL.imported || {})));
     $("c-missing").textContent = (unswept.length ? `À explorer : ${unswept.map(glabel).join(", ")}. ` : "") +
       (missing.length ? `Poses manquantes : ${missing.map((m) => { const [p, g] = m.split("/"); return POSE_LABEL[p] + " " + glabel(g); }).join(", ")}.` : "");
     $("c-compute").disabled = sweeping || unswept.length > 0 || missing.length > 0;
@@ -148,6 +155,37 @@
     box.innerHTML = h + "</table>";
   }
 
+  // -- calibrations enregistrées (liste + activation, même sans calibration ouverte) --
+  let FILES = [];
+  async function loadFiles() {
+    let d;
+    try { d = await (await fetch("/api/calibrations")).json(); } catch (e) { return; }
+    if (!d || !d.files) return;
+    FILES = d.files;
+    const box = $("c-files");
+    if (!FILES.length) {
+      box.textContent = "Aucun fichier dans configs/calibration/.";
+    } else {
+      box.innerHTML = "<table><tr><th>Fichier</th><th>Robot</th><th>Créée</th><th>État</th><th></th></tr>" +
+        FILES.map((f) => `<tr class="${f.active ? "is-active" : ""}"><td>${esc(f.file)}${f.notes ? `<div class="hint">${esc(f.notes)}</div>` : ""}</td>` +
+          `<td>${esc((f.robot || {}).name || "?")}${f.simulated ? " (simulation)" : ""}</td><td>${esc(f.created_at || "")}</td>` +
+          `<td>${f.active ? "active" : f.activable ? "activable" : `<span class="why">refusée : ${esc(f.reason || "")}</span>`}</td>` +
+          `<td>${f.active || !f.activable ? "" : `<button data-activate="${esc(f.file)}" class="ok">Activer</button>`}</td></tr>`).join("") +
+        "</table>";
+      box.querySelectorAll("[data-activate]").forEach((b) => b.onclick = async () => {
+        b.disabled = true;
+        try { await api("calibrations/activate", {file: b.dataset.activate}); } catch (e) { /* affiché */ }
+        await loadFiles();
+        if (typeof refreshStatus === "function") refreshStatus();
+      });
+    }
+    const sel = $("c-import-file"), prev = sel.value;
+    const usable = FILES.filter((f) => f.valid && !f.simulated);
+    sel.innerHTML = usable.length ? usable.map((f) => `<option value="${esc(f.file)}">${esc(f.version || f.file)}</option>`).join("")
+      : '<option value="">aucun fichier réel</option>';
+    if (usable.some((f) => f.file === prev)) sel.value = prev;
+  }
+
   async function poll() {
     if (busy || !$("tab-calib").classList.contains("active")) return;
     try { CAL = await (await fetch("/api/calibration")).json(); render(); } catch (e) { /* hors ligne */ }
@@ -165,9 +203,15 @@
     return call("capture", {group, pose: b.dataset.pose});
   });
   $("c-compute").onclick = () => call("compute", {version: $("c-version").value.trim()});
-  $("c-save").onclick = () => call("save");
+  $("c-save").onclick = () => call("save").then(loadFiles);
   $("c-activate").onclick = () => window.confirm("Activer cette calibration pour le guardian ? Le contrôleur reste désarmé.") &&
-    call("activate", {confirm: true});
+    call("activate", {confirm: true}).then(loadFiles);
+  $("c-import").onclick = () => call("import", {file: $("c-import-file").value, group});
+  $("c-drop-import").onclick = () => call("drop_import", {group});
+  $("c-discard").onclick = () => window.confirm("Effacer toute la progression de cette calibration (explorations, poses, reprises) ?") &&
+    call("discard");
+  loadFiles();
+  document.querySelector('nav button[data-tab="calib"]').addEventListener("click", loadFiles);
   setInterval(poll, 300);
   document.querySelector('nav button[data-tab="calib"]').addEventListener("click", poll);
   // lu par nao-figure.js (illustration) : groupe affiché et état de la calibration ;

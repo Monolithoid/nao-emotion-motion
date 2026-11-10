@@ -257,9 +257,31 @@ class Api:
         if not d.get("confirm"):
             raise ValueError("Confirmation explicite requise")
         cal = self._cal()
-        cal.activate()
-        self.wb.reload_config()
+        cal.activate()  # recharge la configuration (Workbench.activate_calibration)
         return cal.state()
+
+    def post_calibration_import(self, d):
+        """Reprend un groupe d'une calibration enregistrée dans la calibration ouverte."""
+        self._cal().import_group(d["file"], d["group"])
+        return self._cal().state()
+
+    def post_calibration_drop_import(self, d):
+        self._cal().drop_import(d["group"])
+        return self._cal().state()
+
+    def post_calibration_discard(self, d):
+        self._cal().discard_draft()
+        return self._cal().state()
+
+    # calibrations enregistrées (configs/calibration/) : liste et activation -----
+    def get_calibrations(self, q):
+        return {"files": self.wb.list_calibrations(), "active": self.wb.cfg.calibration_version,
+                "calibrated": self.wb.cfg.calibrated}
+
+    def post_calibrations_activate(self, d):
+        """Active un fichier déjà enregistré (aucun mouvement, contrôleur laissé tel quel)."""
+        self.wb.activate_calibration(d["file"])
+        return self.get_calibrations({})
 
 
 def make_handler(api: Api):

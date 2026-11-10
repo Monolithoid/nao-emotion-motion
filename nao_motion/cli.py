@@ -304,8 +304,7 @@ def cmd_calibration_activate(a):
     from .calibration import activate
     from .config import load_config
     cfg = load_config(a.config, use_calibration=False)
-    print("Active :", activate(cfg.root, a.file))
-    load_config(a.config)  # vérifie que poses et limites sont cohérentes
+    print("Active :", activate(cfg.root, a.file, allow_simulated=a.allow_simulated))  # vérifie avant d'écrire
 
 
 def cmd_serve_inference(a):
@@ -369,7 +368,9 @@ def main(argv=None):
     s.add_argument("--allow-uncalibrated", action="store_true", help="exporter les limites de remplacement (essais)")
     s.set_defaults(fn=cmd_export_guardian)
     s = sub.add_parser("calibration-activate", help="activer un fichier de configs/calibration/")
-    s.add_argument("file"); s.set_defaults(fn=cmd_calibration_activate)
+    s.add_argument("file", help="fichier de configs/calibration/ (chemin ou nom seul)")
+    s.add_argument("--allow-simulated", action="store_true", help="accepter une calibration simulée (essais)")
+    s.set_defaults(fn=cmd_calibration_activate)
     s = sub.add_parser("serve-inference", help="serveur HTTP d'inférence (génération sans exécution)")
     s.add_argument("--host", default="127.0.0.1"); s.add_argument("--port", type=int, default=8766)
     s.set_defaults(fn=cmd_serve_inference)
