@@ -96,6 +96,8 @@ nao-motion calibration-activate configs/calibration/<file>.yaml
 nao-motion capture-pose --group left_arm --name start --adapter bridge   # reads the sensors, sends nothing
 nao-motion serve-inference --port 8766  # remote inference (generates, does not execute)
 nao-motion export-guardian --out guardian_export   # standalone guardian for another project (see "Standalone guardian")
+nao-motion export-dataset ../nao-emotion-motion-dataset --author "Name"   # dataset to publish (see "Sharing the dataset")
+nao-motion import-dataset ../nao-emotion-motion-dataset   # takes, calibrations and models back into data/, configs/, runs/
 ```
 
 ---
@@ -199,6 +201,21 @@ Data is rejected at save time if a value is not finite, if timestamps are not st
 Checkpoints (`runs/<run>/model.pt`) contain the architecture, weights, joints, emotion list, normalisation, representation, calibration version, configuration fingerprint, training and validation takes, hyperparameters and metrics. Head and hand checkpoints are marked `independent: true`. On reload, a model is **rejected** if its emotions or joints differ from the current configuration, and a warning is issued if the calibration has changed. `model_numpy.npz` allows inference without PyTorch.
 
 Where inference runs is set in `configs/robot.yaml` → `inference`: `location: local | remote`, `backend: torch | numpy`, `remote_url`. A trajectory computed remotely is always revalidated locally by the guardian.
+
+### Sharing the dataset, moving to another PC
+
+Takes (`data/`), models (`runs/`), calibration drafts and `.env` are not versioned in this repository. Saved calibrations (`configs/calibration/*.yaml`, `ACTIVE`) are not ignored but are not committed either. To keep the code repository light, the dataset is published as a **separate repository** (GitHub, or Hugging Face, which is also a Git repository):
+
+```bash
+nao-motion export-dataset ../nao-emotion-motion-dataset --author "Name"
+cd ../nao-emotion-motion-dataset && git init && git add . && git commit -m "Dataset v1"   # then push
+```
+
+The export keeps only **accepted** takes recorded on the **real robot** (no `synthetic`), without the `incomplete` tag (options `--status`, `--include-synthetic`, `--include-incomplete`), with byte-for-byte copies of the takes, the calibrations they cite, `configs/emotions.yaml` and `joints.yaml`, the latest arm, head and hand models (`--no-models` to leave them out), an `index.csv`, a dataset card (`README.md`), a `LICENSE` for the data (`--license CC-BY-4.0` by default; the code stays MIT) and a `dataset.json` manifest with the sha256 of every file. `--strip-notes` empties the free-text notes. Exporting again into the same folder updates it (new takes added, changed metadata rewritten, takes no longer selected removed); its `.git` is never touched. The export folder must be outside `data/`, and is best kept outside this repository.
+
+`import-dataset` does the reverse, for instance on a new PC after cloning the dataset repository: it checks every sha256 first (nothing is imported if a file is missing or modified), copies the missing takes into `data/takes/`, adds the missing calibrations to `configs/calibration/` **without activating any**, and copies the models into `runs/` (sets `latest_<group>.txt` only if none exists). Nothing is ever overwritten.
+
+To move everything to another PC without publishing, copying `data/`, `runs/`, `configs/calibration/` and `.env` into the clone on the new PC is enough: all paths are relative.
 
 ---
 
