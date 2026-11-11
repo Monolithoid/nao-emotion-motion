@@ -307,6 +307,36 @@ def cmd_calibration_activate(a):
     print("Active :", activate(cfg.root, a.file, allow_simulated=a.allow_simulated))  # vérifie avant d'écrire
 
 
+def cmd_export_dataset(a):
+    """Jeu de données à publier dans un dépôt séparé (prises réelles acceptées, calibrations, modèles)."""
+    from .data.dataset import DatasetError, export_dataset
+    try:
+        r = export_dataset(a.data, a.out, a.config, None if a.no_models else a.runs, name=a.name,
+                           version=a.version, license_id=a.license, author=a.author,
+                           statuses=tuple(a.status), include_synthetic=a.include_synthetic,
+                           include_incomplete=a.include_incomplete, strip_notes=a.strip_notes)
+    except DatasetError as e:
+        raise SystemExit(str(e))
+    print(json.dumps(r, indent=1, ensure_ascii=False))
+    if r["missing_calibrations"]:
+        print("ATTENTION : calibration(s) citée(s) mais absente(s) de configs/calibration/ :",
+              ", ".join(r["missing_calibrations"]))
+    return 0
+
+
+def cmd_import_dataset(a):
+    """Reprise d'un export (autre PC, jeu partagé) : n'écrase jamais rien, n'active aucune calibration."""
+    from .data.dataset import DatasetError, import_dataset
+    try:
+        r = import_dataset(a.src, a.data, a.config, None if a.no_models else a.runs)
+    except DatasetError as e:
+        raise SystemExit(str(e))
+    print(json.dumps(r, indent=1, ensure_ascii=False))
+    if r["calibrations_added"]:
+        print("Calibrations ajoutées mais NON activées : onglet Calibration (Activer) ou nao-motion calibration-activate.")
+    return 0
+
+
 def cmd_serve_inference(a):
     from .inference.server import serve
     serve(_wb(a, adapter="sim"), a.host, a.port)
@@ -371,6 +401,22 @@ def main(argv=None):
     s.add_argument("file", help="fichier de configs/calibration/ (chemin ou nom seul)")
     s.add_argument("--allow-simulated", action="store_true", help="accepter une calibration simulée (essais)")
     s.set_defaults(fn=cmd_calibration_activate)
+    s = sub.add_parser("export-dataset", help="exporter le jeu de données (dossier prêt à publier dans un dépôt séparé)")
+    s.add_argument("out", help="dossier d'export (vide, ou export précédent à mettre à jour)")
+    s.add_argument("--name", default="nao-emotion-motion-dataset")
+    s.add_argument("--version", default=None, help="version du jeu (défaut : date du jour)")
+    s.add_argument("--license", default="CC-BY-4.0", choices=["CC-BY-4.0", "CC-BY-SA-4.0", "CC0-1.0"])
+    s.add_argument("--author", default="", help="nom à citer (licence et fiche)")
+    s.add_argument("--status", nargs="+", default=["accepted"], choices=["accepted", "pending", "rejected"])
+    s.add_argument("--include-synthetic", action="store_true", help="inclure les prises simulées")
+    s.add_argument("--include-incomplete", action="store_true", help="inclure les prises coupées (tag incomplete)")
+    s.add_argument("--strip-notes", action="store_true", help="vider les notes libres des prises")
+    s.add_argument("--no-models", action="store_true", help="ne pas joindre les derniers modèles")
+    s.set_defaults(fn=cmd_export_dataset)
+    s = sub.add_parser("import-dataset", help="importer un export dans data/ (n'écrase rien)")
+    s.add_argument("src", help="dossier d'export (ex. clone du dépôt du jeu de données)")
+    s.add_argument("--no-models", action="store_true", help="ne pas copier les modèles dans runs/")
+    s.set_defaults(fn=cmd_import_dataset)
     s = sub.add_parser("serve-inference", help="serveur HTTP d'inférence (génération sans exécution)")
     s.add_argument("--host", default="127.0.0.1"); s.add_argument("--port", type=int, default=8766)
     s.set_defaults(fn=cmd_serve_inference)
