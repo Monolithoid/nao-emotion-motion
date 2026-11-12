@@ -118,7 +118,10 @@ def cmd_takes(a):
 
 def cmd_train(a):
     wb = _wb(a, adapter="sim")
-    job = wb.train(a.component, epochs=a.epochs, include_pending=a.include_pending, background=False)
+    ov = {"hidden": a.hidden, "dropout": a.dropout, "weight_decay": a.weight_decay, "lr": a.lr,
+          "smoothness_weight": a.smoothness}
+    job = wb.train(a.component, epochs=a.epochs, include_pending=a.include_pending, background=False,
+                   overrides={k: v for k, v in ov.items() if v is not None})
     if job["state"] != "done":
         print("Échec :", job["error"], file=sys.stderr)
         return 1
@@ -365,6 +368,9 @@ def main(argv=None):
     s = sub.add_parser("train", help="entraîner arms, head ou hands, chacun indépendamment (sans aucun mouvement)")
     s.add_argument("component", choices=["arms", "head", "hands"]); s.add_argument("--epochs", type=int)
     s.add_argument("--include-pending", action="store_true")
+    s.add_argument("--hidden", help='couches cachées, ex. "32,32" (défaut : model.yaml)')
+    s.add_argument("--dropout", type=float); s.add_argument("--weight-decay", type=float)
+    s.add_argument("--lr", type=float); s.add_argument("--smoothness", type=float, help="poids du lissage")
     s.set_defaults(fn=cmd_train)
     s = sub.add_parser("generate", help="générer et valider (simulation uniquement)")
     s.add_argument("--emotion", default="joie"); s.add_argument("--mix", help='mélange JSON ex. {"joie":0.5,"surprise":0.5}')

@@ -235,6 +235,8 @@ async function refreshTrain() {
       `<div class="mono">exemples ${m.n_examples} (entraînement ${m.n_train} / validation ${m.n_val}, groupes ${m.n_train_groups}/${m.n_val_groups})\n` +
       `RMSE entraînement ${m.train_rmse_rad.toFixed(4)} rad · validation ${m.val_rmse_rad !== undefined ? m.val_rmse_rad.toFixed(4) : "—"} rad · référence (moyenne par étiquette) ${m.val_baseline_label_mean_rmse_rad !== undefined ? m.val_baseline_label_mean_rmse_rad.toFixed(4) : "—"} rad\n` +
       (m.val_duration_mae_s !== undefined ? `erreur de durée (val.) ${m.val_duration_mae_s.toFixed(3)} s\n` : "") +
+      (m.settings ? `réglages : réseau ${m.settings.hidden.join("-")} · dropout ${m.settings.dropout} · weight decay ${m.settings.weight_decay} · lr ${m.settings.lr} · lissage ${m.settings.smoothness_weight} · ${m.settings.epochs} époques` +
+        (m.best_epoch !== undefined ? ` (modèle gardé : époque ${m.best_epoch})` : "") + "\n" : "") +
       `guardian : ${m.guardian ? m.guardian.accepted + "/" + m.guardian.total + " trajectoires générées acceptées " + JSON.stringify(m.guardian.violations_by_code) : "—"}` +
       (m.warning ? "\n⚠ " + m.warning : "") + "</div></div>";
   }).join(""));
@@ -335,7 +337,16 @@ async function init() {
   $("t-reject").onclick = () => upd({status: "rejected"});
   $("t-save-notes").onclick = () => upd({notes: $("t-notes").value});
   // entraînement
-  const train = (c) => api("train", {component: c, epochs: parseInt($("tr-epochs").value), include_pending: $("tr-pending").checked}).then(refreshTrain);
+  // réglages de l'entraînement (vides = model.yaml) ; placeholders = valeurs de model.yaml
+  const M = CFG.model || {}, T = M.training || {}, A = M.arm_model || {};
+  $("tr-hidden").placeholder = (A.hidden || []).join(","); $("tr-dropout").placeholder = A.dropout ?? "";
+  $("tr-wd").placeholder = T.weight_decay ?? ""; $("tr-lr").placeholder = T.lr ?? ""; $("tr-smooth").placeholder = T.smoothness_weight ?? "";
+  const TR_FIELDS = {hidden: "tr-hidden", dropout: "tr-dropout", weight_decay: "tr-wd", lr: "tr-lr", smoothness_weight: "tr-smooth"};
+  const setTr = (v) => { for (const [k, id] of Object.entries(TR_FIELDS)) $(id).value = v[k] ?? ""; };
+  $("tr-preset-small").onclick = () => setTr({hidden: "32", dropout: 0.1, weight_decay: 0.01, smoothness_weight: 0.05});
+  $("tr-preset-reset").onclick = () => setTr({});
+  const overrides = () => { const o = {}; for (const [k, id] of Object.entries(TR_FIELDS)) if ($(id).value.trim() !== "") o[k] = $(id).value.trim(); return o; };
+  const train = (c) => api("train", {component: c, epochs: parseInt($("tr-epochs").value), include_pending: $("tr-pending").checked, overrides: overrides()}).then(refreshTrain);
   $("tr-arms").onclick = () => train("arms"); $("tr-head").onclick = () => train("head"); $("tr-hands").onclick = () => train("hands");
   setInterval(() => { if ($("tab-train").classList.contains("active")) refreshTrain(); }, 2000);
   $("tr-runs").addEventListener("click", (e) => {
