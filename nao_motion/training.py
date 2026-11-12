@@ -129,12 +129,45 @@ _NO_TAKES = {"arms": "Aucune prise de bras utilisable (statut 'accepted' requis 
              "hands": "Aucune prise de mains utilisable (statut 'accepted' requis par défaut)"}
 
 
+# réglages modifiables pour un entraînement (interface / CLI), sans toucher à model.yaml
+OVERRIDABLE = ("hidden", "dropout", "weight_decay", "lr", "smoothness_weight", "epochs")
+
+
+def check_overrides(o: Optional[dict]) -> dict:
+    """Valide les réglages d'un entraînement ; lève TrainingError si une valeur est invalide."""
+    out = {}
+    for k, v in (o or {}).items():
+        if v is None or v == "":
+            continue
+        if k not in OVERRIDABLE:
+            raise TrainingError(f"Réglage inconnu : {k}")
+        try:
+            if k == "hidden":
+                v = [int(x) for x in (v.replace(",", " ").split() if isinstance(v, str) else v)]
+                ok = 1 <= len(v) <= 4 and all(1 <= x <= 1024 for x in v)
+            elif k == "epochs":
+                v = int(v)
+                ok = 1 <= v <= 100000
+            else:
+                v = float(v)
+                ok = np.isfinite(v) and v >= 0 and (k != "dropout" or v < 1) and (k != "lr" or v > 0)
+        except (TypeError, ValueError):
+            ok = False
+        if not ok:
+            raise TrainingError(f"Valeur invalide pour {k} : {o[k]!r}")
+        out[k] = v
+    return out
+
+
 def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, statuses=("accepted",),
-                    epochs: Optional[int] = None, log=None) -> Path:
+                    epochs: Optional[int] = None, log=None, overrides: Optional[dict] = None) -> Path:
     """Entraîne UN groupe (bras, tête ou mains), indépendamment des deux autres.
 
     Entrée : [émotion, intensité, événement] ; sortie : points de contrôle du groupe
-    et log de sa durée. Aucun autre modèle n'est requis ni chargé."""
+    et log de sa durée. Aucun autre modèle n'est requis ni chargé.
+    `overrides` : réglages propres à cet entraînement (taille du réseau, dropout,
+    weight_decay, lr, lissage, époques) ; model.yaml n'est pas modifié."""
+    ov = check_overrides(overrides)
     if component not in COMPONENTS:
         raise ValueError(component)
     K = int(cfg.model["representation"]["n_control_points"])
@@ -145,6 +178,7 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
     mc = cfg.model.get(f"{component}_model") or cfg.model["head_model"]
     if component == "arms":
         mc = cfg.model["arm_model"]
+    mc = dict(mc, **{k: ov[k] for k in ("hidden", "dropout") if k in ov})
     target = mc.get("target", "measured") if component == "hands" else "measured"
     ex = group_examples(store, cfg, component, statuses, target)
     if len(ex) == 0:
@@ -152,6 +186,7 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
     tcfg = dict(cfg.model["training"])
     if epochs:
         tcfg["epochs"] = epochs
+    tcfg.update({k: ov[k] for k in ("weight_decay", "lr", "smoothness_weight", "epochs") if k in ov})
     tr, va, _ = grouped_split(ex.groups, float(tcfg["val_fraction"]), int(tcfg["seed"]))
     in_dim = motion_input_dim(len(cfg.emotions))
     assert ex.X.shape[1] == in_dim
@@ -160,6 +195,13 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
     model, hist = _fit(ex, tr, va, arch, K, J, tcfg, True, log)
     norm = Norm.from_config(cfg, joints)
     metrics = _evaluate(model, ex, tr, va, norm, K, True)
+    # réglages effectivement utilisés, et époque du modèle retenu (meilleure validation)
+    metrics["settings"] = {"hidden": arch["hidden"], "dropout": arch["dropout"],
+                           "weight_decay": float(tcfg["weight_decay"]), "lr": float(tcfg["lr"]),
+                           "smoothness_weight": float(tcfg.get("smoothness_weight", 0.0)),
+                           "epochs": int(tcfg["epochs"]), "overrides": sorted(ov)}
+    if len(va) and hist:
+        metrics["best_epoch"] = min(hist, key=lambda h: h["val_loss"])["epoch"]
     run = _run_dir(runs_dir, component)
     meta = _meta(cfg, component, joints, norm, K, ex, tr, va, tcfg)
     meta["synthetic_data"] = any(store.load_meta(t).synthetic for t in ex.take_ids)

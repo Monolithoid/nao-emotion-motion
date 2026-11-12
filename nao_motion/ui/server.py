@@ -43,7 +43,8 @@ class Api:
                 "poses_calibrated": c.poses_calibrated, "robot": c.robot.get("robot"),
                 "events": {"distance_m": [0.3, 3.0], "azimuth_deg": [-90, 90], "elevation_deg": [-30, 45],
                            **(c.robot.get("events") or {})},
-                "countdown_s": c.robot.get("recording", {}).get("countdown_s", 3)}
+                "countdown_s": c.robot.get("recording", {}).get("countdown_s", 3),
+                "model": {k: c.model.get(k) for k in ("arm_model", "head_model", "hands_model", "training")}}
 
     def get_status(self, q):
         return self.wb.status()
@@ -194,7 +195,8 @@ class Api:
         return ev.to_dict()
 
     def post_train(self, d):
-        return self.wb.train(d["component"], d.get("epochs"), bool(d.get("include_pending")))
+        return self.wb.train(d["component"], d.get("epochs"), bool(d.get("include_pending")),
+                             overrides=d.get("overrides"))
 
     def post_generate(self, d):
         emotion = d.get("mix") or d["emotion"]

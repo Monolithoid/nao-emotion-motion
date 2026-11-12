@@ -248,3 +248,22 @@ def test_arm_model_without_event_is_refused(trained, cfg, tmp_path):
     torch.save(ck, old)
     with pytest.raises(CheckpointError, match="le réentraîner"):
         LoadedModel(old, cfg, "arms")
+
+
+def test_training_overrides_change_network_without_touching_config(trained, cfg):
+    """Réglages d'un entraînement (interface) : appliqués au réseau et consignés, model.yaml intact."""
+    from nao_motion.training import TrainingError, check_overrides
+    wb = trained["wb"]
+    before = json.dumps(cfg.model, sort_keys=True)
+    job = wb.train("head", epochs=40, background=False,
+                   overrides={"hidden": "16", "dropout": "0.1", "weight_decay": 0.01, "smoothness_weight": ""})
+    assert job["state"] == "done", job["error"]
+    head = LoadedModel(Path(job["run"]) / "model.pt", cfg, "head")
+    assert head.arch["hidden"] == [16] and head.arch["dropout"] == 0.1
+    m = json.loads((Path(job["run"]) / "metrics.json").read_text())["metrics"]
+    assert m["settings"]["weight_decay"] == 0.01 and m["settings"]["hidden"] == [16]
+    assert 0 <= m["best_epoch"] < 40
+    assert json.dumps(cfg.model, sort_keys=True) == before
+    for bad in ({"hidden": "0"}, {"dropout": 1.5}, {"lr": 0}, {"inconnu": 1}, {"hidden": "a,b"}):
+        with pytest.raises(TrainingError):
+            check_overrides(bad)

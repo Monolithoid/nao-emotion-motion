@@ -464,12 +464,14 @@ class Workbench:
         return d
 
     # -- entraînement -----------------------------------------------------------
-    def train(self, component, epochs=None, include_pending=False, background=True):
-        """Entraîne UN groupe (bras, tête ou mains), indépendamment des deux autres."""
+    def train(self, component, epochs=None, include_pending=False, background=True, overrides=None):
+        """Entraîne UN groupe (bras, tête ou mains), indépendamment des deux autres.
+        `overrides` : réglages de cet entraînement (voir training.OVERRIDABLE)."""
+        overrides = training.check_overrides(overrides)  # erreur immédiate si réglage invalide
         statuses = ("accepted", "pending") if include_pending else ("accepted",)
         job_id = new_id(f"train-{component}")
         job = {"id": job_id, "component": component, "state": "running", "progress": [], "run": None,
-               "error": None, "started": time.time()}
+               "error": None, "started": time.time(), "overrides": overrides}
         self.jobs[job_id] = job
 
         def log(ep, l, lv):
@@ -479,7 +481,7 @@ class Workbench:
         def work():
             try:
                 run = training.train_component(component, self.store, self.cfg, self.runs_dir, statuses,
-                                               epochs, log)
+                                               epochs, log, overrides)
                 job["run"] = str(run)
                 job["state"] = "done"
                 self.engine = None  # rechargé à la prochaine génération ; AUCUNE exécution

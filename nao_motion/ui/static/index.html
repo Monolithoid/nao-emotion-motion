@@ -228,6 +228,24 @@
     <button id="tr-head">Entraîner la tête</button>
     <button id="tr-hands">Entraîner les mains</button>
   </div>
+  <details id="tr-settings">
+    <summary>Réglages de l'entraînement</summary>
+    <p class="hint">S'appliquent aux prochains entraînements lancés d'ici (bras, tête ou mains), sans modifier
+    <code>configs/model.yaml</code>. Champ vide = valeur de <code>model.yaml</code> (affichée en grisé). Avec peu de prises,
+    un réseau plus petit et plus régularisé colle moins aux prises et généralise mieux. Le modèle gardé est toujours celui
+    de la meilleure validation, quel que soit le nombre d'époques.</p>
+    <div class="row">
+      <label title="Neurones par couche cachée, séparés par des virgules (ex. 32,32 ou 16)">Couches cachées <input id="tr-hidden" class="num" style="width:7em"></label>
+      <label title="Fraction de neurones désactivés au hasard pendant l'entraînement (0 à 0,9)">Dropout <input type="number" id="tr-dropout" step="0.05" min="0" max="0.9" class="num"></label>
+      <label title="Pénalité sur la taille des poids : plus grand = modèle plus simple">Weight decay <input type="number" id="tr-wd" step="0.0001" min="0" class="num"></label>
+      <label title="Pas d'apprentissage">lr <input type="number" id="tr-lr" step="0.001" min="0" class="num"></label>
+      <label title="Pénalité sur les à-coups des trajectoires">Lissage <input type="number" id="tr-smooth" step="0.01" min="0" class="num"></label>
+    </div>
+    <div class="row">
+      <button id="tr-preset-small" title="Réseau 32 (une couche), dropout 0,1, weight decay 0,01, lissage 0,05">Préréglage « peu de données »</button>
+      <button id="tr-preset-reset">Valeurs de model.yaml</button>
+    </div>
+  </details>
   <div id="tr-jobs"></div>
   <h3>Résultats</h3>
   <div id="tr-runs"></div>
