@@ -205,18 +205,39 @@ function animate(el, t0, t1) {
 }
 
 // ---- entraînement ---------------------------------------------------------------
+// réécrit le bloc seulement si son contenu change : une sélection en cours (copier-coller) n'est pas perdue
+function setHTML(el, html) {
+  if (el._html === html) return;
+  el._html = html;
+  el.innerHTML = html;
+}
+
+let RUNS = [];
+async function copyText(text, btn) {
+  try { await navigator.clipboard.writeText(text); }
+  catch (e) {  // repli sans API presse-papiers
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand("copy"); ta.remove();
+  }
+  const old = btn.textContent; btn.textContent = "Copié ✓";
+  setTimeout(() => { btn.textContent = old; }, 1500);
+}
+
 async function refreshTrain() {
   const d = await api("train");
-  $("tr-jobs").innerHTML = d.jobs.map((j) => `<div class="mono">${j.id} · ${j.component} · ${j.state}${j.error ? " · " + j.error : ""}` +
-    (j.progress.length ? ` · époque ${j.progress[j.progress.length - 1].epoch}, perte ${j.progress[j.progress.length - 1].train_loss.toFixed(4)}` : "") + "</div>").join("");
-  $("tr-runs").innerHTML = d.runs.map((r) => {
+  setHTML($("tr-jobs"), d.jobs.map((j) => `<div class="mono">${j.id} · ${j.component} · ${j.state}${j.error ? " · " + j.error : ""}` +
+    (j.progress.length ? ` · époque ${j.progress[j.progress.length - 1].epoch}, perte ${j.progress[j.progress.length - 1].train_loss.toFixed(4)}` : "") + "</div>").join(""));
+  RUNS = d.runs;
+  setHTML($("tr-runs"), d.runs.map((r, i) => {
     const m = r.metrics;
-    return `<div class="draft"><b>${r.run}</b><div class="mono">exemples ${m.n_examples} (entraînement ${m.n_train} / validation ${m.n_val}, groupes ${m.n_train_groups}/${m.n_val_groups})\n` +
+    return `<div class="draft"><b>${r.run}</b> <button data-copy-run="${i}" title="Copie toutes les métriques (JSON) dans le presse-papiers">Copier</button>` +
+      `<div class="mono">exemples ${m.n_examples} (entraînement ${m.n_train} / validation ${m.n_val}, groupes ${m.n_train_groups}/${m.n_val_groups})\n` +
       `RMSE entraînement ${m.train_rmse_rad.toFixed(4)} rad · validation ${m.val_rmse_rad !== undefined ? m.val_rmse_rad.toFixed(4) : "—"} rad · référence (moyenne par étiquette) ${m.val_baseline_label_mean_rmse_rad !== undefined ? m.val_baseline_label_mean_rmse_rad.toFixed(4) : "—"} rad\n` +
       (m.val_duration_mae_s !== undefined ? `erreur de durée (val.) ${m.val_duration_mae_s.toFixed(3)} s\n` : "") +
       `guardian : ${m.guardian ? m.guardian.accepted + "/" + m.guardian.total + " trajectoires générées acceptées " + JSON.stringify(m.guardian.violations_by_code) : "—"}` +
       (m.warning ? "\n⚠ " + m.warning : "") + "</div></div>";
-  }).join("");
+  }).join(""));
 }
 
 // ---- génération -----------------------------------------------------------------
@@ -317,6 +338,11 @@ async function init() {
   const train = (c) => api("train", {component: c, epochs: parseInt($("tr-epochs").value), include_pending: $("tr-pending").checked}).then(refreshTrain);
   $("tr-arms").onclick = () => train("arms"); $("tr-head").onclick = () => train("head"); $("tr-hands").onclick = () => train("hands");
   setInterval(() => { if ($("tab-train").classList.contains("active")) refreshTrain(); }, 2000);
+  $("tr-runs").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-copy-run]");
+    const r = b && RUNS[+b.dataset.copyRun];
+    if (r) copyText(JSON.stringify({run: r.run, path: r.path, metrics: r.metrics}, null, 2), b);
+  });
   // génération
   $("g-go").onclick = generate;
   $("g-exec").onclick = () => lastPlan && window.confirm(real() ? "Exécuter sur le ROBOT RÉEL ?" : "Exécuter sur le robot simulé ?") && api("execute", {plan_id: lastPlan, confirm: true});
