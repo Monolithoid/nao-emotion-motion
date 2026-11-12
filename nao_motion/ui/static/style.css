@@ -33,6 +33,7 @@ td.live{color:var(--accent);font-variant-numeric:tabular-nums}td.num{font-varian
 .cal-pairs{display:flex;flex-wrap:wrap;gap:10px}.cal-pairs figure{margin:0}.cal-pairs svg{width:220px;height:220px;background:var(--card);border:1px solid var(--line);border-radius:6px}
 .cal-pairs figcaption{font-size:12px;color:var(--muted)}
 .done{color:var(--ok);font-size:12px}
+.fov-view{font-weight:600}.fov-view.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .fov svg{width:100%;max-width:640px;height:auto;cursor:crosshair;display:block}
 
 .facbar{vertical-align:middle}.warn{color:var(--bad,#c0392b);font-size:.85em}

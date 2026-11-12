@@ -1,7 +1,12 @@
 "use strict";
 // Champ de vision : l'événement vu par le robot (repère torse).
-// Abscisse = azimut (gauche du robot à gauche), ordonnée = élévation (haut en haut),
-// taille du point = proximité (plus gros = plus proche). Un clic place le point.
+// Abscisse = azimut, ordonnée = élévation (haut en haut), taille du point = proximité
+// (plus gros = plus proche). Un clic place le point.
+// Deux vues, AFFICHAGE SEUL (l'événement enregistré ne change pas, azimut > 0 = gauche
+// du robot) : « vue robot » (on regarde dans le même sens que lui, on voit le dos de sa
+// tête : gauche du robot à gauche de l'écran) et « vue observateur » (on lui fait face,
+// on voit sa face : gauche du robot à droite de l'écran, comme en miroir). Le choix est
+// commun à tous les champs et gardé dans le navigateur.
 // Le serveur garde UN événement courant : chaque champ l'affiche et le modifie.
 (function () {
   const DEG = 180 / Math.PI;
@@ -10,6 +15,21 @@
   const widgets = [];
   let R = null;           // plages (config)
   let lastEdit = 0;       // évite d'écraser une saisie en cours par la synchronisation
+  const VIEW_KEY = "nao-fov-view";
+  let view = "robot";     // "robot" (dos de la tête) ou "observer" (face)
+  try { if (localStorage.getItem(VIEW_KEY) === "observer") view = "observer"; } catch (e) { /* stockage indisponible */ }
+  const mirrored = () => view === "observer";
+
+  // Tête de NAO au centre : PNG fournis dans static/ s'ils existent, sinon dessin SVG de repli.
+  const HEAD = {
+    robot: {png: "nao-head-back.png", svg: "nao-head-back.svg", src: "nao-head-back.svg"},
+    observer: {png: "nao-head-front.png", svg: "nao-head-front.svg", src: "nao-head-front.svg"},
+  };
+  for (const h of Object.values(HEAD)) {
+    const img = new Image();
+    img.onload = () => { h.src = h.png; redraw(); };
+    img.src = h.png;
+  }
 
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const prox = (d) => 1 / (1 + d);
@@ -37,11 +57,13 @@
         <label>élévation <input type="number" id="${id}-el" step="5" class="num">°</label>
         <label>distance <input type="number" id="${id}-d" step="0.1" min="0.05" class="num"> m</label>
         <label><input type="checkbox" id="${id}-dunk"> distance inconnue</label>
+        <button type="button" id="${id}-view" class="fov-view" title="Inverser gauche/droite de l'affichage (touche V)"></button>
         <span id="${id}-txt" class="hint"></span>
       </div>
       <svg id="${id}-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Champ de vision du robot"></svg>`;
     const w = {el, id, ev: {present: false}};
-    const X = (az) => PL + (R.az[1] - az) / (R.az[1] - R.az[0]) * (W - PL - P);   // gauche du robot à gauche
+    // vue robot : gauche du robot (azimut > 0) à gauche ; vue observateur : en miroir
+    const X = (az) => PL + (mirrored() ? az - R.az[0] : R.az[1] - az) / (R.az[1] - R.az[0]) * (W - PL - P);
     const Y = (e) => P + (R.el[1] - e) / (R.el[1] - R.el[0]) * (B - P);
     w.X = X; w.Y = Y;
     const inp = (k) => document.getElementById(`${id}-${k}`);
@@ -55,10 +77,12 @@
       api("event", body).then((ev) => { for (const o of widgets) show(o, ev); });
     };
     ["present", "az", "el", "d", "dunk"].forEach((k) => inp(k).onchange = send);
+    inp("view").onclick = toggleView;
     inp("svg").onclick = (e) => {
       const r = inp("svg").getBoundingClientRect();
       const sx = (e.clientX - r.left) / r.width * W, sy = (e.clientY - r.top) / r.height * H;
-      const az = R.az[1] - (sx - PL) / (W - PL - P) * (R.az[1] - R.az[0]);
+      const f = (sx - PL) / (W - PL - P) * (R.az[1] - R.az[0]);
+      const az = mirrored() ? R.az[0] + f : R.az[1] - f;
       const elv = R.el[1] - (sy - P) / (B - P) * (R.el[1] - R.el[0]);
       inp("present").checked = true;
       inp("az").value = Math.round(clamp(az, R.az[0], R.az[1]));
@@ -74,7 +98,7 @@
     let s = `<rect x="${PL}" y="${P}" width="${W - PL - P}" height="${B - P}" rx="8" fill="var(--card)" stroke="var(--line)"/>`;
     // zone du tirage aléatoire
     const a = R.draw.azimuth_deg, e = R.draw.elevation_deg;
-    s += `<rect x="${X(a[1])}" y="${Y(e[1])}" width="${X(a[0]) - X(a[1])}" height="${Y(e[0]) - Y(e[1])}" fill="var(--accent)" fill-opacity=".06" stroke="var(--accent)" stroke-opacity=".35" stroke-dasharray="4 4"/>`;
+    s += `<rect x="${Math.min(X(a[0]), X(a[1]))}" y="${Y(e[1])}" width="${Math.abs(X(a[0]) - X(a[1]))}" height="${Y(e[0]) - Y(e[1])}" fill="var(--accent)" fill-opacity=".06" stroke="var(--accent)" stroke-opacity=".35" stroke-dasharray="4 4"/>`;
     for (let az = Math.ceil(R.az[0] / 30) * 30; az <= R.az[1]; az += 30)
       s += `<line x1="${X(az)}" x2="${X(az)}" y1="${P}" y2="${B}" stroke="var(--line)"${az === 0 ? ' stroke-width="1.5"' : ""}/>` +
         `<text x="${X(az)}" y="${B + 14}" text-anchor="middle" font-size="11" fill="var(--muted)">${az}°</text>`;
@@ -86,9 +110,14 @@
     const lab = (y, t, w) => `<text x="16" y="${y}" transform="rotate(-90 16 ${y})" text-anchor="middle" font-size="12"` +
       ` font-weight="${w}" fill="var(--muted)">${t}</text>`;
     s += lab(yUp, "haut →", 600) + lab(yMid, "élévation", 400) + lab(yDown, "← bas", 600);
-    s += `<text x="${PL}" y="${P - 10}" font-size="11" fill="var(--muted)">← gauche du robot</text>` +
-      `<text x="${W - P}" y="${P - 10}" text-anchor="end" font-size="11" fill="var(--muted)">droite du robot →</text>` +
-      `<text x="${X(0)}" y="${P - 10}" text-anchor="middle" font-size="11" fill="var(--muted)">devant</text>`;
+    const [lt, rt] = mirrored() ? ["droite", "gauche"] : ["gauche", "droite"];
+    s += `<text x="${PL}" y="${P - 10}" font-size="12" font-weight="600" fill="var(--fg)">← ${lt} du robot</text>` +
+      `<text x="${W - P}" y="${P - 10}" text-anchor="end" font-size="12" font-weight="600" fill="var(--fg)">${rt} du robot →</text>` +
+      `<text x="${X(0)}" y="${P - 10}" text-anchor="middle" font-size="11" fill="var(--muted)">${mirrored() ? "vue de face" : "vue du robot"}</text>`;
+    // tête de NAO au centre (devant, hauteur du torse) : dos en vue robot, face en vue observateur
+    const hs = 46, hx = X(0), hy = Y(clamp(0, R.el[0], R.el[1]));
+    s += `<image href="${HEAD[view].src}" x="${hx - hs / 2}" y="${hy - hs / 2}" width="${hs}" height="${hs}" opacity=".9"` +
+      ` preserveAspectRatio="xMidYMid meet" pointer-events="none"><title>${mirrored() ? "NAO de face : vous lui faites face" : "NAO de dos : vous regardez comme lui"}</title></image>`;
     // légende des tailles
     const ly = H - 30, dm = Math.sqrt(R.dist[0] * R.dist[1]);
     s += `<text x="${PL}" y="${ly + 4}" font-size="11" fill="var(--muted)">Taille du point = proximité :</text>`;
@@ -101,8 +130,20 @@
     return s;
   }
 
+  function toggleView() {
+    view = mirrored() ? "robot" : "observer";
+    try { localStorage.setItem(VIEW_KEY, view); } catch (e) { /* stockage indisponible */ }
+    redraw();
+    return view;
+  }
+
+  function redraw() { if (R) for (const w of widgets) show(w, w.ev); }
+
   function show(w, ev) {
     w.ev = ev;
+    const vb = w.inp("view");
+    vb.textContent = mirrored() ? "⇄ Vue observateur (face)" : "⇄ Vue robot (dos)";
+    vb.classList.toggle("on", mirrored());
     const inp = w.inp, focused = w.el.contains(document.activeElement) && document.activeElement.tagName === "INPUT";
     if (!focused) {
       inp("present").checked = !!ev.present;
@@ -132,7 +173,7 @@
   function describe(ev) {
     if (!ev || !ev.present) return "aucun événement";
     const az = Math.round(ev.azimuth_rad * DEG), el = Math.round(ev.elevation_rad * DEG);
-    const h = az === 0 ? "devant" : `${Math.abs(az)}° à ${az > 0 ? "gauche" : "droite"}`;
+    const h = az === 0 ? "devant" : `${Math.abs(az)}° à ${az > 0 ? "gauche" : "droite"} du robot`;
     const v = el === 0 ? "à hauteur du torse" : `${Math.abs(el)}° vers le ${el > 0 ? "haut" : "bas"}`;
     const d = ev.distance_m == null ? "distance inconnue" : `à ${(+ev.distance_m).toFixed(2).replace(".", ",")} m`;
     return `événement ${h}, ${v}, ${d}`;
@@ -197,6 +238,8 @@
 
   window.FOV = {
     describe,
+    toggleView,
+    view() { return view; },
     current() { return widgets.length ? widgets[0].ev : null; },
     sync(ev) {
       if (!R || !ev || Date.now() - lastEdit < 1000) return;

@@ -10,6 +10,8 @@
 //   0          lance le « Tirage aléatoire » équilibré (émotion, intensité, angle, distance) des
 //              onglets Bras, Tête, Mains et Génération. Le tirage ne fait que remplir la
 //              consigne et l'événement : aucun mouvement.
+//   V          inverse gauche/droite du champ de vision (vue robot de dos <-> vue observateur
+//              de face), mêmes onglets ; affichage seul, l'événement ne change pas.
 // Les touches sont ignorées quand le focus est dans un champ de saisie (texte, nombre,
 // liste) et quand Ctrl, Alt ou Cmd sont enfoncés. Chaque étape passe par le bouton de
 // l'interface : mêmes garde-fous côté serveur. Relâcher n'est pas
@@ -130,6 +132,7 @@
     if (kind) h += `<span><kbd>1</kbd>–<kbd>4</kbd> étapes</span>` +
       `<span><kbd>→</kbd> étape suivante : <b>${nextStep(kind) + 1} · ${STEP_LABEL[nextStep(kind)]}</b></span>`;
     if (randomButton(tab)) h += `<span><kbd>0</kbd> tirage aléatoire</span>`;
+    if (RANDOM[tab] && window.FOV) h += `<span><kbd>V</kbd> vue ${window.FOV.view() === "observer" ? "observateur" : "robot"}</span>`;
     if (kind && draftReady(kind)) h += `<span><kbd>Entrée</kbd> <b>accepter la prise</b></span>`;
     h += `<span class="sc-note">inactifs dans un champ de saisie</span>`;
     if (performance.now() < flashUntil) h += `<span class="sc-flash">${flashText}</span>`;
@@ -153,6 +156,11 @@
     // 0 : e.code couvre la rangée du haut AZERTY (où « 0 » demande Maj) et le pavé numérique
     if (RANDOM[tab] && (e.code === "Digit0" || e.code === "Numpad0" || e.key === "0")) {
       e.preventDefault(); if (!e.repeat) randomDraw(tab); return;
+    }
+    if (RANDOM[tab] && window.FOV && (e.code === "KeyV" || e.key === "v" || e.key === "V")) {
+      e.preventDefault();
+      if (!e.repeat) flash(window.FOV.toggleView() === "observer" ? "V · vue observateur (face)" : "V · vue robot (dos)");
+      return;
     }
     if (!kind) return;
     // Entrée : jamais le clic natif sur le bouton qui a gardé le focus (ex. « Arrêter »).
