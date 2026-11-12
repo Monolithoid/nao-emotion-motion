@@ -109,6 +109,19 @@ def test_none_share_and_other_kinds_ignored(cfg):
     assert cov["takes"] == 200 and sum(cov["emotions"].values()) == 200
 
 
+def test_none_share_one_draws_only_without_event(cfg):
+    cfg.robot["events"].setdefault("balance", {})["none_share"] = 1.0
+    try:
+        metas = simulate(cfg, 60, 2.0, allow_none=True, seed=4)
+        assert not any(m.event["present"] for m in metas)
+        emo = Counter(m.emotion for m in metas)
+        assert max(emo.values()) - min(emo.values()) <= 2  # émotions toujours équilibrées
+        # case décochée : on retombe sur les zones avec événement
+        assert all(m.event["present"] for m in simulate(cfg, 20, 2.0, allow_none=False, seed=5))
+    finally:
+        del cfg.robot["events"]["balance"]["none_share"]
+
+
 def test_unknown_distance_split(cfg):
     g = Grid.from_config(cfg)
     zs = g.event_zones({"present": True, "azimuth_rad": 0.0, "elevation_rad": 0.0, "distance_m": None})

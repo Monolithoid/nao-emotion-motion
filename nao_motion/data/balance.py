@@ -100,13 +100,15 @@ class Grid:
             raise ValueError("events.balance.intensity : plage [a, b] avec 0 <= a < b <= 1 attendue")
         if min(g.n_int, g.n_az, g.n_el, g.n_dist) < 1 or not 0 < g.dist[0] < g.dist[1]:
             raise ValueError("events.balance : nombres de tranches >= 1 et distances positives attendus")
-        if not 0 <= g.none_share < 1 or g.strength < 0 or g.cell_weight < 0:
-            raise ValueError("events.balance : none_share dans [0, 1[, strength et cell_weight >= 0 attendus")
+        if not 0 <= g.none_share <= 1 or g.strength < 0 or g.cell_weight < 0:
+            raise ValueError("events.balance : none_share dans [0, 1], strength et cell_weight >= 0 attendus")
         return g
 
     # -- zones ----------------------------------------------------------------
     def zones(self, allow_none: bool) -> List[object]:
         z = [(a, e, d) for a in range(self.n_az) for e in range(self.n_el) for d in range(self.n_dist)]
+        if allow_none and self.none_share >= 1:
+            return [NONE]  # série « sans événement » uniquement
         return ([NONE] if allow_none and self.none_share > 0 else []) + z
 
     def zone_share(self, z, allow_none: bool) -> float:
