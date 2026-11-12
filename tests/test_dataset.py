@@ -114,3 +114,14 @@ def test_import_refuses_corrupted_export(tmp_path, setup):
     with pytest.raises(DatasetError):
         import_dataset(out, tmp_path / "pc2" / "data", tmp_path / "pc2" / "configs")
     assert not (tmp_path / "pc2" / "data" / "takes").exists()
+
+
+def test_hand_edited_readme_neither_blocks_import_nor_is_overwritten(tmp_path, setup):
+    out = tmp_path / "export"
+    export_dataset(setup["data"], out, setup["conf"])
+    (out / "README.md").write_text("# Mon jeu de données\n", encoding="utf-8")
+    r = import_dataset(out, tmp_path / "pc2" / "data", tmp_path / "pc2" / "configs")
+    assert r["takes_added"] == 2
+    r2 = export_dataset(setup["data"], out, setup["conf"])
+    assert r2.get("readme_kept") and (out / "README.md").read_text(encoding="utf-8") == "# Mon jeu de données\n"
+    assert "## Content" in (out / "README.generated.md").read_text(encoding="utf-8")

@@ -51,6 +51,9 @@ LICENSES = {
     "CC0-1.0": ("Creative Commons Zero v1.0 Universal (public domain dedication)",
                 "https://creativecommons.org/publicdomain/zero/1.0/"),
 }
+# Fichiers dont l'intégrité est vérifiée à l'import ; README.md, LICENSE, index.csv sont de la
+# documentation que l'on peut retoucher à la main (ex. sur GitHub) sans bloquer l'import.
+DATA_PREFIXES = ("takes/", "calibration/", "models/", "configs/")
 INDEX_COLUMNS = ("take_id", "kind", "emotion", "intensity", "intention", "status", "event_present",
                  "azimuth_rad", "elevation_rad", "distance_m", "duration_s", "segment_start_s",
                  "segment_end_s", "n_samples", "sample_rate_hz", "calibration_version", "created_at", "tags")
@@ -230,9 +233,17 @@ def export_dataset(data_dir, out_dir, config_root=None, runs_dir=None, *, name: 
         encoding="utf-8")
     filters = {"statuses": list(statuses), "include_synthetic": include_synthetic,
                "include_incomplete": include_incomplete}
-    (out / "README.md").write_text(_card(name, version, license_id, author, stats,
-                                         [v for v in used if v in cals], models, filters),
-                                   encoding="utf-8")
+    card = _card(name, version, license_id, author, stats, [v for v in used if v in cals], models, filters)
+    readme = out / "README.md"
+    prev = (json.loads((out / MANIFEST).read_text(encoding="utf-8")).get("files") or {}) \
+        if (out / MANIFEST).exists() else {}
+    if readme.exists() and prev.get("README.md") and _sha256(readme) != prev["README.md"]:
+        # README retouché à la main depuis le dernier export : on le garde, fiche à jour à côté
+        (out / "README.generated.md").write_text(card, encoding="utf-8")
+        summary["readme_kept"] = True
+    else:
+        readme.write_text(card, encoding="utf-8")
+        (out / "README.generated.md").unlink(missing_ok=True)
 
     files = {}
     for p in sorted(out.rglob("*")):
@@ -334,7 +345,8 @@ def import_dataset(src_dir, data_dir, config_root=None, runs_dir=None, *, verify
         raise DatasetError(f"Format d'export {man.get('format')} non supporté")
     files = man.get("files") or {}
     if verify:
-        bad = [rel for rel, h in files.items() if not (src / rel).exists() or _sha256(src / rel) != h]
+        bad = [rel for rel, h in files.items() if rel.startswith(DATA_PREFIXES)
+               and (not (src / rel).exists() or _sha256(src / rel) != h)]
         if bad:
             raise DatasetError(f"{len(bad)} fichier(s) absent(s) ou modifié(s), rien n'est importé : {bad[:5]}")
     res = {"takes_added": 0, "takes_skipped": 0, "calibrations_added": [], "models_added": []}
