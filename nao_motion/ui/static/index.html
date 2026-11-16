@@ -71,7 +71,6 @@
         <p class="hint">Passage 1 : les bras sont relâchés (tenez-les) et seuls leurs capteurs sont lus ; la tête reste raide sur place.</p>
         <div id="a-draft" class="draft hidden">
           <h3>Prise enregistrée — aperçu (aucun mouvement)</h3>
-          <div class="plot" id="a-plot"></div>
           <div class="row">
             <input id="a-notes" placeholder="Annotation">
             <button class="ok" id="a-accept">Accepter</button>
@@ -86,6 +85,10 @@
         <b>immédiatement, sans confirmation</b>. Tenez les bras avant d'appuyer.</div>
       </div>
     </div>
+  </fieldset>
+  <fieldset class="frame take-curves">
+    <legend>Recorded curves</legend>
+    <div class="plot" id="a-plot"></div>
   </fieldset>
 </section>
 
@@ -130,7 +133,6 @@
         les bras restent raides sur place, aucun geste des bras n'est rejoué. Le modèle de la tête apprend seul.</p>
         <div id="h-draft" class="draft hidden">
           <h3>Prise de tête — aperçu</h3>
-          <div class="plot" id="h-plot"></div>
           <div class="row">
             <input id="h-notes" placeholder="Annotation">
             <button class="ok" id="h-accept">Accepter</button>
@@ -145,6 +147,10 @@
         <b>immédiatement, sans confirmation</b>. Tenez la tête avant d'appuyer.</div>
       </div>
     </div>
+  </fieldset>
+  <fieldset class="frame take-curves">
+    <legend>Recorded curves</legend>
+    <div class="plot" id="h-plot"></div>
   </fieldset>
 </section>
 
@@ -220,7 +226,6 @@
         (« Mouvements autorisés » requis).</p>
         <div id="m-draft" class="draft hidden">
           <h3>Prise de mains — aperçu</h3>
-          <div class="plot" id="m-plot"></div>
           <div class="row">
             <input id="m-notes" placeholder="Annotation">
             <button class="ok" id="m-accept">Accepter</button>
@@ -235,6 +240,10 @@
         confirmation ni déplacement. Ce passage ne relâche rien (<kbd>Espace</kbd> relâche toujours bras et tête).</div>
       </div>
     </div>
+  </fieldset>
+  <fieldset class="frame take-curves">
+    <legend>Recorded curves</legend>
+    <div class="plot" id="m-plot"></div>
   </fieldset>
 </section>
 
