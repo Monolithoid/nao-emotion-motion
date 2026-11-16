@@ -237,7 +237,12 @@ async function refreshTrain() {
       (m.val_duration_mae_s !== undefined ? `erreur de durée (val.) ${m.val_duration_mae_s.toFixed(3)} s\n` : "") +
       (m.settings ? `réglages : réseau ${m.settings.hidden.join("-")} · dropout ${m.settings.dropout} · weight decay ${m.settings.weight_decay} · lr ${m.settings.lr} · lissage ${m.settings.smoothness_weight} · ${m.settings.epochs} époques` +
         (m.best_epoch !== undefined ? ` (modèle gardé : époque ${m.best_epoch})` : "") + "\n" : "") +
-      `guardian : ${m.guardian ? m.guardian.accepted + "/" + m.guardian.total + " trajectoires générées acceptées " + JSON.stringify(m.guardian.violations_by_code) : "—"}` +
+      `guardian (playback safety, information only: never used by training) : ${m.guardian ? m.guardian.accepted + "/" + m.guardian.total + " generated gestures playable" +
+        (m.guardian.raw_accepted !== undefined ? ` (raw ${m.guardian.raw_accepted}/${m.guardian.total}, median slow-down x${m.guardian.median_slow_down})` : "") +
+        " " + JSON.stringify(m.guardian.violations_by_code) : "—"}` +
+      (m.guardian_takes ? `\nguardian on your recorded takes: ${m.guardian_takes.raw_accepted}/${m.guardian_takes.total} accepted as recorded, ${m.guardian_takes.accepted_playable}/${m.guardian_takes.total} once made playable` +
+        (m.guardian_takes.total && m.guardian_takes.raw_accepted < m.guardian_takes.total / 2 ? ` ⚠ the guardian refuses most of your own gestures: check the calibration (${m.guardian_takes.calibration}) and speed limits` +
+          (Object.keys(m.guardian_takes.takes_outside_limits_by_joint).length ? `, outside limits: ${JSON.stringify(m.guardian_takes.takes_outside_limits_by_joint)}` : "") : "") : "") +
       (m.warning ? "\n⚠ " + m.warning : "") + "</div></div>";
   }).join(""));
 }
@@ -248,11 +253,13 @@ async function generate() {
   const body = {emotion: e1, intensity: parseFloat($("g-intensity").value), variation: parseFloat($("g-var").value), use_event: $("g-event").checked};
   if (e2 && e2 !== e1) body.mix = {[e1]: 1 - w, [e2]: w};
   const out = await api("generate", body);
-  const tr = out.generated.trajectory;
+  const tr = out.played || out.generated.trajectory;  // the gesture that would be played
   plot($("g-plot"), tr.t, cols(tr.q), tr.joints);
   animate($("g-plot"), 0, tr.t[tr.t.length - 1]);
   const mr = out.motion_report, cy = out.cycle;
-  $("g-report").textContent = `geste : ${out.generated.duration_s.toFixed(2)} s · guardian : ${mr.ok ? "accepté" : "REFUSÉ"}\n` +
+  const ad = out.adaptation;
+  $("g-report").textContent = `geste : ${(tr.t[tr.t.length - 1] - tr.t[0]).toFixed(2)} s · guardian : ${mr.ok ? "accepté" : "REFUSÉ"}\n` +
+    (ad && ad.changed ? `made playable: ${ad.notes.join(" ; ")} (raw gesture ${out.generated.duration_s.toFixed(2)} s, guardian on raw: ${out.raw_report.ok ? "accepted" : "refused"})\n` : "") +
     (mr.violations.length ? JSON.stringify(mr.violations, null, 1) + "\n" : "") +
     (cy ? `cycle complet : ${cy.report.ok ? "accepté" : "REFUSÉ"} (${cy.duration_s.toFixed(2)} s) ${cy.report.violations.length ? JSON.stringify(cy.report.violations, null, 1) : ""}` : (out.cycle_error ? "cycle : " + out.cycle_error : "")) +
     (out.generated.notes.length ? "\nnotes : " + out.generated.notes.join(" ; ") : "");

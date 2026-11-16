@@ -296,6 +296,11 @@ class Api:
         return {"files": self.wb.list_calibrations(), "active": self.wb.cfg.calibration_version,
                 "calibrated": self.wb.cfg.calibrated}
 
+    def post_calibrations_extend(self, d):
+        """Preview (or save, with save=true) a calibration extended with the recorded takes.
+        Nothing is activated and nothing moves."""
+        return self.wb.extend_calibration(d.get("file"), bool(d.get("speeds")), bool(d.get("save")))
+
     def post_calibrations_activate(self, d):
         """Active un fichier déjà enregistré (aucun mouvement, contrôleur laissé tel quel)."""
         self.wb.activate_calibration(d["file"])

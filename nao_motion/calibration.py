@@ -136,13 +136,16 @@ class Calibration:
     notes: str = ""
     warnings: List[str] = field(default_factory=list)
     path: Optional[Path] = None
+    # optional per-joint speed limits (e.g. measured on the takes, see calibration_extend.py):
+    # {"source": str, "velocity_rad_s": {joint: v}, "acceleration_rad_s2": {joint: a}}
+    kinematics: Optional[dict] = None
 
     def to_dict(self) -> dict:
         return {"schema_version": 1, "kind": CAL_KIND, "version": self.version, "created_at": self.created_at,
                 "robot": self.robot, "margin_rad": self.margin_rad, "unit": "rad", "notes": self.notes,
                 "limits": {j: [float(a), float(b)] for j, (a, b) in self.limits.items()},
                 "measured": self.measured, "poses": self.poses, "coupled_constraints": self.coupled,
-                "warnings": list(self.warnings)}
+                "warnings": list(self.warnings), **({"kinematics": self.kinematics} if self.kinematics else {})}
 
     def save(self, path) -> Path:
         path = Path(path)
@@ -169,7 +172,23 @@ class Calibration:
                    measured=d.get("measured") or {}, poses=d.get("poses") or {},
                    coupled=d.get("coupled_constraints") or [], margin_rad=float(d.get("margin_rad", 0)),
                    created_at=str(d.get("created_at", "")), notes=d.get("notes", ""),
-                   warnings=list(d.get("warnings") or []), path=path)
+                   warnings=list(d.get("warnings") or []), path=path, kinematics=_kinematics(d, path))
+
+
+def _kinematics(d: dict, path: Path) -> Optional[dict]:
+    k = d.get("kinematics")
+    if not k:
+        return None
+    out = {"source": str(k.get("source", ""))}
+    for key in ("velocity_rad_s", "acceleration_rad_s2"):
+        vals = {}
+        for j, v in (k.get(key) or {}).items():
+            v = float(v)
+            if not (np.isfinite(v) and v > 0):
+                raise CalibrationError(f"{path.name}: kinematics {key} invalide pour {j}")
+            vals[str(j)] = v
+        out[key] = vals
+    return out
 
 
 def active_calibration_path(config_root) -> Optional[Path]:

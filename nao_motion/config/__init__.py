@@ -264,6 +264,16 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
         per_joint_margin={k: float(v) for k, v in (guard.get("per_joint_margin") or {}).items()},
         per_joint_acceleration={k: float(v) for k, v in (guard.get("per_joint_acceleration") or {}).items()},
     )
+    kin = getattr(calibration, "kinematics", None) if calibration is not None else None
+    if kin:
+        # speed limits stored in the active calibration (measured on the takes) override
+        # guardian.yaml for those joints only
+        for key, target in (("velocity_rad_s", gcfg.per_joint_velocity_rad_s),
+                            ("acceleration_rad_s2", gcfg.per_joint_acceleration)):
+            for j, v in (kin.get(key) or {}).items():
+                if j not in limits:
+                    raise ConfigError(f"Calibration {calibration.version} : kinematics, articulation inconnue {j}")
+                target[j] = float(v)
     return Config(
         root=root, groups=groups, limits=limits,
         calibration_version=calibration.version if calibration else str(joints["calibration"]["version"]),

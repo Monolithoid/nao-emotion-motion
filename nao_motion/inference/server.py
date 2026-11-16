@@ -36,8 +36,11 @@ def make_handler(wb):
                 gen = wb.get_engine().generate(d["emotion"], float(d["intensity"]), ev, d.get("head_current"),
                                                float(d.get("variation", 0)), d.get("seed"),
                                                hands_current=d.get("hands_current"))
-                self._send(200, {"generated": gen.to_dict(),
-                                 "guardian": wb.guardian.validate(gen.combined).to_dict()})
+                # raw model output: the client makes it playable itself (Workbench.playable)
+                # before its own guardian check; the report below is for the playable version
+                played, adapt = wb.playable(gen.combined)
+                self._send(200, {"generated": gen.to_dict(), "guardian": wb.guardian.validate(played).to_dict(),
+                                 "adaptation": adapt.to_dict() if adapt is not None else None})
             except Exception as e:
                 self._send(400, {"error": str(e)})
     return H

@@ -206,6 +206,26 @@ class Workbench:
         # une calibration simulée ne s'active qu'en simulation (essais de l'interface)
         return not getattr(self.adapter, "is_real", False)
 
+    def extend_calibration(self, file=None, speeds=False, save=False, include_pending=False) -> dict:
+        """Calibration extended with the recorded takes (see calibration_extend.py). Preview by
+        default; `save` writes a NEW file in configs/calibration/ (never activated here)."""
+        from .calibration import CalibrationError
+        from .calibration_extend import extend_with_takes
+        d = self.cfg.root / "calibration"
+        if not file:
+            if self.cfg.calibration is None or self.cfg.calibration.path is None:
+                raise CalibrationError("No active calibration: choose the calibration to extend")
+            path = self.cfg.calibration.path
+        else:
+            path = d / Path(str(file)).name
+        if not path.exists():
+            raise CalibrationError(f"Calibration not found: {path.name}")
+        statuses = ("accepted", "pending") if include_pending else ("accepted",)
+        cal, preview = extend_with_takes(self.cfg, self.store, path, statuses, bool(speeds))
+        if save:
+            preview["saved"] = cal.save(d / f"{cal.version}.yaml").name
+        return preview
+
     def activate_calibration(self, file) -> dict:
         """Active un fichier de configs/calibration/ (enregistré lors d'une session précédente
         ou à l'instant) puis recharge la configuration. Aucun mouvement ; si le rechargement
@@ -534,18 +554,33 @@ class Workbench:
         except Exception:
             head_now = hands_now = None
         gen = eng.generate(emotion, intensity, ev, head_now, variation, seed, hands_current=hands_now)
-        out = {"generated": gen.to_dict(), "motion_report": self.guardian.validate(gen.combined).to_dict()}
+        played, adapt = self.playable(gen.combined)
+        out = {"generated": gen.to_dict(), "motion_report": self.guardian.validate(played).to_dict()}
+        if adapt is not None:
+            # the raw model output, its own verdict, and what was changed to make it playable
+            out["raw_report"] = self.guardian.validate(gen.combined).to_dict()
+            out["adaptation"] = adapt.to_dict()
+            out["played"] = played.to_dict()
         plan_id = new_id("plan")
         plan = None
         if plan_cycle and self.adapter.is_connected():
             try:
-                plan = self.ctrl.plan_cycle(gen.combined, from_pose="rest")
+                plan = self.ctrl.plan_cycle(played, from_pose="rest")
                 out["cycle"] = plan.to_dict()
             except ControllerError as e:
                 out["cycle_error"] = str(e)
         self.plans[plan_id] = {"gen": gen, "plan": plan}
         out["plan_id"] = plan_id
         return out
+
+    def playable(self, traj):
+        """Gesture actually proposed for playback: adapted (slowed down, brought back inside the
+        limits) unless robot.yaml execution.adapt_generated is false. The guardian stays the judge."""
+        if not bool(self.cfg.robot.get("execution", {}).get("adapt_generated", True)):
+            return traj, None
+        from .guardian.playable import make_playable
+        a = make_playable(self.cfg, traj)
+        return a.traj, a
 
     def execute_plan(self, plan_id, background=True):
         self.check_no_calibration()
