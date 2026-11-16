@@ -66,7 +66,7 @@ The **ARRÊT** (stop) button interrupts recording, replay and execution. The pos
 - **1 2 3 4** run the take steps of the *Bras*, *Tête* and *Mains* tabs: *Préparer*, *Démarrer*, *Arrêter*, *Raidir sur place*. On an AZERTY keyboard, the top-row keys work with or without Shift, as does the numeric keypad.
 - **→** (right arrow) runs the next step, deduced from the recording state; that step is outlined. The keys press the same buttons, with the same server-side checks.
 - **Enter** accepts the take shown in preview (*Accepter* button) in the *Bras*, *Tête* and *Mains* tabs, with no confirmation. It also works from the take's *Annotation* field: type the note, then Enter. In these tabs, Enter never presses the button that kept the focus.
-- **0** runs the *Tirage aléatoire* (random draw) button of the *Bras*, *Tête*, *Mains* and *Génération* tabs: emotion, intensity, angle and distance are drawn at random, favouring what has been recorded least. Like the button, it only fills in the instruction and the event: no movement. On an AZERTY keyboard, the top-row key works with or without Shift, as does the numeric keypad.
+- **0** runs the *Tirage aléatoire* (random draw) button of the *Bras*, *Tête*, *Mains* and *Génération* tabs: emotion, intensity, angle and distance are drawn at random, favouring what has been recorded least. Like the button, it only fills in the instruction and the event: no movement. The draw keeps the boxes as they are: if *événement présent* (event present) is unchecked in the tab (or *utiliser l'événement* in *Génération*), only the emotion and the intensity are drawn, still balanced, and the event stays absent. On an AZERTY keyboard, the top-row key works with or without Shift, as does the numeric keypad.
 - **V** flips the field of view between the two viewpoints, in the same tabs (same as the ⇄ button).
 
 In simulation, a synthetic demonstrator replaces your hand. The takes it produces are marked `synthetic: true`.
@@ -98,6 +98,7 @@ nao-motion calibration-activate configs/calibration/<file>.yaml
 nao-motion capture-pose --group left_arm --name start --adapter bridge   # reads the sensors, sends nothing
 nao-motion serve-inference --port 8766  # remote inference (generates, does not execute)
 nao-motion export-guardian --out guardian_export   # standalone guardian for another project (see "Standalone guardian")
+nao-motion export-generator --out gesture_export   # trained gesture generator for another project (see "Gesture generator library")
 nao-motion export-dataset ../nao-emotion-motion-dataset --author "Name"   # dataset to publish (see "Sharing the dataset")
 nao-motion import-dataset ../nao-emotion-motion-dataset   # takes, calibrations and models back into data/, configs/, runs/
 ```
@@ -140,7 +141,7 @@ Each group is **collected and trained on its own**, in any order: no model reads
 
 Timing (`model.yaml`, `combine.timing`): with `hold` (default), all groups start together at their own learned tempo, and a shorter group holds its final pose until the longest one ends; with `stretch`, every group is slowed down to the longest duration.
 
-Trade-off: consistency between groups comes from the **shared instruction** (the arm points towards the event, the head looks at it, the hand on that side opens), not from a learned synchronisation. A fine timing link such as the head following the hand with a slight delay is no longer learned. A shared latent or seed across groups is a possible later improvement.
+Trade-off: consistency between groups comes from the **shared instruction** (the arm points towards the event, the head looks at it, the hand on that side opens), not from a learned synchronisation. A fine timing link such as the head following the hand with a slight delay is no longer learned. A shared latent or seed across groups is a possible later improvement, and a unified whole-body network is planned (see [TODO](#todo)).
 
 Head and hand takes recorded earlier on replayed arms (old format) remain valid: training reads only the head or hand joints. Head and hand **models** trained in the old format (which took the arms as input) are rejected on reload and must be retrained.
 
@@ -296,6 +297,40 @@ On the command line: `python nao_guardian.py guardian.json gesture.json` prints 
 
 The checker gives the same verdicts as the project's guardian (compared on random trajectories in the tests). It only judges: it neither modifies nor slows down any movement, and commands nothing. Python 2.7 compatibility is checked statically (syntax and imports); it has not yet been run on the robot's Python 2.7.3. After a new calibration, redo the export.
 
+## Gesture generator library (export for another project)
+
+Once training is done, the trained models are delivered to another project (for example ia-agent) as **two files**, with nothing to install:
+
+```bash
+nao-motion export-generator --out gesture_export
+#   gesture_export/nao_gesture.py    generator + guardian, Python 2.7 / 3, standard library only (no PyTorch, no numpy)
+#   gesture_export/nao_gesture.json  the arms / head / hands models, their settings and the guardian (active calibration)
+```
+
+The weights come from the numpy export written by every training run (`model_numpy.npz` of the latest run of each group), so the export does not need PyTorch. A group without a model is exported as missing: arms or head then stay in the start position, hands are not commanded. Like the guardian export, it is **refused without an active calibration** (`--allow-uncalibrated` for tests). After a new training or a new calibration, redo the export.
+
+```python
+from nao_gesture import GestureGenerator
+gen = GestureGenerator.load("nao_gesture.json")
+print(gen.emotions)                       # e.g. ['joie', 'tristesse', 'colere', 'peur', 'surprise', 'calme']
+g = gen.generate("joie", 0.7,                                   # emotion (or a mix {"joie": 0.7, "surprise": 0.3}), intensity 0..1
+                 event={"azimuth_deg": 30, "elevation_deg": 0, "distance_m": 1.2},   # optional; None = no event
+                 current_pose=measured_posture)                 # recommended: adds the transitions
+if g.ok:                                                        # accepted by the guardian
+    names, angles, times = g.angle_interpolation()
+    motion.angleInterpolation(names, angles, times, True)       # ALMotion, absolute angles
+else:
+    print(g.report.summary())                                   # never send it
+```
+
+- **Event**: torso frame (FRAME_TORSO), azimuth positive to the robot's LEFT, elevation positive UP, 0 = straight ahead, in degrees (`azimuth_deg`, `elevation_deg`) or radians (`azimuth_rad`, `elevation_rad`); `distance_m` is optional. A direction seen by the camera can be given with `"frame": "head"` plus the HeadYaw / HeadPitch measured at detection time (`head_yaw_rad`, `head_pitch_rad`).
+- **Output**: `g.joints`, `g.times` (s, from 0), `g.positions` (one row per time step, radians; LHand / RHand are openings 0..1), `g.report` (guardian verdict on everything returned), `g.segments`, `g.notes`, `g.to_dict()`. `angle_interpolation()` drops the t = 0 point (NAOqi starts from the current posture), can thin out the points (`rate_hz=10`), and refuses a rejected movement.
+- **Transitions**: the learned gesture starts from the calibrated start position. With `current_pose` (measured `{joint: value}`), the generator builds and validates the whole movement like the project UI: current posture → start → gesture → start (`return_to="rest"` goes back to rest). `from_rest=True` when the robot is at rest, which may be outside the movement zone (contact): that segment then follows the rest rules (factory limits, reduced velocity). Without `current_pose`, only the gesture is returned and the caller must bring the robot to the start position first.
+- `variation=0.05, seed=...` adds a small random variation (0 = the learned gesture). Its random generator differs from the project's numpy one: same seed, different variant.
+- `nao_gesture.py` contains the same guardian as `nao_guardian.py` (`Guardian`, `Report`, `check_rest_transition`...), so a separate guardian export is not needed. Command line: `python nao_gesture.py nao_gesture.json joie 0.7 30 0 1.2` prints the verdict (code 0 accepted, 1 rejected, 2 usage).
+
+The tests compare the exported library with the project: same gestures as `MotionEngine` (numpy backend), same transitions and verdicts as the controller's `plan_cycle`. Python 2.7 compatibility is checked statically (syntax and imports) only; it has not been run on a real Python 2.7 yet. Nothing is ever sent to the robot by the library: executing the gesture is the integrating project's job.
+
 ## Connecting the real robot
 
 Identity recorded on Joachim's NAO (in `.env.example`): **naoH25, head/body/arms VERSION_40 (NAO V4), NAOqi 2.1.4.13, Python 2.7.3, name “nao”**. To record or check it on another robot, over SSH (`ssh nao@<IP>`):
@@ -342,3 +377,16 @@ Things to check on NAOqi 2.1.4 that this repository does not assume: the behavio
 - The NAOqi bridge and the `bridge` adapter are tested only against a fake backend. The bridge needed no change for the hands (`LHand` / `RHand` go through `getAngles`, `setAngles` and `setStiffnesses` like any joint), but hand control has not been tried on the robot yet: hand speed under `max_fraction_speed`, and the hand tracking tolerance (`execution.hand_tracking_error`), are to be checked there. A hand kept stiff and closed for a long time heats up.
 - Temporal alignment is linear (no DTW). Variants are not learned yet.
 - Collision constraints are linear and indicative. No geometric model of the robot.
+
+## TODO
+
+### One unified network for the whole body
+
+Today arms, head and hands are **three independent models** (see [Three independent models, one engine](#three-independent-models-one-engine)). This is a practical choice, not a design goal: guiding one body part at a time is much easier for the operator during collection. The longer-term target is a single network that generates arms, head and hands together, so that the coordination between parts (timing, the head following the hand, and so on) is learned rather than only implied by the shared instruction.
+
+Planned path:
+
+1. **Distillation.** Have the three current models generate thousands of complete gestures in simulation (emotion, intensity and event drawn with the balanced draw), then train a fourth, unified network to reproduce them. On its own this only copies the current combination: same quality, one file instead of three.
+2. **Fine-tuning on whole-body takes.** Record real takes where the whole body moves at once, and fine-tune the distilled network on them. This is where the unified network can become better than the three separate ones.
+
+Not to do: train a single network directly on the current takes. In each of them only one part moves while the others stay fixed, so the network would learn averaged, limp gestures.

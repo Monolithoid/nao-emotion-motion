@@ -188,7 +188,8 @@ class Api:
             raise ValueError(f"Passage inconnu : {kind}")
         kind = None if kind == "gen" else kind
         metas = self.wb.store.list(kind=kind) if kind else []
-        return balanced_draw(self.wb.cfg, metas, kind, allow_none=bool(d.get("allow_none")))
+        return balanced_draw(self.wb.cfg, metas, kind, allow_none=bool(d.get("allow_none")),
+                             event=bool(d.get("event", True)))
 
     def post_event(self, d):
         ev = self.wb.set_event(d, d.get("ttl_s"))

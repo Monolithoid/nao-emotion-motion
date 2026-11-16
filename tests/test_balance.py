@@ -150,9 +150,27 @@ def test_api_draw_endpoint(cfg, tmp_path):
     d = api.post_draw({"kind": "arms", "allow_none": True})
     assert d["emotion"] in cfg.emotions and d["balance"]["takes"] == 0
     assert api.post_draw({"kind": "gen"})["balance"]["kind"] is None
+    # événement décoché dans l'onglet : le tirage ne propose jamais d'événement
+    for kind in ("arms", "head", "hands", "gen"):
+        for _ in range(10):
+            d = api.post_draw({"kind": kind, "event": False})
+            assert d["event"]["present"] is False and d["balance"]["cell"]["zone"] == "sans événement"
     with pytest.raises(ValueError):
         api.post_draw({"kind": "jambes"})
     assert len(wb.adapter.command_log) == n
+
+
+def test_draw_without_event_balances_emotion_and_intensity_only(cfg):
+    """« Événement présent » décoché : seuls émotion et intensité sont tirés (et équilibrés)."""
+    rng = np.random.default_rng(5)
+    metas = []
+    for _ in range(60):
+        d = balanced_draw(cfg, metas, "arms", event=False, rng=rng)
+        assert d["event"]["present"] is False
+        metas.append(meta(d))
+    grid = Grid.from_config(cfg)
+    _, emo, inten, _, n = count_takes(grid, metas, "arms")
+    assert n == 60 and max(emo.values()) - min(emo.values()) <= 2 and max(inten.values()) - min(inten.values()) <= 2
 
 
 def test_progress_counts_only_accepted_real_takes(cfg):
