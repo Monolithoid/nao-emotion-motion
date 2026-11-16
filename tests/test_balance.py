@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from nao_motion.data.balance import NONE, Grid, balanced_draw, cell_weights, count_takes, coverage
+from nao_motion.data.balance import NONE, Grid, balanced_draw, cell_weights, count_takes, coverage, coverage_grid
 
 
 def meta(d, kind="arms", status="accepted"):
@@ -210,3 +210,29 @@ def test_progress_milestones_config(cfg):
             cfg.robot.pop("progress", None)
         else:
             cfg.robot["progress"] = old
+
+
+def test_coverage_grid_counts_accepted_real_takes_and_marks_next_cell(cfg):
+    """Coverage map of the recording tabs: accepted real takes only, cell of the next take."""
+    g = Grid.from_config(cfg)
+    e = cfg.emotions[0]
+    left_high_near = {"present": True, "azimuth_rad": math.radians(80), "elevation_rad": math.radians(40),
+                      "distance_m": cfg.robot.get("events", {}).get("distance_m", [0.3, 3.0])[0]}
+    metas = [SimpleNamespace(kind="arms", status="accepted", emotion=e, intensity=0.9, event=left_high_near),
+             SimpleNamespace(kind="arms", status="accepted", emotion=e, intensity=0.9, event={"present": False}),
+             SimpleNamespace(kind="arms", status="pending", emotion=e, intensity=0.9, event={"present": False}),
+             SimpleNamespace(kind="arms", status="accepted", emotion=e, intensity=0.9, event={"present": False},
+                             synthetic=True),
+             SimpleNamespace(kind="head", status="accepted", emotion=e, intensity=0.9, event={"present": False})]
+    d = coverage_grid(cfg, metas, "arms", emotion=e, intensity=0.9, event=left_high_near)
+    assert len(d["rows"]) == len(g.emotions) * g.n_int
+    assert len(d["zones"]) == g.n_az * g.n_el * g.n_dist + 1 and d["zones"][-1]["az"] is None
+    assert d["accepted"] == 2 and d["simulated"] == 1 and d["max"] == 1
+    row = [r["emotion"] for r in d["rows"]].index(e) + g.int_bin(0.9)
+    assert d["counts"][row][-1] == 1 and sum(map(sum, d["counts"])) == 2
+    # robot's left, high, near comes first; it is the cell the next take fills
+    assert d["current"] == [[row, 0]] and d["counts"][row][0] == 1
+    # unknown distance: every distance slice of the sector is marked
+    unk = dict(left_high_near, distance_m=None)
+    assert len(coverage_grid(cfg, metas, "arms", emotion=e, intensity=0.9, event=unk)["current"]) == g.n_dist
+    assert coverage_grid(cfg, metas, "arms")["current"] == []
