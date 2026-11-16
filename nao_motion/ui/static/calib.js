@@ -184,7 +184,63 @@
     sel.innerHTML = usable.length ? usable.map((f) => `<option value="${esc(f.file)}">${esc(f.version || f.file)}</option>`).join("")
       : '<option value="">aucun fichier réel</option>';
     if (usable.some((f) => f.file === prev)) sel.value = prev;
+    extSelect();
   }
+
+  // -- extend a saved calibration with the recorded takes (preview, then save as a new file) --
+  let EXT = null;
+  function extSelect() {
+    const sel = $("c-ext-file"), prev = sel.value;
+    const usable = FILES.filter((f) => f.valid && !f.simulated);
+    sel.innerHTML = usable.length ? usable.map((f) => `<option value="${esc(f.file)}">${esc(f.version || f.file)}${f.active ? " (active)" : ""}</option>`).join("")
+      : '<option value="">no real calibration</option>';
+    const act = usable.find((f) => f.active);
+    if (usable.some((f) => f.file === prev)) sel.value = prev; else if (act) sel.value = act.file;
+  }
+  function extPair(p) {
+    const S = 240, P = 22, [fa, fb] = p.factory;
+    const X = (v) => P + (v - fa[0]) / ((fa[1] - fa[0]) || 1) * (S - 2 * P), Y = (v) => S - P - (v - fb[0]) / ((fb[1] - fb[0]) || 1) * (S - 2 * P);
+    const poly = (z, col, dash) => z.length >= 3 ? `<polygon points="${z.map((q) => X(q[0]).toFixed(1) + "," + Y(q[1]).toFixed(1)).join(" ")}" fill="${col}" fill-opacity=".10" stroke="${col}" stroke-width="1.6"${dash ? ' stroke-dasharray="5 3"' : ""}/>` : "";
+    const dots = (pts, col) => pts.map((q) => `<circle cx="${X(q[0]).toFixed(1)}" cy="${Y(q[1]).toFixed(1)}" r="1.5" fill="${col}" fill-opacity=".55"/>`).join("");
+    return `<figure><svg viewBox="0 0 ${S} ${S}"><rect x="${P}" y="${P}" width="${S - 2 * P}" height="${S - 2 * P}" fill="none" stroke="var(--muted)" stroke-dasharray="4 3"><title>factory limits</title></rect>` +
+      poly(p.new_zone, "var(--accent)", false) + poly(p.old_zone, "var(--ok)", true) +
+      dots(p.points_inside, "var(--muted)") + dots(p.points_outside, "var(--bad)") +
+      `<text x="${S / 2}" y="${S - 5}" text-anchor="middle" font-size="11" fill="currentColor">${p.joints[0]}</text>` +
+      `<text x="10" y="${S / 2}" font-size="11" fill="currentColor" transform="rotate(-90 10 ${S / 2})" text-anchor="middle">${p.joints[1]}</text></svg>` +
+      `<figcaption>${Math.round(p.share_outside_before * 100)} % of take points outside the current zone · area ${p.area_before.toFixed(2)} → ${p.area_after.toFixed(2)} rad²</figcaption></figure>`;
+  }
+  function extRender() {
+    const box = $("c-ext-out");
+    if (!EXT) { box.innerHTML = ""; return; }
+    const kin = EXT.kinematics || {};
+    let h = `<p><b>${esc(EXT.version)}</b>: ${esc(EXT.notes)}${EXT.saved ? ` · <span class="okc">saved as ${esc(EXT.saved)} (not active)</span>` : ""}</p>` +
+      '<p class="hint legend"><span>dashed green: current zone</span><span>blue: extended zone</span><span>red points: takes outside the current zone</span><span>grey points: takes already inside</span><span>dotted frame: factory limits</span></p>' +
+      `<div class="cal-pairs">${(EXT.pairs || []).map(extPair).join("")}</div>` +
+      "<table><tr><th>Joint</th><th>Current (guardian)</th><th>Takes</th><th>Extended</th><th>Factory</th>" +
+      (Object.keys(kin).length ? "<th>Velocity rad/s</th><th>Acceleration rad/s²</th>" : "") + "</tr>";
+    for (const r of EXT.joints) {
+      const k = kin[r.joint];
+      h += `<tr><td>${r.joint}${r.capped_by_factory ? ' <span class="warn">takes beyond factory: factory kept</span>' : ""}${r.no_factory ? ' <span class="warn">factory limits unknown: not extended</span>' : ""}</td>` +
+        `<td class="num">${f3(r.old[0])} … ${f3(r.old[1])}</td><td class="num">${f3(r.takes[0])} … ${f3(r.takes[1])}</td>` +
+        `<td class="num${r.extended ? " grow" : ""}">${f3(r.new[0])} … ${f3(r.new[1])}</td>` +
+        `<td class="num">${r.factory ? f3(r.factory[0]) + " … " + f3(r.factory[1]) : "—"}</td>` +
+        (Object.keys(kin).length ? (k ? `<td class="num${k.velocity_rad_s > k.current_velocity ? " grow" : ""}">${k.current_velocity} → ${k.velocity_rad_s}</td>` +
+          `<td class="num${k.acceleration_rad_s2 > k.current_acceleration ? " grow" : ""}">${k.current_acceleration} → ${k.acceleration_rad_s2}</td>` : "<td>—</td><td>—</td>") : "") + "</tr>";
+    }
+    box.innerHTML = h + "</table>";
+  }
+  async function extCall(save) {
+    const body = {file: $("c-ext-file").value, speeds: $("c-ext-speeds").checked, save};
+    $("c-ext-preview").disabled = $("c-ext-save").disabled = true;
+    try { EXT = await api("calibrations/extend", body); } catch (e) { EXT = null; /* api() affiche l'erreur */ }
+    $("c-ext-preview").disabled = false;
+    $("c-ext-save").disabled = !EXT || !!EXT.saved;
+    extRender();
+    if (save) loadFiles();
+  }
+  $("c-ext-preview").onclick = () => extCall(false);
+  $("c-ext-save").onclick = () => extCall(true);
+  ["c-ext-file", "c-ext-speeds"].forEach((id) => $(id).addEventListener("change", () => { EXT = null; $("c-ext-save").disabled = true; extRender(); }));
 
   async function poll() {
     if (busy || !$("tab-calib").classList.contains("active")) return;

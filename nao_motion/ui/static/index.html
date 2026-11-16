@@ -336,6 +336,19 @@
     « Activer » les désigne au guardian sans rien bouger (le contrôleur reste dans son état). Un fichier
     refusé indique pourquoi.</p>
     <div id="c-files" class="hint">Chargement…</div>
+    <details id="c-ext" class="cal-ext">
+      <summary>Extend with the takes</summary>
+      <p class="hint">Your accepted takes (real, complete) were done by hand on the robot: they show where the joints
+      actually go. This computes a NEW calibration = chosen calibration ∪ takes, same margin, factory limits as the
+      absolute ceiling. Nothing is activated: the new file appears in the list above, use « Activer » to use it.</p>
+      <div class="row">
+        <label>Base <select id="c-ext-file"></select></label>
+        <label title="Per-joint velocity and acceleration limits from the takes (95th percentile of each take's peak, never below the current limit)"><input type="checkbox" id="c-ext-speeds" checked> include speed limits from the takes</label>
+        <button id="c-ext-preview">Preview</button>
+        <button id="c-ext-save" class="ok" disabled>Save as new calibration</button>
+      </div>
+      <div id="c-ext-out"></div>
+    </details>
   </fieldset>
   <div class="row">
     <button id="c-open" class="ok">Ouvrir la calibration</button>

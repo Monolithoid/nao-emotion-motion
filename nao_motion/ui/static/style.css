@@ -158,3 +158,8 @@ fieldset.frame>legend{font-weight:600;padding:0 4px}
 body[data-tab=arms] .nao-svg,body[data-tab=head] .nao-svg,body[data-tab=hands] .nao-svg{max-height:210px}
 .cov-grid tfoot td.cov-end{text-align:right}
 .cov-grid td.pick{cursor:pointer}.cov-grid td.pick:hover{outline:2px solid var(--accent);position:relative;z-index:2}
+/* calibration extended with the takes (calib.js) */
+.cal-ext{margin-top:8px}.cal-ext summary{cursor:pointer;font-weight:600}
+.cal-ext .cal-pairs svg{width:240px;height:240px}
+.cal-ext td.grow{color:var(--ok);font-weight:600}
+.cal-ext .legend span{display:inline-block;margin-right:12px}

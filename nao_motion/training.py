@@ -214,7 +214,10 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
     save_checkpoint(run / "model.pt", model, component=component, arch=arch, meta=meta)
     loaded = LoadedModel(run / "model.pt", cfg, component)
     loaded.export_numpy(run / "model_numpy.npz")
+    # guardian = playback safety, reported for information only: it never filters the takes,
+    # never enters the loss and never picks the epoch
     metrics["guardian"] = _guardian_sweep(cfg, **{_ENGINE_ARG[component]: loaded})
+    metrics["guardian_takes"] = _guardian_on_takes(cfg, store, component, sorted(set(ex.take_ids)))
     _write_report(run, metrics, hist, meta)
     (Path(runs_dir) / f"latest_{component}.txt").write_text(run.name)
     return run
@@ -250,11 +253,16 @@ def _meta(cfg, component, joints, norm, K, ex, tr, va, tcfg):
 
 
 def _guardian_sweep(cfg, arm_model=None, head_model=None, intensities=(0.2, 0.5, 0.8, 1.0), hands_model=None):
-    """Taux de gestes générés acceptés par le guardian, sur une grille. Les groupes sans
-    modèle restent en position de départ (ce qui est évalué : le ou les modèles fournis)."""
+    """Information only (playback safety, not a training criterion): share of generated gestures
+    the guardian accepts on a grid, as played (made playable first: slowed down, brought back
+    inside the limits) and raw. Groups without a model stay at the start pose."""
     from .engine import MotionEngine
+    from .guardian.playable import make_playable
     eng = MotionEngine(cfg, arm_model, head_model, hands_model=hands_model)
     g = Guardian(cfg)
+    raw_ok = 0
+    raw_failures = {}
+    scales = []
     events = [EventContext.none(), EventContext(True, 0.6, 0.1, source="test"),
               EventContext(True, -0.4, 0.0, source="test", distance_m=0.6)]
     total = ok = 0
@@ -263,12 +271,50 @@ def _guardian_sweep(cfg, arm_model=None, head_model=None, intensities=(0.2, 0.5,
         for i in intensities:
             for ev in events:
                 gen = eng.generate(e, i, ev)
-                rep = g.validate(gen.combined)
+                raw = g.validate(gen.combined)
+                raw_ok += raw.ok
+                for v in raw.violations:
+                    raw_failures[v.code] = raw_failures.get(v.code, 0) + 1
+                a = make_playable(cfg, gen.combined)
+                scales.append(a.time_scale)
+                rep = g.validate(a.traj)
                 total += 1
                 ok += rep.ok
                 for v in rep.violations:
                     failures[v.code] = failures.get(v.code, 0) + 1
-    return {"accepted": ok, "total": total, "rate": ok / total if total else None, "violations_by_code": failures}
+    return {"accepted": ok, "total": total, "rate": ok / total if total else None, "violations_by_code": failures,
+            "raw_accepted": raw_ok, "raw_violations_by_code": raw_failures,
+            "median_slow_down": round(float(np.median(scales)), 2) if scales else None}
+
+
+def _guardian_on_takes(cfg, store, component, take_ids):
+    """Diagnostic: share of the RECORDED takes (gestures done by hand on the robot) that the guardian
+    accepts, raw and made playable. A low raw rate means the guardian is stricter than the
+    gestures themselves (calibrated zone too narrow, speed limits below the real gestures): any
+    model that imitates them well will be refused too. Information only."""
+    from .control.recording import replay_trajectory
+    from .guardian.playable import make_playable
+    joints = group_joints(cfg, component)
+    others = [j for j in cfg.all_joints if j not in joints]
+    ctx = dict(zip(others, cfg.pose("start", others))) if others else {}
+    g = Guardian(cfg)
+    n = raw_ok = ok = 0
+    raw_failures, joints_out = {}, {}
+    for tid in take_ids:
+        try:
+            traj = replay_trajectory(store.load(tid), joints)
+        except Exception:
+            continue
+        n += 1
+        raw = g.validate(traj, context_pose=ctx, check_duration=False)
+        raw_ok += raw.ok
+        for v in raw.violations:
+            raw_failures[v.code] = raw_failures.get(v.code, 0) + 1
+            if v.code == "limit" and v.joint:
+                joints_out[v.joint] = joints_out.get(v.joint, 0) + 1
+        ok += g.validate(make_playable(cfg, traj, ctx).traj, context_pose=ctx).ok
+    return {"total": n, "raw_accepted": raw_ok, "accepted_playable": ok, "raw_violations_by_code": raw_failures,
+            "takes_outside_limits_by_joint": joints_out, "calibration": cfg.calibration_version}
 
 
 def _write_report(run, metrics, hist, meta):
