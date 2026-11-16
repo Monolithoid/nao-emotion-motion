@@ -7,4 +7,5 @@ __pycache__/
 /demo_sim/
 .env
 guardian_export/
+gesture_export/
 configs/calibration/drafts/
