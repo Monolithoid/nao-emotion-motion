@@ -304,7 +304,7 @@ def cmd_export_guardian(a):
 
 
 def cmd_export_generator(a):
-    """Générateur de gestes autonome (nao_gesture.py + nao_gesture.json) pour un autre projet."""
+    """Standalone gesture generator (nao_gesture.py + nao_gesture.json) for another project."""
     from .config import load_config
     from .gesture_export import ExportError, export_generator
     cfg = load_config(a.config)
@@ -314,10 +314,10 @@ def cmd_export_generator(a):
         raise SystemExit(str(e))
     print(json.dumps(out, indent=1, ensure_ascii=False))
     if out["missing"]:
-        print(f"Groupes sans modèle : {', '.join(out['missing'])} (bras/tête maintenus en position de départ, "
-              "mains non commandées).")
+        print(f"Groups without a model: {', '.join(out['missing'])} (arms/head held in the start position, "
+              "hands not commanded).")
     if not out["calibrated"]:
-        print("ATTENTION : limites de remplacement (aucune calibration) ; à ne pas utiliser sur un robot réel.")
+        print("WARNING: fallback limits (no calibration); not to be used on a real robot.")
     return 0
 
 
@@ -422,9 +422,9 @@ def main(argv=None):
     s.add_argument("--allow-uncalibrated", action="store_true", help="exporter les limites de remplacement (essais)")
     s.set_defaults(fn=cmd_export_guardian)
     s = sub.add_parser("export-generator",
-                       help="exporter le générateur de gestes autonome (nao_gesture.py + nao_gesture.json)")
-    s.add_argument("--out", default="gesture_export", help="dossier de sortie")
-    s.add_argument("--allow-uncalibrated", action="store_true", help="exporter les limites de remplacement (essais)")
+                       help="export the standalone gesture generator (nao_gesture.py + nao_gesture.json)")
+    s.add_argument("--out", default="gesture_export", help="output folder")
+    s.add_argument("--allow-uncalibrated", action="store_true", help="export the fallback limits (tests only)")
     s.set_defaults(fn=cmd_export_generator)
     s = sub.add_parser("calibration-activate", help="activer un fichier de configs/calibration/")
     s.add_argument("file", help="fichier de configs/calibration/ (chemin ou nom seul)")

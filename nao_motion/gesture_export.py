@@ -1,15 +1,15 @@
-"""Export du générateur de gestes pour un autre projet (ia-agent...) : DEUX fichiers.
+"""Export of the gesture generator for another project (ia-agent...): TWO files.
 
-  - nao_gesture.py   : générateur + guardian autonomes (Python 2.7 et 3, bibliothèque
-                       standard seule, ni PyTorch ni numpy) ;
-  - nao_gesture.json : les modèles bras / tête / mains (poids des réseaux), leurs réglages
-                       (émotions, normalisation, B-spline, assemblage) et le guardian
-                       (limites calibrées, contraintes, vitesses, poses).
+  - nao_gesture.py   : standalone generator + guardian (Python 2.7 and 3, standard
+                       library only, no PyTorch, no numpy);
+  - nao_gesture.json : the arms / head / hands models (network weights), their settings
+                       (emotions, normalisation, B-spline, combination) and the guardian
+                       (calibrated limits, constraints, velocities, poses).
 
-Les poids viennent de l'export numpy écrit à chaque entraînement (`model_numpy.npz`
-du dernier run de chaque groupe) : l'export n'a pas besoin de PyTorch. Le guardian
-inclus est le texte même de `standalone/nao_guardian.py` (bloc <guardian-core>) :
-mêmes règles, pas de seconde copie à maintenir.
+The weights come from the numpy export written by every training run (`model_numpy.npz`
+of the latest run of each group): the export does not need PyTorch. The bundled
+guardian is the very text of `standalone/nao_guardian.py` (<guardian-core> block):
+same rules, no second copy to maintain.
 """
 from __future__ import annotations
 
@@ -34,35 +34,35 @@ LIB_NAME, DATA_NAME = "nao_gesture.py", "nao_gesture.json"
 
 
 def build_library_source() -> str:
-    """nao_gesture.py = gabarit + cœur du guardian autonome inséré à la place de #@@GUARDIAN@@."""
+    """nao_gesture.py = template + standalone guardian core inserted in place of #@@GUARDIAN@@."""
     g = GUARDIAN_SRC.read_text(encoding="utf-8")
     start, end = g.index("# <guardian-core>"), g.index("# </guardian-core>")
     core = g[start:end].rstrip() + "\n"
     banner = ("# ======================================================================================\n"
-              "# Guardian (copie du bloc <guardian-core> de nao_guardian.py, mêmes règles)\n"
+              "# Guardian (copy of the <guardian-core> block of nao_guardian.py, same rules)\n"
               "# ======================================================================================\n")
     src = TEMPLATE.read_text(encoding="utf-8")
     if src.count("#@@GUARDIAN@@") != 1:
-        raise ExportError("Gabarit nao_gesture invalide")
+        raise ExportError("Invalid nao_gesture template")
     return src.replace("#@@GUARDIAN@@", banner + core)
 
 
 def latest_numpy_models(runs_dir) -> Dict[str, Optional[Path]]:
-    """Export numpy du dernier run de chaque groupe (None si jamais entraîné)."""
+    """Numpy export of the latest run of each group (None if never trained)."""
     from .training import latest
     out = {}
     for comp in COMPONENTS:
         p = latest(runs_dir, comp)
         out[comp] = p.with_name("model_numpy.npz") if p else None
         if out[comp] is not None and not out[comp].exists():
-            raise ExportError(f"{out[comp]} absent : réentraîner le groupe {comp} (export numpy manquant)")
+            raise ExportError(f"{out[comp]} missing: retrain the {comp} group (no numpy export)")
     return out
 
 
 def _model_entry(cfg: Config, comp: str, path: Path) -> dict:
     from .models.features import Norm
     from .models.nets import load_model
-    m = load_model(path, cfg, comp)  # NumpyModel : vérifie émotions, articulations, format
+    m = load_model(path, cfg, comp)  # NumpyModel: checks emotions, joints, format
     joints = {"arms": cfg.arm_joints, "head": cfg.head_joints, "hands": cfg.hand_joints}[comp]
     norm = Norm.from_config(cfg, joints)
     clip = None
@@ -86,13 +86,13 @@ def bundle_dict(cfg: Config, models: Dict[str, Optional[Path]], allow_uncalibrat
     entries = {c: _model_entry(cfg, c, Path(p)) for c, p in models.items()
                if p is not None and (c != "hands" or cfg.hand_joints)}
     if not entries:
-        raise ExportError("Aucun modèle entraîné à exporter (bras, tête ou mains)")
+        raise ExportError("No trained model to export (arms, head or hands)")
     return {
         "kind": BUNDLE_KIND, "schema_version": BUNDLE_SCHEMA,
         "exported_at": _dt.datetime.now().isoformat(timespec="seconds"), "package_version": __version__,
         "emotions": list(cfg.emotions),
-        "input_layout": "[émotions (one-hot ou mélange normalisé)..., intensité 0..1, événement présent, "
-                        "sin(azimut), cos(azimut), élévation (rad), distance connue, 1/(1+distance m)]",
+        "input_layout": "[emotions (one-hot or normalised mix)..., intensity 0..1, event present, "
+                        "sin(azimuth), cos(azimuth), elevation (rad), distance known, 1/(1+distance m)]",
         "n_control_points": int(cfg.model["representation"]["n_control_points"]),
         "rate_hz": 50.0,
         "timing": str((cfg.model.get("combine") or {}).get("timing", "hold")),
@@ -104,8 +104,8 @@ def bundle_dict(cfg: Config, models: Dict[str, Optional[Path]], allow_uncalibrat
 
 def export_generator(cfg: Config, out_dir, runs_dir="runs", models: Optional[Dict[str, Optional[Path]]] = None,
                      allow_uncalibrated: bool = False) -> dict:
-    """Écrit nao_gesture.py et nao_gesture.json dans `out_dir`. `models` : {groupe: chemin .npz}
-    (défaut : dernier run de chaque groupe dans `runs_dir`)."""
+    """Writes nao_gesture.py and nao_gesture.json into `out_dir`. `models`: {group: .npz path}
+    (default: latest run of each group in `runs_dir`)."""
     models = latest_numpy_models(runs_dir) if models is None else models
     data = bundle_dict(cfg, models, allow_uncalibrated)
     out = Path(out_dir)

@@ -1,4 +1,4 @@
-"""Générateur exporté (nao_gesture.py + nao_gesture.json) : mêmes gestes et mêmes verdicts que le projet."""
+"""Exported generator (nao_gesture.py + nao_gesture.json): same gestures and same verdicts as the project."""
 import ast
 import importlib.util
 import json
@@ -19,9 +19,9 @@ from .conftest import make_wb
 
 
 def _fake_npz(path, cfg, comp, seed, hidden=(16, 16)):
-    """Export numpy au format de `LoadedModel.export_numpy` sans PyTorch : couches cachées
-    aléatoires, dernière couche réglée pour un geste doux autour du départ (~1,5 s) qui
-    varie un peu avec l'émotion et l'événement."""
+    """Numpy export in the `LoadedModel.export_numpy` format, without PyTorch: random hidden
+    layers, last layer set for a gentle gesture around the start pose (~1.5 s) that varies
+    a little with the emotion and the event."""
     joints = {"arms": cfg.arm_joints, "head": cfg.head_joints, "hands": cfg.hand_joints}[comp]
     K, J = int(cfg.model["representation"]["n_control_points"]), len(joints)
     dims = [len(cfg.emotions) + 1 + EVENT_FEATURES, *hidden, K * J + 1]
@@ -124,7 +124,9 @@ def test_same_cycle_as_controller(exported, tmp_path, from_rest):
                               to_pose="rest" if from_rest else "start")
     g = gen.generate(c.emotions[0], 0.8, _event_dict(ev), current_pose=pose, from_rest=from_rest,
                      return_to="rest" if from_rest else "start")
-    assert [s[0] for s in g.segments] == [s[0] for s in plan.segments]
+    names_fr = {"repos_vers_depart": "rest_to_start", "vers_depart": "to_start", "depart_vers_geste": "start_to_gesture",
+                "geste": "gesture", "geste_vers_depart": "gesture_to_start", "depart_vers_repos": "start_to_rest"}
+    assert [s[0] for s in g.segments] == [names_fr.get(s[0], s[0]) for s in plan.segments]
     np.testing.assert_allclose(g.times, plan.traj.t, atol=1e-9)
     np.testing.assert_allclose(np.array(g.positions), plan.traj.q, atol=1e-7)
     assert g.ok == plan.report.ok
@@ -146,7 +148,7 @@ def test_refusals(exported):
         gen.generate(c.emotions[0], 0.5, {"azimuth_deg": 10})
     joints = gen.gesture(c.emotions[0], 0.5)[0]
     far = {j: 0.0 for j in joints}
-    far["LShoulderRoll"] = 1.3  # loin du repos
+    far["LShoulderRoll"] = 1.3  # far from rest
     g = gen.generate(c.emotions[0], 0.5, current_pose=far, from_rest=True)
     assert not g.ok and "not_at_rest" in {v.code for v in g.report.violations}
     with pytest.raises(lib.GuardianError):
@@ -179,7 +181,7 @@ def test_export_requires_a_model(exported, tmp_path):
 
 
 def test_library_is_python27_compatible():
-    """Pas de Python 2 dans l'environnement de test : contrôle statique de la syntaxe et des imports."""
+    """No Python 2 in the test environment: static check of syntax and imports."""
     src = build_library_source()
     tree = ast.parse(src)
     assert src.startswith("# -*- coding: utf-8 -*-")
@@ -197,11 +199,11 @@ def test_library_is_python27_compatible():
         if isinstance(n, ast.ImportFrom):
             assert n.module in allowed
         if isinstance(n, ast.Starred):
-            raise AssertionError("décompression * hors appel : à éviter (Python 2)")
+            raise AssertionError("* unpacking outside a call: avoid (Python 2)")
         if isinstance(n, ast.Call):
-            assert not (isinstance(n.func, ast.Name) and n.func.id in ("open",)), "io.open requis en Python 2"
+            assert not (isinstance(n.func, ast.Name) and n.func.id in ("open",)), "io.open required in Python 2"
         if isinstance(n, ast.ClassDef):
-            assert n.bases, f"{n.name} : hériter explicitement (object) en Python 2"
+            assert n.bases, f"{n.name}: inherit explicitly from object in Python 2"
 
 
 def test_variation_is_seeded(exported):
@@ -211,11 +213,11 @@ def test_variation_is_seeded(exported):
     d = gen.gesture(c.emotions[0], 0.5, variation=0.05, seed=4)[2]
     base = gen.gesture(c.emotions[0], 0.5)[2]
     assert a == b and a != d and a != base
-    assert a[0] == pytest.approx(base[0]) and a[-1] == pytest.approx(base[-1])  # extrémités inchangées
+    assert a[0] == pytest.approx(base[0]) and a[-1] == pytest.approx(base[-1])  # unchanged ends
 
 
 def test_rest_transition_check_matches_project(exported):
-    """check_rest_transition (guardian autonome) : même verdict que validate_rest_transition."""
+    """check_rest_transition (standalone guardian): same verdict as validate_rest_transition."""
     from nao_motion.control.transitions import min_jerk
     c, _, _, _, gen = exported
     joints = c.arm_joints

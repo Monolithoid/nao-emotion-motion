@@ -1,45 +1,45 @@
 # -*- coding: utf-8 -*-
-"""Générateur de gestes expressifs pour NAO : émotion + intensité + événement -> mouvement validé.
+"""Expressive gesture generator for NAO: emotion + intensity + event -> validated movement.
 
-Fichier UNIQUE et autonome, produit par `nao-motion export-generator` avec son
-fichier de données `nao_gesture.json` (les 3 modèles bras / tête / mains, leurs
-réglages et les limites du guardian). Compatible Python 2.7 (NAOqi 2.1) et
-Python 3, bibliothèque standard uniquement : ni PyTorch, ni numpy, ni NAOqi.
+A SINGLE standalone file, produced by `nao-motion export-generator` together with
+its data file `nao_gesture.json` (the 3 arms / head / hands models, their settings
+and the guardian limits). Compatible with Python 2.7 (NAOqi 2.1) and Python 3,
+standard library only: no PyTorch, no numpy, no NAOqi.
 
-Intégration dans un autre projet : copier `nao_gesture.py` et `nao_gesture.json`.
+To use it in another project, copy `nao_gesture.py` and `nao_gesture.json`.
 
     from nao_gesture import GestureGenerator
     gen = GestureGenerator.load("nao_gesture.json")
     g = gen.generate("joie", 0.7,
                      event={"azimuth_deg": 30, "elevation_deg": 0, "distance_m": 1.2},
-                     current_pose=pose_mesuree)          # recommandé, voir plus bas
-    if g.ok:                                             # validé par le guardian
+                     current_pose=measured_posture)      # recommended, see below
+    if g.ok:                                             # accepted by the guardian
         names, angles, times = g.angle_interpolation()
         motion.angleInterpolation(names, angles, times, True)
     else:
-        print(g.report.summary())                        # ne rien envoyer
+        print(g.report.summary())                        # send nothing
 
-Entrées
-  - émotion : un nom de `gen.emotions`, ou un mélange {"joie": 0.7, "surprise": 0.3} ;
-  - intensité : entre 0 et 1 ;
-  - événement (optionnel) : None = aucun événement ; sinon un dictionnaire
-    {"azimuth_deg" | "azimuth_rad", "elevation_deg" | "elevation_rad", "distance_m" (optionnel)}
-    exprimé dans le repère du torse (FRAME_TORSO) : azimut positif vers la GAUCHE du robot,
-    élévation positive vers le HAUT, 0 = devant. Une direction vue par la caméra se donne avec
-    "frame": "head" et les angles HeadYaw / HeadPitch mesurés au moment de la détection
+Inputs
+  - emotion: a name from `gen.emotions`, or a mix {"joie": 0.7, "surprise": 0.3};
+  - intensity: between 0 and 1;
+  - event (optional): None = no event; otherwise a dictionary
+    {"azimuth_deg" | "azimuth_rad", "elevation_deg" | "elevation_rad", "distance_m" (optional)}
+    in the torso frame (FRAME_TORSO): azimuth positive to the robot's LEFT, elevation
+    positive UP, 0 = straight ahead. A direction seen by the camera is given with
+    "frame": "head" plus the HeadYaw / HeadPitch measured at detection time
     ("head_yaw_rad", "head_pitch_rad").
 
-Sortie : un `Gesture` (articulations, temps en s, positions en rad ; LHand / RHand en
-ouverture 0..1) et le rapport du guardian. Le générateur ne commande RIEN et le
-guardian ne modifie jamais un mouvement : il l'accepte ou le refuse.
+Output: a `Gesture` (joints, times in s, positions in rad; LHand / RHand are
+openings 0..1) and the guardian report. The generator commands NOTHING and the
+guardian never modifies a movement: it accepts or rejects it.
 
-`current_pose` ({articulation: valeur mesurée}) : le geste appris part de la position
-de départ calibrée. Avec la posture mesurée, le générateur ajoute les transitions
-(posture actuelle -> départ -> geste -> départ, et vers le repos si demandé) et
-valide le tout, comme l'interface du projet. Sans elle, seul le geste est
-renvoyé et l'appelant doit d'abord amener le robot en position de départ.
-`from_rest=True` : le robot est au repos (peut être hors de la zone de mouvement,
-au contact) ; le segment repos -> départ suit alors les règles « repos ».
+`current_pose` ({joint: measured value}): the learned gesture starts from the
+calibrated start position. Given the measured posture, the generator adds the
+transitions (current posture -> start -> gesture -> start, and to rest if asked)
+and validates the whole, like the project UI. Without it, only the gesture is
+returned and the caller must first bring the robot to the start position.
+`from_rest=True`: the robot is at rest (possibly outside the movement zone, in
+contact); the rest -> start segment then follows the "rest" rules.
 """
 from __future__ import absolute_import, division, print_function, unicode_literals
 
@@ -54,23 +54,23 @@ import sys
 #@@GUARDIAN@@
 
 # ======================================================================================
-# Générateur
+# Generator
 # ======================================================================================
 BUNDLE_KIND = "nao_motion.gesture_bundle"
 BUNDLE_SCHEMA = 1
-EVENT_FEATURES = 6  # [présent, sin(az), cos(az), élévation, distance connue, 1/(1+d)]
+EVENT_FEATURES = 6  # [present, sin(az), cos(az), elevation, distance known, 1/(1+d)]
 COMPONENTS = ("arms", "head", "hands")
 TIMINGS = ("hold", "stretch")
 DEGREE = 3
-REST_SEGMENTS = ("repos_vers_depart", "depart_vers_repos")
+REST_SEGMENTS = ("rest_to_start", "start_to_rest")
 
 
 class GestureError(ValueError):
-    """Entrée invalide (émotion, intensité, événement, posture) ou fichier de données invalide."""
+    """Invalid input (emotion, intensity, event, posture) or invalid data file."""
 
 
 def _f32(x):
-    """Arrondi en float32, comme les entrées du modèle à l'entraînement."""
+    """Rounds to float32, like the model inputs during training."""
     return struct.unpack(str("f"), struct.pack(str("f"), float(x)))[0]
 
 
@@ -80,13 +80,13 @@ def _matvec(W, x):
 
 def _knots(n_ctrl):
     if n_ctrl < DEGREE + 1:
-        raise GestureError("n_control_points >= 4 requis")
+        raise GestureError("n_control_points >= 4 required")
     inner = _linspace(0.0, 1.0, n_ctrl - DEGREE + 1)
     return [0.0] * DEGREE + inner + [1.0] * DEGREE
 
 
 def _bspline_row(k, n_ctrl, u):
-    """Ligne de la base B-spline cubique bornée (Cox-de Boor), même calcul que le projet."""
+    """One row of the clamped cubic B-spline basis (Cox-de Boor), same computation as the project."""
     u = min(1.0, max(0.0, float(u)))
     m = len(k) - 1
     if u >= 1.0:
@@ -107,7 +107,7 @@ def _bspline_row(k, n_ctrl, u):
 
 
 def _head_to_torso(az_h, el_h, head_yaw, head_pitch):
-    """Direction exprimée dans le repère tête -> repère torse (translation du cou négligée)."""
+    """Direction in the head frame -> torso frame (neck translation neglected)."""
     d = [math.cos(el_h) * math.cos(az_h), math.cos(el_h) * math.sin(az_h), math.sin(el_h)]
     cp, sp = math.cos(head_pitch), math.sin(head_pitch)
     d = [cp * d[0] + sp * d[2], d[1], -sp * d[0] + cp * d[2]]
@@ -117,40 +117,40 @@ def _head_to_torso(az_h, el_h, head_yaw, head_pitch):
 
 
 def event_features(event):
-    """Encodage de l'événement pour les modèles (voir la doc du module)."""
+    """Event encoding for the models (see the module documentation)."""
     if event is None or event is False or (isinstance(event, dict) and not event.get("present", True)):
         return [0.0] * EVENT_FEATURES
     if not isinstance(event, dict):
-        raise GestureError("Événement : dictionnaire ou None attendu")
+        raise GestureError("Event: dictionary or None expected")
 
     def angle(name):
         if name + "_rad" in event and event[name + "_rad"] is not None:
             return float(event[name + "_rad"])
         if name + "_deg" in event and event[name + "_deg"] is not None:
             return math.radians(float(event[name + "_deg"]))
-        raise GestureError("Événement : %s_deg ou %s_rad requis" % (name, name))
+        raise GestureError("Event: %s_deg or %s_rad required" % (name, name))
 
     az, el = angle("azimuth"), angle("elevation")
     frame = event.get("frame", "torso")
     if frame == "head":
         if event.get("head_yaw_rad") is None or event.get("head_pitch_rad") is None:
-            raise GestureError("frame='head' exige head_yaw_rad et head_pitch_rad mesurés à la détection")
+            raise GestureError("frame='head' requires head_yaw_rad and head_pitch_rad measured at detection time")
         az, el = _head_to_torso(az, el, float(event["head_yaw_rad"]), float(event["head_pitch_rad"]))
     elif frame != "torso":
-        raise GestureError("Repère inconnu %r (torso | head)" % (frame,))
+        raise GestureError("Unknown frame %r (torso | head)" % (frame,))
     if not (_finite(az) and _finite(el)) or not -math.pi / 2 <= el <= math.pi / 2:
-        raise GestureError("Événement : azimut fini et élévation dans [-90°, 90°] attendus")
+        raise GestureError("Event: finite azimuth and elevation in [-90°, 90°] expected")
     az = math.atan2(math.sin(az), math.cos(az))
     dist = event.get("distance_m")
     if dist is not None and dist != "":
         dist = float(dist)
         if not _finite(dist) or dist <= 0:
-            raise GestureError("Distance invalide : nombre de mètres strictement positif attendu")
+            raise GestureError("Invalid distance: a strictly positive number of metres is expected")
         return [1.0, math.sin(az), math.cos(az), el, 1.0, 1.0 / (1.0 + dist)]
     return [1.0, math.sin(az), math.cos(az), el, 0.0, 0.0]
 
 
-# -- transitions (non apprises), mêmes profils que le contrôleur du projet ---------------
+# -- transitions (not learned), same profiles as the project controller ------------------
 def _traj(times, rows):
     return {"t": list(times), "q": [list(r) for r in rows]}
 
@@ -168,7 +168,7 @@ def _min_jerk(q0, q1, v_max, a_max, rate_hz=50.0, min_duration=0.4):
 
 
 def _quintic(q0, v0, a0, q1, v1, a1, v_max, a_max, rate_hz=50.0, min_duration=0.4, max_duration=6.0):
-    """Transition raccordée en position, vitesse et accélération aux deux bouts."""
+    """Transition matched in position, velocity and acceleration at both ends."""
     d = max([abs(b - a) for a, b in zip(q0, q1)] or [0.0])
     T = max(min_duration, 1.875 * d / v_max)
     best = None
@@ -198,7 +198,7 @@ def _quintic(q0, v0, a0, q1, v1, a1, v_max, a_max, rate_hz=50.0, min_duration=0.
 
 
 def _boundary(tr, at_end=False):
-    """Vitesse et accélération (différences finies) au début ou à la fin."""
+    """Velocity and acceleration (finite differences) at the start or the end."""
     t, q = tr["t"], tr["q"]
     if at_end:
         t, q = t[::-1], q[::-1]
@@ -234,15 +234,15 @@ def _concat(parts):
 
 
 class Gesture(object):
-    """Mouvement proposé. `ok` = accepté par le guardian ; rien n'a été envoyé au robot."""
+    """Proposed movement. `ok` = accepted by the guardian; nothing has been sent to the robot."""
 
     def __init__(self, joints, times, positions, report, gesture_report, segments, inputs, notes, durations):
         self.joints = list(joints)
-        self.times = list(times)            # s, à partir de 0
-        self.positions = positions          # une ligne par instant, une colonne par articulation
-        self.report = report                # rapport du guardian sur tout ce qui est renvoyé
-        self.gesture_report = gesture_report  # rapport sur le geste seul
-        self.segments = segments            # [(nom, début s, fin s)]
+        self.times = list(times)            # s, from 0
+        self.positions = positions          # one row per time step, one column per joint
+        self.report = report                # guardian report on everything returned
+        self.gesture_report = gesture_report  # report on the gesture alone
+        self.segments = segments            # [(name, start s, end s)]
         self.inputs = inputs
         self.notes = notes
         self.group_durations_s = durations
@@ -261,13 +261,13 @@ class Gesture(object):
     __nonzero__ = __bool__  # Python 2
 
     def angle_interpolation(self, rate_hz=None):
-        """(noms, angles, temps) pour ALMotion.angleInterpolation(noms, angles, temps, True).
+        """(names, angles, times) for ALMotion.angleInterpolation(names, angles, times, True).
 
-        Le premier échantillon (t = 0, posture de départ) est omis : NAOqi part de la posture
-        actuelle. `rate_hz` réduit le nombre de points si besoin (par défaut : tous, ~50 Hz).
-        Refuse un mouvement non validé par le guardian."""
+        The first sample (t = 0, start posture) is dropped: NAOqi starts from the current
+        posture. `rate_hz` thins out the points if needed (default: all of them, ~50 Hz).
+        Refuses a movement the guardian rejected."""
         if not self.ok:
-            raise GuardianError("Mouvement refusé par le guardian : " + self.report.summary())
+            raise GuardianError("Movement rejected by the guardian: " + self.report.summary())
         idx = list(range(1, len(self.times)))
         if rate_hz:
             step = max(1, int(round((len(self.times) - 1) / max(self.duration * float(rate_hz), 1.0))))
@@ -299,9 +299,9 @@ class _Model(object):
         self.clip = d.get("clip")
         J = len(self.joints)
         if not self.layers or len(self.layers[0][0][0]) != n_inputs + self.latent_dim:
-            raise GestureError("Modèle %s : entrée incompatible avec la liste d'émotions" % name)
+            raise GestureError("Model %s: input does not match the emotion list" % name)
         if len(self.layers[-1][1]) != K * J + 1 or len(self.center) != J or len(self.scale) != J:
-            raise GestureError("Modèle %s : sortie incompatible (%d points x %d articulations)" % (name, K, J))
+            raise GestureError("Model %s: output does not match (%d points x %d joints)" % (name, K, J))
 
     def predict(self, x):
         h = list(x) + [0.0] * self.latent_dim
@@ -315,16 +315,16 @@ class _Model(object):
 class GestureGenerator(object):
     def __init__(self, data, allow_uncalibrated=False):
         if not isinstance(data, dict) or data.get("kind") != BUNDLE_KIND:
-            raise GestureError("Ce n'est pas un fichier de générateur exporté par nao-emotion-motion")
+            raise GestureError("Not a generator file exported by nao-emotion-motion")
         if data.get("schema_version") != BUNDLE_SCHEMA:
-            raise GestureError("Version de schéma non prise en charge : %r" % (data.get("schema_version"),))
+            raise GestureError("Unsupported schema version: %r" % (data.get("schema_version"),))
         self.data = data
         self.emotions = list(data["emotions"])
         self.K = int(data["n_control_points"])
         self.rate_hz = float(data.get("rate_hz", 50.0))
         self.timing = data.get("timing", "hold")
         if self.timing not in TIMINGS:
-            raise GestureError("timing inconnu : %r" % (self.timing,))
+            raise GestureError("Unknown timing: %r" % (self.timing,))
         self.guardian = Guardian(data["guardian"], allow_uncalibrated=allow_uncalibrated)
         self.groups = dict((k, list(v)) for k, v in data["groups"].items())
         n_in = len(self.emotions) + 1 + EVENT_FEATURES
@@ -333,13 +333,13 @@ class GestureGenerator(object):
             if (data.get("models") or {}).get(name):
                 self.models[name] = _Model(name, data["models"][name], n_in, self.K)
                 if self.models[name].joints != self.groups[name]:
-                    raise GestureError("Modèle %s : articulations différentes du groupe" % name)
+                    raise GestureError("Model %s: joints differ from the group" % name)
         if not self.models:
-            raise GestureError("Aucun modèle dans le fichier")
+            raise GestureError("No model in the file")
         self._knots = _knots(self.K)
         for j in self.groups["arms"] + self.groups["head"] + self.groups.get("hands", []):
             if j not in self.guardian.limits:
-                raise GestureError("Articulation %s absente du guardian" % j)
+                raise GestureError("Joint %s missing from the guardian" % j)
 
     @classmethod
     def load(cls, path, allow_uncalibrated=False):
@@ -348,39 +348,39 @@ class GestureGenerator(object):
 
     @property
     def info(self):
-        """Provenance : date d'export, calibration, runs d'origine des modèles."""
+        """Provenance: export date, calibration, source runs of the models."""
         return {"exported_at": self.data.get("exported_at"), "calibration": self.guardian.source,
                 "models": dict((k, (self.data["models"][k] or {}).get("source")) for k in self.models),
                 "emotions": self.emotions}
 
-    # -- entrées ---------------------------------------------------------------------
+    # -- inputs ----------------------------------------------------------------------
     def _emotion_vector(self, emotion):
         v = [0.0] * len(self.emotions)
         if not isinstance(emotion, dict):
             if emotion not in self.emotions:
-                raise GestureError("Émotion inconnue : %s (connues : %s)" % (emotion, ", ".join(self.emotions)))
+                raise GestureError("Unknown emotion: %s (known: %s)" % (emotion, ", ".join(self.emotions)))
             v[self.emotions.index(emotion)] = 1.0
             return v
         total = 0.0
         for e, w in emotion.items():
             if e not in self.emotions:
-                raise GestureError("Émotion inconnue : %s" % e)
+                raise GestureError("Unknown emotion: %s" % e)
             w = float(w)
             if not _finite(w) or w < 0:
-                raise GestureError("Poids d'émotion invalides")
+                raise GestureError("Invalid emotion weights")
             v[self.emotions.index(e)] = _f32(w)
             total += _f32(w)
         if total <= 0:
-            raise GestureError("Mélange d'émotions vide")
+            raise GestureError("Empty emotion mix")
         return [_f32(x / _f32(total)) for x in v]
 
     def model_input(self, emotion, intensity, event=None):
         x = float(intensity)
         if not _finite(x) or not 0.0 <= x <= 1.0:
-            raise GestureError("Intensité hors de [0, 1]")
+            raise GestureError("Intensity outside [0, 1]")
         return [_f32(v) for v in self._emotion_vector(emotion) + [x] + event_features(event)]
 
-    # -- génération ------------------------------------------------------------------
+    # -- generation ------------------------------------------------------------------
     def _plan(self, model, x, variation, seed):
         out = model.predict(x)
         J = len(model.joints)
@@ -399,7 +399,7 @@ class GestureGenerator(object):
         return ctrl, dur
 
     def gesture(self, emotion, intensity, event=None, variation=0.0, seed=None):
-        """Geste seul (bras + tête + mains), sans transitions : (articulations, temps, positions, infos)."""
+        """Gesture alone (arms + head + hands), no transitions: (joints, times, positions, info)."""
         x = self.model_input(emotion, intensity, event)
         variation = float(variation or 0.0)
         plans = {}
@@ -425,25 +425,25 @@ class GestureGenerator(object):
             elif name in ("arms", "head"):
                 missing = [j for j in js if j not in start]
                 if missing:
-                    raise GestureError("Pose de départ inconnue pour %s" % ", ".join(missing))
+                    raise GestureError("Unknown start pose for %s" % ", ".join(missing))
                 cols += [[float(start[j])] * n for j in js]
                 joints += js
-                notes.append("Aucun modèle %s : maintenu en position de départ" % name)
+                notes.append("No %s model: held in the start position" % name)
             else:
-                notes.append("Aucun modèle des mains : mains non commandées")
+                notes.append("No hands model: hands not commanded")
         rows = [[c[i] for c in cols] for i in range(n)]
         durations = dict((k, round(d, 3)) for k, (_, d) in plans.items())
         return joints, tt, rows, {"notes": notes, "durations": durations}
 
     def generate(self, emotion, intensity, event=None, current_pose=None, from_rest=False, return_to="start",
                  variation=0.0, seed=None):
-        """Génère et valide. Voir la doc du module.
+        """Generates and validates. See the module documentation.
 
-        current_pose : posture mesurée {articulation: valeur} ; ajoute les transitions.
-        from_rest    : le robot est au repos (segment repos -> départ aux règles « repos »).
-        return_to    : "start" (finir en position de départ) ou "rest" (revenir au repos) ;
-                       ignoré sans current_pose.
-        variation    : petite variation aléatoire (0 = geste appris ; graine `seed`)."""
+        current_pose : measured posture {joint: value}; adds the transitions.
+        from_rest    : the robot is at rest (rest -> start segment under the "rest" rules).
+        return_to    : "start" (end in the start position) or "rest" (go back to rest);
+                       ignored without current_pose.
+        variation    : small random variation (0 = learned gesture; seed `seed`)."""
         joints, tt, rows, extra = self.gesture(emotion, intensity, event, variation, seed)
         notes = list(extra["notes"])
         g = self.guardian
@@ -455,18 +455,18 @@ class GestureGenerator(object):
         inputs = {"emotion": emotion, "intensity": float(intensity), "event": event, "variation": variation,
                   "seed": seed, "timing": self.timing}
         if current_pose is None:
-            notes.append("Sans posture mesurée : amener le robot en position de départ avant d'envoyer ce geste")
-            return Gesture(joints, tt, rows, gesture_report, gesture_report, [("geste", 0.0, round(tt[-1], 4))],
+            notes.append("No measured posture: bring the robot to the start position before sending this gesture")
+            return Gesture(joints, tt, rows, gesture_report, gesture_report, [("gesture", 0.0, round(tt[-1], 4))],
                            inputs, notes, extra["durations"])
         if return_to not in ("start", "rest"):
-            raise GestureError("return_to : 'start' ou 'rest'")
+            raise GestureError("return_to: 'start' or 'rest'")
         missing = [j for j in joints if j not in current_pose]
         if missing:
-            raise GestureError("Posture mesurée incomplète : %s" % ", ".join(missing))
+            raise GestureError("Incomplete measured posture: %s" % ", ".join(missing))
         start_p, rest_p = g.pose("start"), g.pose("rest")
         for name, p in (("start", start_p), ("rest", rest_p)):
             if any(j not in p for j in joints):
-                raise GestureError("Pose %s incomplète dans le fichier" % name)
+                raise GestureError("Incomplete %s pose in the file" % name)
         q_cur = [current_pose[j] for j in joints]
         start = [float(start_p[j]) for j in joints]
         rest = [float(rest_p[j]) for j in joints]
@@ -476,23 +476,23 @@ class GestureGenerator(object):
             far = [j for j, q, r in zip(joints, q_cur, rest)
                    if j not in hands and abs(q - r) > 2 * g.start_tolerance]
             if far:
-                violations.append(Violation("not_at_rest", "Robot non mesuré au repos : %s" % ", ".join(far)))
+                violations.append(Violation("not_at_rest", "Robot not measured at rest: %s" % ", ".join(far)))
         motion = _resampled(_traj(tt, rows), 50.0)
         v0, a0 = _boundary(motion)
         v1, a1 = _boundary(motion, at_end=True)
         z = [0.0] * len(joints)
         vlim, alim = g.max_velocity * 0.8, g.max_acceleration * 0.8
         if from_rest:
-            segs = [("repos_vers_depart", _min_jerk(q_cur, start, g.rest_velocity * 0.8, g.max_acceleration * 0.25))]
+            segs = [("rest_to_start", _min_jerk(q_cur, start, g.rest_velocity * 0.8, g.max_acceleration * 0.25))]
         else:
-            segs = [("vers_depart", _min_jerk(q_cur, start, g.transition_velocity, g.max_acceleration * 0.5))]
-        segs += [("depart_vers_geste", _quintic(start, z, z, motion["q"][0], v0, a0, vlim, alim)),
-                 ("geste", motion),
-                 ("geste_vers_depart", _quintic(motion["q"][-1], v1, a1, start, z, z, vlim, alim))]
+            segs = [("to_start", _min_jerk(q_cur, start, g.transition_velocity, g.max_acceleration * 0.5))]
+        segs += [("start_to_gesture", _quintic(start, z, z, motion["q"][0], v0, a0, vlim, alim)),
+                 ("gesture", motion),
+                 ("gesture_to_start", _quintic(motion["q"][-1], v1, a1, start, z, z, vlim, alim))]
         if return_to == "rest":
-            segs.append(("depart_vers_repos", _min_jerk(start, rest, g.rest_velocity * 0.8,
-                                                        g.max_acceleration * 0.25)))
-        # validation : segments repos à part, tout le reste sur le trajet continu qu'il forme
+            segs.append(("start_to_rest", _min_jerk(start, rest, g.rest_velocity * 0.8,
+                                                    g.max_acceleration * 0.25)))
+        # validation: rest segments on their own, everything else on the continuous path it forms
         t, reports, main, main_t0, segments = 0.0, [], [], None, []
         for name, s in segs:
             d = s["t"][-1] - s["t"][0]
@@ -515,20 +515,20 @@ class GestureGenerator(object):
         for rep in reports:
             violations += rep.violations
         full = _concat([s for _, s in segs])
-        notes.append("Segments repos <-> départ : limites d'usine et vitesse réduite seulement ; leur absence de "
-                     "heurt relève de la calibration.")
+        notes.append("Rest <-> start segments: factory limits and reduced velocity only; that they are free of "
+                     "collisions is up to the calibration.")
         report = Report(not violations, violations, reports[0].stats)
         return Gesture(joints, full["t"], full["q"], report, gesture_report, segments, inputs, notes,
                        extra["durations"])
 
 
 def _main(argv=None):
-    """python nao_gesture.py nao_gesture.json joie 0.7 [azimut_deg élévation_deg [distance_m]]"""
+    """python nao_gesture.py nao_gesture.json joie 0.7 [azimuth_deg elevation_deg [distance_m]]"""
     argv = list(sys.argv[1:] if argv is None else argv)
     allow = "--allow-uncalibrated" in argv
     args = [a for a in argv if not a.startswith("--")]
     if len(args) not in (3, 5, 6):
-        print("usage : python nao_gesture.py nao_gesture.json EMOTION INTENSITE [AZIMUT_DEG ELEVATION_DEG "
+        print("usage: python nao_gesture.py nao_gesture.json EMOTION INTENSITY [AZIMUTH_DEG ELEVATION_DEG "
               "[DISTANCE_M]] [--allow-uncalibrated]")
         return 2
     gen = GestureGenerator.load(args[0], allow_uncalibrated=allow)
@@ -540,7 +540,7 @@ def _main(argv=None):
     g = gen.generate(args[1], float(args[2]), event)
     out = json.dumps({"ok": g.ok, "duration_s": round(g.duration, 3), "joints": g.joints,
                       "guardian": g.report.to_dict(), "notes": g.notes}, indent=1, ensure_ascii=False)
-    if not isinstance(out, str):  # Python 2 : unicode -> octets
+    if not isinstance(out, str):  # Python 2: unicode -> bytes
         out = out.encode("utf-8")
     print(out)
     return 0 if g.ok else 1
