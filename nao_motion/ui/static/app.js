@@ -66,7 +66,7 @@ async function refreshStatus() {
   const w = [];
   if (!STATUS.calibrated || !STATUS.poses_calibrated) w.push("Aucune calibration active (onglet Calibration) : limites de remplacement, exécution réelle refusée.");
   if (STATUS.sim_demonstration) w.push("Simulation : un démonstrateur SYNTHÉTIQUE remplace votre main ; les prises sont marquées comme synthétiques.");
-  $("warn").textContent = w.join(" ");
+  $("warn").textContent = w.join("\n");
   const txt = r.state === "none" ? "" : r.state === "countdown" ? `Départ dans ${Math.ceil(r.countdown_left)}…` :
     r.state === "recording" ? `● Enregistrement ${r.elapsed.toFixed(1)} s` : r.state === "prepared" ? "Prêt" :
     r.state === "done" ? `Terminé (${r.elapsed.toFixed(1)} s)${r.complete === false ? " — incomplet" + (r.error ? " : " + r.error : "") : ""}` : r.state + (r.error ? " : " + r.error : "");
