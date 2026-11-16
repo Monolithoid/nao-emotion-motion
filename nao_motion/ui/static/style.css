@@ -123,7 +123,7 @@ fieldset.frame>legend{font-weight:600;padding:0 4px}
 .rec-act .recstate{margin-top:6px}
 .rec-info .hint{margin:4px 0}
 .rec-info .draft{margin-top:4px;padding:6px 10px}.rec-info .draft h3{margin:0 0 4px;font-size:14px}
-.rec-info .draft .row{margin:6px 0 0}
+.rec-info .draft .row{margin:6px 0 0;gap:8px}.rec-info .draft input{width:120px;flex:1 1 120px}
 .sc-slot{border-left:1px solid var(--line);padding-left:14px;min-height:100%}
 .sc-slot .shortcuts{flex-direction:column;align-items:flex-start;gap:6px;padding:4px 0}
 .rec-act fieldset.hands{margin:8px 0 0;padding:2px 10px 6px}.rec-act fieldset.hands legend{font-weight:600}
