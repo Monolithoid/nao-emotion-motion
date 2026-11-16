@@ -141,7 +141,7 @@ Each group is **collected and trained on its own**, in any order: no model reads
 
 Timing (`model.yaml`, `combine.timing`): with `hold` (default), all groups start together at their own learned tempo, and a shorter group holds its final pose until the longest one ends; with `stretch`, every group is slowed down to the longest duration.
 
-Trade-off: consistency between groups comes from the **shared instruction** (the arm points towards the event, the head looks at it, the hand on that side opens), not from a learned synchronisation. A fine timing link such as the head following the hand with a slight delay is no longer learned. A shared latent or seed across groups is a possible later improvement.
+Trade-off: consistency between groups comes from the **shared instruction** (the arm points towards the event, the head looks at it, the hand on that side opens), not from a learned synchronisation. A fine timing link such as the head following the hand with a slight delay is no longer learned. A shared latent or seed across groups is a possible later improvement, and a unified whole-body network is planned (see [TODO](#todo)).
 
 Head and hand takes recorded earlier on replayed arms (old format) remain valid: training reads only the head or hand joints. Head and hand **models** trained in the old format (which took the arms as input) are rejected on reload and must be retrained.
 
@@ -377,3 +377,16 @@ Things to check on NAOqi 2.1.4 that this repository does not assume: the behavio
 - The NAOqi bridge and the `bridge` adapter are tested only against a fake backend. The bridge needed no change for the hands (`LHand` / `RHand` go through `getAngles`, `setAngles` and `setStiffnesses` like any joint), but hand control has not been tried on the robot yet: hand speed under `max_fraction_speed`, and the hand tracking tolerance (`execution.hand_tracking_error`), are to be checked there. A hand kept stiff and closed for a long time heats up.
 - Temporal alignment is linear (no DTW). Variants are not learned yet.
 - Collision constraints are linear and indicative. No geometric model of the robot.
+
+## TODO
+
+### One unified network for the whole body
+
+Today arms, head and hands are **three independent models** (see [Three independent models, one engine](#three-independent-models-one-engine)). This is a practical choice, not a design goal: guiding one body part at a time is much easier for the operator during collection. The longer-term target is a single network that generates arms, head and hands together, so that the coordination between parts (timing, the head following the hand, and so on) is learned rather than only implied by the shared instruction.
+
+Planned path:
+
+1. **Distillation.** Have the three current models generate thousands of complete gestures in simulation (emotion, intensity and event drawn with the balanced draw), then train a fourth, unified network to reproduce them. On its own this only copies the current combination: same quality, one file instead of three.
+2. **Fine-tuning on whole-body takes.** Record real takes where the whole body moves at once, and fine-tune the distilled network on them. This is where the unified network can become better than the three separate ones.
+
+Not to do: train a single network directly on the current takes. In each of them only one part moves while the others stay fixed, so the network would learn averaged, limp gestures.
