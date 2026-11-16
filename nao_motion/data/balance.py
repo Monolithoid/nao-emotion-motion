@@ -105,11 +105,15 @@ class Grid:
         return g
 
     # -- zones ----------------------------------------------------------------
-    def zones(self, allow_none: bool) -> List[object]:
+    def zones(self, allow_none: bool, event: bool = True) -> List[object]:
+        if not event:  # événement décoché dans l'interface : seule la zone « sans événement »
+            return [NONE]
         z = [(a, e, d) for a in range(self.n_az) for e in range(self.n_el) for d in range(self.n_dist)]
         return ([NONE] if allow_none and self.none_share > 0 else []) + z
 
-    def zone_share(self, z, allow_none: bool) -> float:
+    def zone_share(self, z, allow_none: bool, event: bool = True) -> float:
+        if not event:
+            return 1.0 if z == NONE else 0.0
         n_present = self.n_az * self.n_el * self.n_dist
         p_none = self.none_share if allow_none and self.none_share > 0 else 0.0
         return p_none if z == NONE else (1.0 - p_none) / n_present
@@ -180,16 +184,16 @@ def count_takes(grid: Grid, metas: Iterable, kind: Optional[str], statuses: Opti
     return joint, emo, inten, zone, total
 
 
-def cell_weights(grid: Grid, counts, allow_none: bool):
+def cell_weights(grid: Grid, counts, allow_none: bool, event: bool = True):
     """Cases candidates, scores (excédent en prises) et probabilités."""
     joint, emo, inten, zone, n = counts
-    zs = grid.zones(allow_none)
+    zs = grid.zones(allow_none, event)
     pe, pi = 1.0 / len(grid.emotions), 1.0 / grid.n_int
     cells, scores = [], []
     for e in grid.emotions:
         for i in range(grid.n_int):
             for z in zs:
-                pz = grid.zone_share(z, allow_none)
+                pz = grid.zone_share(z, allow_none, event)
                 s = grid.cell_weight * (joint[(e, i, z)] - pe * pi * pz * n) + (emo[e] - pe * n) + (inten[i] - pi * n) + (zone[z] - pz * n)
                 cells.append((e, i, z))
                 scores.append(s)
@@ -222,22 +226,24 @@ def _draw_in_cell(grid: Grid, cell, rng: np.random.Generator) -> dict:
 
 
 def balanced_draw(cfg, metas: Sequence, kind: Optional[str], allow_none: bool = False,
-                  rng: Optional[np.random.Generator] = None) -> dict:
+                  event: bool = True, rng: Optional[np.random.Generator] = None) -> dict:
     """Propose une consigne (émotion, intensité, événement) qui comble les manques.
 
     kind : "arms" | "head" | "hands" (comptes de ce passage) ; None = aucun
     compte (onglet Génération : tirage uniforme sur les cases).
+    event=False : l'événement est décoché dans l'interface ; on ne tire qu'émotion et
+    intensité (équilibrées), l'événement proposé est absent.
     """
     grid = Grid.from_config(cfg)
     rng = rng or np.random.default_rng()
     counts = count_takes(grid, metas, kind)
-    cells, scores, p = cell_weights(grid, counts, allow_none)
+    cells, scores, p = cell_weights(grid, counts, allow_none, event)
     k = int(rng.choice(len(cells), p=p))
     cell = cells[k]
     out = _draw_in_cell(grid, cell, rng)
     joint, emo, inten, zone, n = counts
     e, i, z = cell
-    pz = grid.zone_share(z, allow_none)
+    pz = grid.zone_share(z, allow_none, event)
     fair = n / len(grid.emotions) / grid.n_int * pz
     out["balance"] = {
         "kind": kind,

@@ -182,8 +182,8 @@
   // Tirage ÉQUILIBRÉ (serveur, nao_motion/data/balance.py) : favorise les cases
   // émotion × intensité × zone d'événement les moins enregistrées du passage, en
   // restant aléatoire. Ne commande aucun mouvement.
-  async function draw(kind, allowNone) {
-    const d = await api("draw", {kind, allow_none: !!allowNone});
+  async function draw(kind, allowNone, withEvent) {
+    const d = await api("draw", {kind, allow_none: !!allowNone, event: !!withEvent});
     showBalance(kind, d.balance);
     return {emotion: d.emotion, intensity: d.intensity, ev: d.event};
   }
@@ -199,7 +199,12 @@
       : `${label(c.emotion)} · intensité ${c.intensity} · ${c.zone}`;
   }
 
-  async function applyDraw(d) {
+  // Le tirage respecte les cases telles qu'elles sont : si « événement présent » est
+  // décoché dans l'onglet, seuls émotion et intensité sont tirés, l'événement reste absent.
+  const eventOn = (p) => { const c = $(p + "-fov-present"); return !!(c && c.checked); };
+
+  async function applyDraw(d, withEvent) {
+    if (!withEvent) return;
     lastEdit = Date.now();
     const ev = await api("event", d.ev);
     for (const o of widgets) show(o, ev);
@@ -211,28 +216,32 @@
     for (const id of ["a-fov", "h-fov", "m-fov", "g-fov"]) { const el = $(id); if (el) show(build(el), {present: false}); }
     api("event").then((ev) => widgets.forEach((w) => show(w, ev)));
     $("a-random").onclick = async () => {
-      const d = await draw("arms", $("a-random-none").checked);
+      const withEvent = eventOn("a");
+      const d = await draw("arms", $("a-random-none").checked, withEvent);
       $("a-emotion").value = d.emotion; $("a-intensity").value = d.intensity;
-      await applyDraw(d);
+      await applyDraw(d, withEvent);
       updateConsigne();
     };
     $("h-random").onclick = async () => {
-      const d = await draw("head", $("h-random-none").checked);
+      const withEvent = eventOn("h");
+      const d = await draw("head", $("h-random-none").checked, withEvent);
       $("h-emotion").value = d.emotion; $("h-intensity").value = d.intensity;
-      await applyDraw(d);
+      await applyDraw(d, withEvent);
       $("h-emotion").oninput();
     };
     $("m-random").onclick = async () => {
-      const d = await draw("hands", $("m-random-none").checked);
+      const withEvent = eventOn("m");
+      const d = await draw("hands", $("m-random-none").checked, withEvent);
       $("m-emotion").value = d.emotion; $("m-intensity").value = d.intensity;
-      await applyDraw(d);
+      await applyDraw(d, withEvent);
       $("m-emotion").oninput();
     };
     $("g-random").onclick = async () => {
-      const d = await draw("gen", false);
+      const withEvent = $("g-event").checked && eventOn("g");
+      const d = await draw("gen", false, withEvent);
       $("g-emotion").value = d.emotion; $("g-emotion2").value = ""; $("g-intensity").value = d.intensity;
-      $("g-intensity").oninput(); $("g-event").checked = true;
-      await applyDraw(d);
+      $("g-intensity").oninput();
+      await applyDraw(d, withEvent);
     };
   }
 
