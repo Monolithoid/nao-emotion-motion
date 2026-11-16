@@ -34,6 +34,10 @@
   const ARMS = ["left_arm", "right_arm"], ALL = ["head", "left_arm", "right_arm"];
   const lastHold = {arms: false, head: false, hands: false};
   const bar = document.getElementById("shortcuts");
+  // The bar sits under the tabs; in a recording tab it moves into the shortcut slot of the
+  // Recording frame (display only, same content).
+  const barHome = bar && document.createComment("shortcuts");
+  if (bar) bar.parentNode.insertBefore(barHome, bar);
   let flashUntil = 0, flashText = "";
 
   const activeTab = () => { const t = document.querySelector("section.tab.active"); return t ? t.id.slice(4) : ""; };
@@ -127,6 +131,9 @@
       ids.forEach((id, i) => { const b = document.getElementById(id); if (b) b.classList.toggle("next", i === n); });
     }
     if (!bar) return;
+    const slot = document.querySelector("section.tab.active .sc-slot");
+    if (slot && bar.parentNode !== slot) slot.prepend(bar);
+    else if (!slot && bar.previousSibling !== barHome) barHome.after(bar);
     const t = releaseTarget();
     let h = `<span><kbd>Espace</kbd> relâcher ${t.label}</span>`;
     if (kind) h += `<span><kbd>1</kbd>–<kbd>4</kbd> étapes</span>` +
