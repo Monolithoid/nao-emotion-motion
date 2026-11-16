@@ -3,8 +3,9 @@
 // accepted real takes of the current group (same count as the Takes tab), one row per
 // emotion, one column per intensity slice (grouped under the draw's intensity bins). The
 // more takes, the darker the cell; each cell shows its count. The cell the take being set
-// up will fill is outlined. Display only: nothing here moves the robot, the map is read
-// from GET /api/coverage.
+// up will fill is outlined. Clicking a cell sets the tab's emotion and intensity to that
+// cell (middle of its intensity slice), to fill gaps by hand; the event is left as it is.
+// Nothing here moves the robot; the map is read from GET /api/coverage.
 (function () {
   const KINDS = {arms: "a", head: "h", hands: "m"};
   const box = document.getElementById("coverage");
@@ -32,9 +33,10 @@
       d.counts[i].forEach((c, j) => {
         const f = d.max > 0 && c > 0 ? 0.2 + 0.8 * Math.sqrt(c / d.max) : 0;
         const col = d.columns[j];
-        h += `<td class="${c > 0 ? "has" : ""}${f > 0.6 ? " dark" : ""}${i === cr && j === cc ? " cur" : ""}"` +
+        const mid = Math.round((col.lo + col.hi) / 2 * 100) / 100;
+        h += `<td data-emo="${esc(e)}" data-int="${mid}" class="pick ${c > 0 ? "has" : ""}${f > 0.6 ? " dark" : ""}${i === cr && j === cc ? " cur" : ""}"` +
           (f ? ` style="--f:${Math.round(f * 100)}%"` : "") +
-          ` title="${esc(emoLabel(e))}, intensity ${num(col.lo)}–${num(col.hi)}: ${c} take(s)">${c || ""}</td>`;
+          ` title="${esc(emoLabel(e))}, intensity ${num(col.lo)}–${num(col.hi)}: ${c} take(s). Click: emotion ${esc(emoLabel(e))}, intensity ${num(mid)}">${c || ""}</td>`;
       });
       h += "</tr>";
     });
@@ -69,7 +71,17 @@
     if (key !== lastKey || performance.now() - lastFetch > 20000) { lastKey = key; refresh(kind, p); }
   }
 
-  box.innerHTML = `<div class="cov-title" title="Accepted takes of this group, as in the Takes tab: rows = emotion, columns = intensity.">Accepted takes · emotion × intensity</div><div class="cov-body"></div>`;
+  // click on a cell: same fields as the random draw, then the same refresh of the instruction
+  box.addEventListener("click", (ev) => {
+    const td = ev.target.closest("td.pick"), p = KINDS[activeTab()];
+    if (!td || !p) return;
+    $(p + "-emotion").value = td.dataset.emo;
+    $(p + "-intensity").value = td.dataset.int;
+    $(p + "-emotion").oninput();
+    lastKey = ""; tick();
+  });
+
+  box.innerHTML = `<div class="cov-title" title="Accepted takes of this group, as in the Takes tab: rows = emotion, columns = intensity. Click a cell to set this emotion and intensity.">Accepted takes · emotion × intensity</div><div class="cov-body"></div>`;
   window.COVERAGE = {refresh: () => { lastKey = ""; tick(); }};
   setInterval(tick, 500);
   tick();
