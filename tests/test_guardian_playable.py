@@ -145,3 +145,4 @@ def test_training_report_guardian_is_information_only(trained):
     assert gt["total"] == len(set(json.loads((Path(trained["arm_run"]) / "split.json").read_text())["train"]) |
                               set(json.loads((Path(trained["arm_run"]) / "split.json").read_text())["val"]))
     assert m["n_examples"] >= gt["total"]  # every take is trained on, whatever the guardian says
+    assert gt["median_excess_rad"] is not None and gt["max_excess_rad"] >= gt["median_excess_rad"]
