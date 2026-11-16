@@ -241,7 +241,8 @@ async function refreshTrain() {
         (m.guardian.raw_accepted !== undefined ? ` (raw ${m.guardian.raw_accepted}/${m.guardian.total}, median slow-down x${m.guardian.median_slow_down})` : "") +
         " " + JSON.stringify(m.guardian.violations_by_code) : "—"}` +
       (m.guardian_takes ? `\nguardian on your recorded takes: ${m.guardian_takes.raw_accepted}/${m.guardian_takes.total} accepted as recorded, ${m.guardian_takes.accepted_playable}/${m.guardian_takes.total} once made playable` +
-        (m.guardian_takes.total && m.guardian_takes.raw_accepted < m.guardian_takes.total / 2 ? ` ⚠ the guardian refuses most of your own gestures: check the calibration (${m.guardian_takes.calibration}) and speed limits` +
+        (m.guardian_takes.median_excess_rad !== undefined && m.guardian_takes.median_excess_rad !== null ? ` (as recorded, takes go beyond the zone by ${m.guardian_takes.median_excess_rad} rad in median, max ${m.guardian_takes.max_excess_rad} rad: the zone keeps a margin inside the measured extremes, so takes that defined it touch its edge)` : "") +
+        (m.guardian_takes.total && (m.guardian_takes.accepted_playable < m.guardian_takes.total / 2 || m.guardian_takes.median_excess_rad > 0.15) ? ` ⚠ the guardian is much stricter than your own gestures: check the calibration (${m.guardian_takes.calibration}) and speed limits` +
           (Object.keys(m.guardian_takes.takes_outside_limits_by_joint).length ? `, outside limits: ${JSON.stringify(m.guardian_takes.takes_outside_limits_by_joint)}` : "") : "") : "") +
       (m.warning ? "\n⚠ " + m.warning : "") + "</div></div>";
   }).join(""));

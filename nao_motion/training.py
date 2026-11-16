@@ -299,7 +299,7 @@ def _guardian_on_takes(cfg, store, component, take_ids):
     ctx = dict(zip(others, cfg.pose("start", others))) if others else {}
     g = Guardian(cfg)
     n = raw_ok = ok = 0
-    raw_failures, joints_out = {}, {}
+    raw_failures, joints_out, excess = {}, {}, []
     for tid in take_ids:
         try:
             traj = replay_trajectory(store.load(tid), joints)
@@ -308,13 +308,21 @@ def _guardian_on_takes(cfg, store, component, take_ids):
         n += 1
         raw = g.validate(traj, context_pose=ctx, check_duration=False)
         raw_ok += raw.ok
+        # how far the take goes beyond the zone (limits / coupled envelopes, margins included):
+        # takes that defined the zone (calibration extended with them) touch its edge by a few
+        # hundredths of a radian, which is expected
+        ex = [abs(v.value - v.limit) for v in raw.violations
+              if v.code in ("limit", "coupled") and v.value is not None and v.limit is not None]
+        excess.append(max(ex) if ex else 0.0)
         for v in raw.violations:
             raw_failures[v.code] = raw_failures.get(v.code, 0) + 1
             if v.code == "limit" and v.joint:
                 joints_out[v.joint] = joints_out.get(v.joint, 0) + 1
         ok += g.validate(make_playable(cfg, traj, ctx).traj, context_pose=ctx).ok
     return {"total": n, "raw_accepted": raw_ok, "accepted_playable": ok, "raw_violations_by_code": raw_failures,
-            "takes_outside_limits_by_joint": joints_out, "calibration": cfg.calibration_version}
+            "takes_outside_limits_by_joint": joints_out, "calibration": cfg.calibration_version,
+            "median_excess_rad": round(float(np.median(excess)), 3) if excess else None,
+            "max_excess_rad": round(float(np.max(excess)), 3) if excess else None}
 
 
 def _write_report(run, metrics, hist, meta):
