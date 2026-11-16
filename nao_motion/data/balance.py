@@ -274,3 +274,44 @@ def coverage(cfg, metas: Sequence, kind: str, allow_none: bool = True) -> dict:
         "cells": len(grid.emotions) * grid.n_int * len(zs),
         "empty_cells": sum(1 for e in grid.emotions for i in range(grid.n_int) for z in zs if joint[(e, i, z)] < 1e-9),
     }
+
+
+
+def coverage_grid(cfg, metas: Sequence, kind: str, emotion: Optional[str] = None,
+                  intensity: Optional[float] = None, step: float = 0.1) -> dict:
+    """Coverage map of one group (arms, head, hands) for the recording tabs.
+
+    Rows = emotions, columns = intensity in `step` slices over the draw range
+    (`events.balance.intensity`), grouped under the draw's intensity bins
+    (faible / moyenne / forte). Counts ACCEPTED real takes, like the Takes tab
+    progress (simulated takes are reported apart). With `emotion` and
+    `intensity`, also returns the cell the next take would fill. Display only.
+    """
+    grid = Grid.from_config(cfg)
+    lo, hi = grid.intensity
+    n = max(1, int(round((hi - lo) / step)))
+    col = lambda x: _bin(float(x), lo, hi, n)
+    metas = [m for m in metas if m.kind == kind]
+    real = [m for m in metas if not getattr(m, "synthetic", False)]
+    counts = [[0] * n for _ in grid.emotions]
+    for m in real:
+        if m.status == "accepted" and m.emotion in grid.emotions:
+            counts[grid.emotions.index(m.emotion)][col(m.intensity)] += 1
+    cols = []
+    for j in range(n):
+        a, b = _edges(lo, hi, n, j)
+        cols.append({"lo": round(a, 3), "hi": round(b, 3), "band": grid.int_bin((a + b) / 2)})
+    current = None
+    if emotion in grid.emotions and intensity is not None:
+        current = [grid.emotions.index(emotion), col(intensity)]
+    return {
+        "kind": kind,
+        "emotions": list(grid.emotions),
+        "columns": cols,
+        "bands": [grid.int_label(i) for i in range(grid.n_int)],
+        "counts": counts,
+        "max": max((c for row in counts for c in row), default=0),
+        "accepted": sum(map(sum, counts)),
+        "simulated": sum(1 for m in metas if getattr(m, "synthetic", False)),
+        "current": current,
+    }

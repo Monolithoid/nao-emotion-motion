@@ -87,6 +87,16 @@ class Api:
         from ..data.progress import progress
         return progress(self.wb.cfg, self.wb.store.list())
 
+    def get_coverage(self, q):
+        """Coverage map (emotion x intensity) of a group's accepted takes, with the next take's cell."""
+        from ..data.balance import coverage_grid
+        kind = q.get("kind")
+        if kind not in ("arms", "head", "hands"):
+            raise ValueError(f"Unknown pass: {kind}")
+        inten = q.get("intensity")
+        return coverage_grid(self.wb.cfg, self.wb.store.list(kind=kind), kind, emotion=q.get("emotion"),
+                             intensity=float(inten) if inten not in (None, "") else None)
+
     def get_train(self, q):
         return {"jobs": list(self.wb.jobs.values())[-10:], "runs": self.wb.runs()[:20]}
 

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from nao_motion.data.balance import NONE, Grid, balanced_draw, cell_weights, count_takes, coverage
+from nao_motion.data.balance import NONE, Grid, balanced_draw, cell_weights, count_takes, coverage, coverage_grid
 
 
 def meta(d, kind="arms", status="accepted"):
@@ -210,3 +210,23 @@ def test_progress_milestones_config(cfg):
             cfg.robot.pop("progress", None)
         else:
             cfg.robot["progress"] = old
+
+
+
+def test_coverage_grid_counts_accepted_real_takes_and_marks_next_cell(cfg):
+    """Coverage map of the recording tabs: emotion x intensity, accepted real takes only."""
+    g = Grid.from_config(cfg)
+    e, e2 = cfg.emotions[0], cfg.emotions[1]
+    take = lambda emo, x, status="accepted", kind="arms", **kw: SimpleNamespace(
+        kind=kind, status=status, emotion=emo, intensity=x, event={"present": False}, **kw)
+    metas = [take(e, 0.95), take(e, 0.92), take(e2, g.intensity[0]), take(e, 0.95, "pending"),
+             take(e, 0.95, synthetic=True), take(e, 0.95, kind="head")]
+    d = coverage_grid(cfg, metas, "arms", emotion=e, intensity=0.97)
+    n = len(d["columns"])
+    assert d["emotions"] == g.emotions and all(len(r) == n for r in d["counts"])
+    assert d["columns"][0]["lo"] == g.intensity[0] and d["columns"][-1]["hi"] == g.intensity[1]
+    assert {c["band"] for c in d["columns"]} == set(range(g.n_int)) and len(d["bands"]) == g.n_int
+    assert d["accepted"] == 3 and d["simulated"] == 1 and d["max"] == 2
+    assert d["counts"][0][-1] == 2 and d["counts"][1][0] == 1
+    assert d["current"] == [0, n - 1]
+    assert coverage_grid(cfg, metas, "arms")["current"] is None
