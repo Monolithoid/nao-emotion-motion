@@ -7,6 +7,8 @@
 //   →          déclenche l'étape suivante, déduite de l'état de l'enregistrement ;
 //   Entrée     valide (« Accepter ») la prise affichée en aperçu, y compris depuis le champ
 //              Annotation de la prise (on tape la note puis Entrée) ;
+//   Suppr      rejette (« Rejeter ») la prise affichée en aperçu (hors champ de saisie,
+//              où Suppr garde son sens habituel) ;
 //   0          lance le « Tirage aléatoire » équilibré (émotion, intensité, angle, distance) des
 //              onglets Bras, Tête, Mains et Génération. Le tirage ne fait que remplir la
 //              consigne et l'événement : aucun mouvement.
@@ -25,9 +27,9 @@
   const STEP_LABEL = ["Préparer", "Démarrer", "Arrêter", "Raidir"];
   // aperçu de la prise, son bouton Accepter et son champ Annotation, par onglet
   const DRAFT = {
-    arms: {box: "a-draft", accept: "a-accept", notes: "a-notes"},
-    head: {box: "h-draft", accept: "h-accept", notes: "h-notes"},
-    hands: {box: "m-draft", accept: "m-accept", notes: "m-notes"},
+    arms: {box: "a-draft", accept: "a-accept", reject: "a-reject", notes: "a-notes"},
+    head: {box: "h-draft", accept: "h-accept", reject: "h-reject", notes: "h-notes"},
+    hands: {box: "m-draft", accept: "m-accept", reject: "m-reject", notes: "m-notes"},
   };
   // bouton « Tirage aléatoire » par onglet
   const RANDOM = {arms: "a-random", head: "h-random", hands: "m-random", gen: "g-random"};
@@ -109,6 +111,18 @@
       .finally(() => { accepting = false; });
   }
 
+  // Suppr : rejette la prise en aperçu, par son bouton « Rejeter » (mêmes garde-fous)
+  function reject(kind) {
+    const d = draftReady(kind) && document.getElementById(DRAFT[kind].reject);
+    if (!d || d.disabled) { flash("Suppr : aucune prise en aperçu à rejeter."); return; }
+    if (accepting) return; // une seule décision par prise
+    accepting = true;
+    flash("Suppr · prise rejetée");
+    Promise.resolve(d.onclick ? d.onclick() : d.click())
+      .catch(() => flash("Rejet refusé (voir le message d'erreur)."))
+      .finally(() => { accepting = false; });
+  }
+
   function randomButton(tab) {
     const btn = RANDOM[tab] && document.getElementById(RANDOM[tab]);
     return btn && !btn.disabled ? btn : null;
@@ -140,7 +154,8 @@
       `<span><kbd>→</kbd> étape suivante : <b>${nextStep(kind) + 1} · ${STEP_LABEL[nextStep(kind)]}</b></span>`;
     if (randomButton(tab)) h += `<span><kbd>0</kbd> tirage aléatoire</span>`;
     if (RANDOM[tab] && window.FOV) h += `<span><kbd>V</kbd> vue ${window.FOV.view() === "observer" ? "observateur" : "robot"}</span>`;
-    if (kind && draftReady(kind)) h += `<span><kbd>Entrée</kbd> <b>accepter la prise</b></span>`;
+    if (kind && draftReady(kind)) h += `<span><kbd>Entrée</kbd> <b>accepter la prise</b></span>` +
+      `<span><kbd>Suppr</kbd> rejeter la prise</span>`;
     h += `<span class="sc-note">inactifs dans un champ de saisie</span>`;
     if (performance.now() < flashUntil) h += `<span class="sc-flash">${flashText}</span>`;
     bar.innerHTML = h;
@@ -172,6 +187,9 @@
     if (!kind) return;
     // Entrée : jamais le clic natif sur le bouton qui a gardé le focus (ex. « Arrêter »).
     if (isEnter) { e.preventDefault(); if (!e.repeat) accept(kind); return; }
+    if (e.key === "Delete" || e.code === "Delete") {
+      e.preventDefault(); if (!e.repeat) reject(kind); return;
+    }
     // chiffres : e.code couvre la rangée du haut AZERTY (où « 1 » demande Maj) et le pavé numérique
     const m = /^(?:Digit|Numpad)([1-4])$/.exec(e.code) || /^([1-4])$/.exec(e.key);
     if (m) { e.preventDefault(); if (!e.repeat) runStep(kind, +m[1] - 1); return; }

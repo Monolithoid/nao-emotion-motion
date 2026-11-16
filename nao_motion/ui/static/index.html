@@ -38,7 +38,6 @@
         <label>Intensité <input type="range" id="a-intensity" min="0" max="1" step="0.05" value="0.7"> <span id="a-int-val"></span></label>
         <label>Intention (optionnelle) <select id="a-intention"><option value="">—</option></select></label>
       </div>
-      <div class="consigne" id="a-consigne"></div>
     </div>
   </fieldset>
   <fieldset class="frame">
@@ -48,7 +47,6 @@
       (pointer du doigt, se protéger d'un côté, tendre la main), faites-le vers la direction et à la distance indiquées.
       Décocher « événement présent » pour un geste sans direction.</p>
       <div class="row">
-        <button id="a-random" class="ok" title="Tire au hasard émotion, intensité, angle et distance, en favorisant ce qui a été le moins enregistré (touche 0)">Tirage aléatoire</button>
         <label><input type="checkbox" id="a-random-none"> parfois sans événement</label>
         <span id="a-random-info" class="hint"></span>
       </div>
@@ -57,11 +55,11 @@
   </fieldset>
   <fieldset class="frame">
     <legend>Recording</legend>
+    <div class="consigne rec-head" id="a-consigne"></div>
     <div class="rec-grid">
       <div class="rec-act">
-        <div class="alert" id="a-alert"><b>Attention :</b> <kbd>1</kbd> Préparer et <kbd>Espace</kbd> relâchent les bras
-        <b>immédiatement, sans confirmation</b>. Tenez les bras avant d'appuyer.</div>
         <div class="steps">
+          <button id="a-random" class="ok draw" title="Tire au hasard émotion, intensité, angle et distance, en favorisant ce qui a été le moins enregistré (touche 0)"><kbd>0</kbd> Tirage aléatoire</button>
           <button id="a-prepare"><kbd>1</kbd> Préparer (relâcher les bras)</button>
           <button id="a-start"><kbd>2</kbd> Démarrer (compte à rebours)</button>
           <button id="a-stop"><kbd>3</kbd> Arrêter l'enregistrement</button>
@@ -73,18 +71,24 @@
         <p class="hint">Passage 1 : les bras sont relâchés (tenez-les) et seuls leurs capteurs sont lus ; la tête reste raide sur place.</p>
         <div id="a-draft" class="draft hidden">
           <h3>Prise enregistrée — aperçu (aucun mouvement)</h3>
-          <div class="plot" id="a-plot"></div>
           <div class="row">
             <input id="a-notes" placeholder="Annotation">
-            <button class="ok" id="a-accept">Accepter</button>
+            <button class="ok" id="a-accept"><kbd>Entrée</kbd> Accepter</button>
             <button id="a-pending">Garder en attente</button>
-            <button class="bad" id="a-reject">Rejeter</button>
+            <button class="bad" id="a-reject"><kbd>Suppr</kbd> Rejeter</button>
             <button id="a-retry">Recommencer</button>
           </div>
         </div>
       </div>
-      <div class="sc-slot" aria-label="Keyboard shortcuts"></div>
+      <div class="sc-slot" aria-label="Keyboard shortcuts">
+        <div class="alert" id="a-alert"><b>Attention :</b> <kbd>1</kbd> Préparer et <kbd>Espace</kbd> relâchent les bras
+        <b>immédiatement, sans confirmation</b>. Tenez les bras avant d'appuyer.</div>
+      </div>
     </div>
+  </fieldset>
+  <fieldset class="frame take-curves">
+    <legend>Recorded curves</legend>
+    <div class="plot" id="a-plot"></div>
   </fieldset>
 </section>
 
@@ -96,7 +100,6 @@
         <label>Émotion <select id="h-emotion"></select></label>
         <label>Intensité <input type="range" id="h-intensity" min="0" max="1" step="0.05" value="0.7"> <span id="h-int-val"></span></label>
       </div>
-      <div class="consigne" id="h-consigne"></div>
     </div>
   </fieldset>
   <fieldset class="frame">
@@ -105,7 +108,6 @@
       <p class="hint">L'événement est enregistré avec la prise et donné au modèle de la tête : regardez-le, détournez-vous
       de lui, selon l'émotion. Décocher « événement présent » pour une réaction sans direction.</p>
       <div class="row">
-        <button id="h-random" class="ok" title="Tire au hasard émotion, intensité, angle et distance, en favorisant ce qui a été le moins enregistré (touche 0)">Tirage aléatoire</button>
         <label><input type="checkbox" id="h-random-none"> parfois sans événement</label>
         <span id="h-random-info" class="hint"></span>
       </div>
@@ -114,11 +116,11 @@
   </fieldset>
   <fieldset class="frame">
     <legend>Recording</legend>
+    <div class="consigne rec-head" id="h-consigne"></div>
     <div class="rec-grid">
       <div class="rec-act">
-        <div class="alert" id="h-alert"><b>Attention :</b> <kbd>1</kbd> Préparer et <kbd>Espace</kbd> relâchent la tête
-        <b>immédiatement, sans confirmation</b>. Tenez la tête avant d'appuyer.</div>
         <div class="steps">
+          <button id="h-random" class="ok draw" title="Tire au hasard émotion, intensité, angle et distance, en favorisant ce qui a été le moins enregistré (touche 0)"><kbd>0</kbd> Tirage aléatoire</button>
           <button id="h-prepare"><kbd>1</kbd> Préparer (relâcher la tête)</button>
           <button id="h-start"><kbd>2</kbd> Démarrer (compte à rebours)</button>
           <button id="h-stop"><kbd>3</kbd> Arrêter l'enregistrement</button>
@@ -131,18 +133,24 @@
         les bras restent raides sur place, aucun geste des bras n'est rejoué. Le modèle de la tête apprend seul.</p>
         <div id="h-draft" class="draft hidden">
           <h3>Prise de tête — aperçu</h3>
-          <div class="plot" id="h-plot"></div>
           <div class="row">
             <input id="h-notes" placeholder="Annotation">
-            <button class="ok" id="h-accept">Accepter</button>
+            <button class="ok" id="h-accept"><kbd>Entrée</kbd> Accepter</button>
             <button id="h-pending">Garder en attente</button>
-            <button class="bad" id="h-reject">Rejeter</button>
+            <button class="bad" id="h-reject"><kbd>Suppr</kbd> Rejeter</button>
             <button id="h-retry">Recommencer</button>
           </div>
         </div>
       </div>
-      <div class="sc-slot" aria-label="Keyboard shortcuts"></div>
+      <div class="sc-slot" aria-label="Keyboard shortcuts">
+        <div class="alert" id="h-alert"><b>Attention :</b> <kbd>1</kbd> Préparer et <kbd>Espace</kbd> relâchent la tête
+        <b>immédiatement, sans confirmation</b>. Tenez la tête avant d'appuyer.</div>
+      </div>
     </div>
+  </fieldset>
+  <fieldset class="frame take-curves">
+    <legend>Recorded curves</legend>
+    <div class="plot" id="h-plot"></div>
   </fieldset>
 </section>
 
@@ -154,7 +162,6 @@
         <label>Émotion <select id="m-emotion"></select></label>
         <label>Intensité <input type="range" id="m-intensity" min="0" max="1" step="0.05" value="0.7"> <span id="m-int-val"></span></label>
       </div>
-      <div class="consigne" id="m-consigne"></div>
     </div>
   </fieldset>
   <fieldset class="frame">
@@ -163,7 +170,6 @@
       <p class="hint">Gauche et droite sont celles du robot. Réagissez avec la main du côté de l'événement si l'émotion
       s'y prête (tendre la main ouverte, serrer le poing, se protéger).</p>
       <div class="row">
-        <button id="m-random" class="ok" title="Tire au hasard émotion, intensité, angle et distance, en favorisant ce qui a été le moins enregistré (touche 0)">Tirage aléatoire</button>
         <label><input type="checkbox" id="m-random-none"> parfois sans événement</label>
         <span id="m-random-info" class="hint"></span>
       </div>
@@ -172,11 +178,11 @@
   </fieldset>
   <fieldset class="frame">
     <legend>Recording</legend>
+    <div class="consigne rec-head" id="m-consigne"></div>
     <div class="rec-grid">
       <div class="rec-act">
-        <div class="alert" id="m-alert"><b>Attention :</b> <kbd>1</kbd> Préparer raidit bras, tête et mains sur place, sans
-        confirmation ni déplacement. Ce passage ne relâche rien (<kbd>Espace</kbd> relâche toujours bras et tête).</div>
         <div class="steps">
+          <button id="m-random" class="ok draw" title="Tire au hasard émotion, intensité, angle et distance, en favorisant ce qui a été le moins enregistré (touche 0)"><kbd>0</kbd> Tirage aléatoire</button>
           <button id="m-prepare"><kbd>1</kbd> Préparer (tout raide sur place — mouvements autorisés requis)</button>
           <button id="m-start"><kbd>2</kbd> Démarrer (compte à rebours)</button>
           <button id="m-stop"><kbd>3</kbd> Arrêter l'enregistrement</button>
@@ -209,6 +215,9 @@
         <div class="recstate" id="m-rec"></div>
       </div>
       <div class="rec-info">
+        <p class="hint">Clavier (onglet Mains) : <kbd>↑</kbd> / <kbd>↓</kbd> ouvrent / ferment les deux mains par pas de 0,1 ;
+        <kbd>O</kbd> ouvre tout, <kbd>F</kbd> ferme tout. Pendant l'enregistrement, chaque réglage est suivi en direct,
+        à vitesse limitée par le guardian.</p>
         <p class="hint">Passage mains, indépendant des bras : les doigts de NAO ne se guident pas à la main, on les pilote d'ici.
         Bras et tête restent raides sur place ; vous réglez en direct l'ouverture de chaque main, de
         <b>0 (fermée)</b> à <b>1 (ouverte)</b>, avec toutes les valeurs intermédiaires, jusqu'à « Arrêter ».
@@ -217,22 +226,24 @@
         (« Mouvements autorisés » requis).</p>
         <div id="m-draft" class="draft hidden">
           <h3>Prise de mains — aperçu</h3>
-          <div class="plot" id="m-plot"></div>
           <div class="row">
             <input id="m-notes" placeholder="Annotation">
-            <button class="ok" id="m-accept">Accepter</button>
+            <button class="ok" id="m-accept"><kbd>Entrée</kbd> Accepter</button>
             <button id="m-pending">Garder en attente</button>
-            <button class="bad" id="m-reject">Rejeter</button>
+            <button class="bad" id="m-reject"><kbd>Suppr</kbd> Rejeter</button>
             <button id="m-retry">Recommencer</button>
           </div>
         </div>
       </div>
       <div class="sc-slot" aria-label="Keyboard shortcuts">
-        <p class="hint">Clavier (onglet Mains) : <kbd>↑</kbd> / <kbd>↓</kbd> ouvrent / ferment les deux mains par pas de 0,1 ;
-        <kbd>O</kbd> ouvre tout, <kbd>F</kbd> ferme tout. Pendant l'enregistrement, chaque réglage est suivi en direct,
-        à vitesse limitée par le guardian.</p>
+        <div class="alert" id="m-alert"><b>Attention :</b> <kbd>1</kbd> Préparer raidit bras, tête et mains sur place, sans
+        confirmation ni déplacement. Ce passage ne relâche rien (<kbd>Espace</kbd> relâche toujours bras et tête).</div>
       </div>
     </div>
+  </fieldset>
+  <fieldset class="frame take-curves">
+    <legend>Recorded curves</legend>
+    <div class="plot" id="m-plot"></div>
   </fieldset>
 </section>
 
