@@ -16,7 +16,7 @@ async function api(path, body, {quiet = false, timeoutMs = 0} = {}) {
 const real = () => STATUS && STATUS.real_robot;
 const PFX = {arms: "a", head: "h", hands: "m"};  // préfixe des éléments de chaque passage
 const pid = (kind, name) => $(`${PFX[kind] || "a"}-${name}`);
-const fmtInt = (x) => Number(x).toFixed(1).replace(".", ",");
+const fmtInt = (x) => String(Math.round(Number(x) * 100) / 100).replace(".", ",");  // 0,7 · 0,25 (slider step 0.05)
 const label = (id) => (CFG.emotions.find((e) => e.id === id) || {label: id}).label;
 
 // ---- tracé SVG minimal -------------------------------------------------------

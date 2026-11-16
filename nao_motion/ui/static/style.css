@@ -157,3 +157,4 @@ fieldset.frame>legend{font-weight:600;padding:0 4px}
 /* recording tabs: smaller NAO figure, so the map and the figure fit in 1080 px */
 body[data-tab=arms] .nao-svg,body[data-tab=head] .nao-svg,body[data-tab=hands] .nao-svg{max-height:210px}
 .cov-grid tfoot td.cov-end{text-align:right}
+.cov-grid td.pick{cursor:pointer}.cov-grid td.pick:hover{outline:2px solid var(--accent);position:relative;z-index:2}
