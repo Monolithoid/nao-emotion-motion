@@ -23,3 +23,5 @@ training:
   seed: 0
   smoothness_weight: 0.01
   duration_weight: 0.05     # poids de l erreur sur log(durée)
+  mirror: true              # add left/right mirrors of the training takes WITHOUT an event (in memory only;
+                            # validation stays on real takes ; unfeasible mirrors are dropped, see data/mirror.py)

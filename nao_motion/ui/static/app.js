@@ -237,6 +237,10 @@ async function refreshTrain() {
       (m.val_duration_mae_s !== undefined ? `erreur de durée (val.) ${m.val_duration_mae_s.toFixed(3)} s\n` : "") +
       (m.settings ? `réglages : réseau ${m.settings.hidden.join("-")} · dropout ${m.settings.dropout} · weight decay ${m.settings.weight_decay} · lr ${m.settings.lr} · lissage ${m.settings.smoothness_weight} · ${m.settings.epochs} époques` +
         (m.best_epoch !== undefined ? ` (modèle gardé : époque ${m.best_epoch})` : "") + "\n" : "") +
+      (m.mirror ? (m.mirror.enabled ? (m.mirror.unavailable ? `left/right mirror: unavailable (${m.mirror.unavailable})\n` :
+        `left/right mirror: +${m.mirror.added} mirrored takes added to training (${m.mirror.eligible} training takes without an event, ${m.mirror.dropped} mirrors dropped as not feasible, ${m.mirror.skipped_with_event} takes with an event not mirrored)` +
+        (m.mirror.dropped_takes && m.mirror.dropped_takes.length ? "\n  dropped: " + m.mirror.dropped_takes.map((d) => `${d.take_id}: ${d.reason}`).join("\n  dropped: ") : "") + "\n") :
+        "left/right mirror: off\n") : "") +
       `guardian (playback safety, information only: never used by training) : ${m.guardian ? m.guardian.accepted + "/" + m.guardian.total + " generated gestures playable" +
         (m.guardian.raw_accepted !== undefined ? ` (raw ${m.guardian.raw_accepted}/${m.guardian.total}, median slow-down x${m.guardian.median_slow_down})` : "") +
         " " + JSON.stringify(m.guardian.violations_by_code) : "—"}` +
@@ -352,9 +356,10 @@ async function init() {
   const TR_FIELDS = {hidden: "tr-hidden", dropout: "tr-dropout", weight_decay: "tr-wd", lr: "tr-lr", smoothness_weight: "tr-smooth"};
   const setTr = (v) => { for (const [k, id] of Object.entries(TR_FIELDS)) $(id).value = v[k] ?? ""; };
   $("tr-preset-small").onclick = () => setTr({hidden: "32", dropout: 0.1, weight_decay: 0.01, smoothness_weight: 0.05});
-  $("tr-preset-reset").onclick = () => setTr({});
+  $("tr-preset-reset").onclick = () => { setTr({}); $("tr-mirror").checked = T.mirror ?? true; };
+  $("tr-mirror").checked = T.mirror ?? true;
   const overrides = () => { const o = {}; for (const [k, id] of Object.entries(TR_FIELDS)) if ($(id).value.trim() !== "") o[k] = $(id).value.trim(); return o; };
-  const train = (c) => api("train", {component: c, epochs: parseInt($("tr-epochs").value), include_pending: $("tr-pending").checked, overrides: overrides()}).then(refreshTrain);
+  const train = (c) => api("train", {component: c, epochs: parseInt($("tr-epochs").value), include_pending: $("tr-pending").checked, overrides: {...overrides(), mirror: $("tr-mirror").checked}}).then(refreshTrain);
   $("tr-arms").onclick = () => train("arms"); $("tr-head").onclick = () => train("head"); $("tr-hands").onclick = () => train("hands");
   setInterval(() => { if ($("tab-train").classList.contains("active")) refreshTrain(); }, 2000);
   $("tr-runs").addEventListener("click", (e) => {
