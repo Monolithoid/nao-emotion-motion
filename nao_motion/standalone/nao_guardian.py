@@ -48,6 +48,7 @@ import json
 import math
 import sys
 
+# <guardian-core> (repris tel quel dans nao_gesture.py par `nao-motion export-generator`)
 KIND = "nao_motion.guardian_export"
 SCHEMA_VERSION = 1
 LEG_PREFIXES = ("LHip", "RHip", "LKnee", "RKnee", "LAnkle", "RAnkle")
@@ -173,6 +174,12 @@ class Guardian(object):
             self.constraints.append({"name": c["name"], "terms": terms, "bound": float(c["bound"])})
         self.groups = data.get("groups") or {}
         self.poses = data.get("poses") or {}
+        # segments repos <-> départ : le repos peut être hors zone (contact) ; bornés par les
+        # limites d'usine et une vitesse réduite (mêmes règles que le guardian du projet)
+        self.rest_limits = dict((j, (float(lh[0]), float(lh[1])))
+                                for j, lh in (data.get("rest_limits") or data["limits"]).items())
+        self.rest_velocity = float(data.get("rest_velocity_rad_s", self.max_velocity))
+        self.transition_velocity = float(data.get("transition_velocity_rad_s", self.max_velocity))
 
     @classmethod
     def load(cls, path, allow_uncalibrated=False):
@@ -367,6 +374,62 @@ class Guardian(object):
             stats["suggested_time_scale"] = round(float(max(sv, sa, 1.0)), 3)
         return Report(not v, v, stats)
 
+    def check_rest_transition(self, times, joints, positions, start_state=None, time_offset=0.0):
+        """Segment repos <-> départ, le SEUL autorisé à quitter la zone de mouvement (repos au
+        contact, bras sur les genoux...) : limites d'usine, vitesse réduite (rest_velocity_rad_s)
+        et accélération ; ni marge ni contraintes couplées. L'absence de heurt sur ce trajet
+        relève de la calibration (départ accessible depuis le repos)."""
+        try:
+            ts = [float(x) for x in times]
+            joints = list(joints)
+            qs = [[float(x) for x in row] for row in positions]
+        except (TypeError, ValueError) as e:
+            return Report(False, [Violation("format", "Trajectoire invalide : %s" % e)])
+        if (len(qs) != len(ts) or len(ts) < 2 or any(len(r) != len(joints) for r in qs)
+                or not all(_finite(x) for x in ts) or not all(_finite(x) for r in qs for x in r)
+                or any(b - a <= 0 for a, b in zip(ts, ts[1:])) or len(set(joints)) != len(joints)):
+            return Report(False, [Violation("format", "Trajectoire invalide")])
+        for j in joints:
+            if not hasattr(j, "startswith") or j.startswith(LEG_PREFIXES) or j not in self.rest_limits:
+                return Report(False, [Violation("unknown_joint", "Articulation non configurée", joint=j)])
+        v = []
+        J = len(joints)
+        cols = [[r[k] for r in qs] for k in range(J)]
+        dur = ts[-1] - ts[0]
+        n = max(2, int(math.ceil(dur * self.check_rate_hz)) + 1)
+        tt = sorted(set(ts) | set(_linspace(ts[0], ts[-1], n)))
+        rows = _sample(ts, cols, tt)
+        for k, j in enumerate(joints):
+            lo, hi = self.rest_limits[j]
+            bad = [i for i, r in enumerate(rows) if r[k] < lo or r[k] > hi]
+            if bad:
+                x = rows[bad[0]][k]
+                v.append(Violation("rest_limit", "Segment repos <-> départ hors limites d'usine", joint=j,
+                                   time_s=float(tt[bad[0]]) + time_offset, value=float(x), limit=lo if x < lo else hi))
+        dt = [b - a for a, b in zip(ts, ts[1:])]
+        vel = [[(qs[i + 1][k] - qs[i][k]) / dt[i] for k in range(J)] for i in range(len(dt))]
+        for k, j in enumerate(joints):
+            i = max(range(len(vel)), key=lambda m: abs(vel[m][k]))
+            if abs(vel[i][k]) > self.rest_velocity:
+                v.append(Violation("rest_velocity", "Segment repos <-> départ trop rapide", joint=j,
+                                   time_s=float(ts[i]) + time_offset, value=float(abs(vel[i][k])),
+                                   limit=self.rest_velocity))
+        if len(vel) >= 2:
+            acc = [[(vel[i + 1][k] - vel[i][k]) / ((dt[i + 1] + dt[i]) / 2) for k in range(J)]
+                   for i in range(len(vel) - 1)]
+            for k, j in enumerate(joints):
+                i = max(range(len(acc)), key=lambda m: abs(acc[m][k]))
+                if abs(acc[i][k]) > self.acceleration_limit(j):
+                    v.append(Violation("acceleration", "Accélération excessive (segment repos <-> départ)", joint=j,
+                                       time_s=float(ts[i + 1]) + time_offset, value=float(abs(acc[i][k])),
+                                       limit=self.acceleration_limit(j)))
+        if start_state is not None:
+            for k, j in enumerate(joints):
+                if j in start_state and abs(qs[0][k] - float(start_state[j])) > self.start_tolerance:
+                    v.append(Violation("start_mismatch", "Premier point éloigné de l'état mesuré", joint=j,
+                                       value=abs(qs[0][k] - float(start_state[j])), limit=self.start_tolerance))
+        return Report(not v, v, {"duration_s": dur, "rest_transition": True})
+
     def check_trajectory_dict(self, d, **kw):
         """Format des trajectoires de nao-emotion-motion : {"joints", "t", "q", "unit": "rad", "time_unit": "s"}."""
         if not isinstance(d, dict):
@@ -377,6 +440,9 @@ class Guardian(object):
             return self.check_trajectory(d["t"], d["joints"], d["q"], **kw)
         except KeyError as e:
             return Report(False, [Violation("format", "Trajectoire invalide : champ manquant %s" % e)])
+
+
+# </guardian-core>
 
 
 def main(argv=None):
