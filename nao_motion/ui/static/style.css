@@ -138,22 +138,22 @@ fieldset.frame>legend{font-weight:600;padding:0 4px}
 /* coverage map of the group's accepted takes (coverage.js), above the NAO figure */
 .coverage{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:11px}
 .coverage.hidden{display:none}
-.cov-title{font-weight:600;font-size:12px;margin-bottom:2px;cursor:help}
-.cov-grid{border-collapse:separate;border-spacing:1px;width:100%;background:none;table-layout:fixed}
+.cov-title{font-weight:600;font-size:12px;margin-bottom:3px;cursor:help}
+.cov-grid{border-collapse:separate;border-spacing:2px;width:100%;background:none;table-layout:fixed}
 .cov-grid th,.cov-grid td{border:0;padding:0;font-weight:400}
-.cov-c-emo{width:54px}.cov-c-int{width:10px}
-.cov-az{font-size:9px;color:var(--muted);text-align:center;white-space:nowrap;overflow:hidden;border-bottom:1px solid var(--line)!important}
-.cov-z{font-size:8px;color:var(--muted);text-align:center;line-height:1.2;white-space:nowrap;cursor:help}
-.cov-emo{text-align:left;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+.cov-c-emo{width:60px}
+.cov-band{font-size:10px;color:var(--muted);text-align:center;border-bottom:1px solid var(--line)!important}
+.cov-emo{text-align:left;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cov-emo.cov-cur{font-weight:700;color:var(--guided)}
-.cov-int{font-size:7px;color:var(--muted);text-align:center;line-height:10px}
-.cov-first>*{border-top:3px solid var(--card)!important}
-.cov-grid td{height:10px;background:color-mix(in srgb,var(--line) 45%,var(--card));border-radius:1px}
+.cov-grid tbody td{height:20px;text-align:center;font-size:10px;font-variant-numeric:tabular-nums;color:var(--fg);
+  background:color-mix(in srgb,var(--line) 45%,var(--card));border-radius:2px}
 .cov-grid td.has{background:color-mix(in srgb,var(--ok) var(--f),var(--card))}
-.cov-grid td.cur{outline:2px solid var(--guided);position:relative;z-index:1}
-.cov-cur-row .cov-int{color:var(--guided);font-weight:700}
-.cov-foot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:0 8px;margin-top:4px;color:var(--muted)}
+.cov-grid td.dark{color:#fff;font-weight:600}
+.cov-grid td.cur{outline:2px solid var(--guided);outline-offset:0;position:relative;z-index:1}
+.cov-grid tfoot td{font-size:9px;color:var(--muted);text-align:left;height:auto}
+.cov-foot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:0 8px;margin-top:2px;color:var(--muted)}
 .cov-next{color:var(--guided);font-weight:600}
 .cov-sim{color:var(--muted);font-size:10px}
 /* recording tabs: smaller NAO figure, so the map and the figure fit in 1080 px */
 body[data-tab=arms] .nao-svg,body[data-tab=head] .nao-svg,body[data-tab=hands] .nao-svg{max-height:210px}
+.cov-grid tfoot td.cov-end{text-align:right}

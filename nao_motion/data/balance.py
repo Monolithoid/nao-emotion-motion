@@ -276,50 +276,42 @@ def coverage(cfg, metas: Sequence, kind: str, allow_none: bool = True) -> dict:
     }
 
 
+
 def coverage_grid(cfg, metas: Sequence, kind: str, emotion: Optional[str] = None,
-                  intensity: Optional[float] = None, event: Optional[dict] = None) -> dict:
+                  intensity: Optional[float] = None, step: float = 0.1) -> dict:
     """Coverage map of one group (arms, head, hands) for the recording tabs.
 
-    Same cells as the balanced draw: rows = emotion x intensity bin, columns =
-    event zones (azimuth sector x elevation slice x distance slice) plus "no
-    event". Counts ACCEPTED real takes, like the Takes tab progress (simulated
-    takes are reported apart). With `emotion`, `intensity` and `event`, also
-    returns the cell(s) the next take would fill (unknown distance: every
-    distance slice, as when counting). Display only, no command.
+    Rows = emotions, columns = intensity in `step` slices over the draw range
+    (`events.balance.intensity`), grouped under the draw's intensity bins
+    (faible / moyenne / forte). Counts ACCEPTED real takes, like the Takes tab
+    progress (simulated takes are reported apart). With `emotion` and
+    `intensity`, also returns the cell the next take would fill. Display only.
     """
     grid = Grid.from_config(cfg)
+    lo, hi = grid.intensity
+    n = max(1, int(round((hi - lo) / step)))
+    col = lambda x: _bin(float(x), lo, hi, n)
     metas = [m for m in metas if m.kind == kind]
     real = [m for m in metas if not getattr(m, "synthetic", False)]
-    joint, *_ = count_takes(grid, real, kind, statuses=("accepted",))
-    zs = [z for z in grid.zones(False)]
-    zs.sort(key=lambda z: (-z[0], -z[1], z[2]))  # robot's left first, then high first, then near first
-    zs.append(NONE)
-    rows = [(e, i) for e in grid.emotions for i in range(grid.n_int)]
-    counts = [[round(joint[(e, i, z)], 2) for z in zs] for e, i in rows]
-
-    def zone_info(z):
-        if z == NONE:
-            return {"az": None, "label": grid.zone_label(z), "short": "∅"}
-        a, el, d = z
-        elo, ehi = _edges(*grid.el, grid.n_el, el)
-        up = "↑" if (elo + ehi) / 2 > 0 else "↓"
-        dist = ("n", "f")[d] if grid.n_dist == 2 else str(d + 1)
-        return {"az": a, "az_label": grid.zone_label(z).split(" (")[0], "label": grid.zone_label(z),
-                "short": (up if grid.n_el > 1 else "") + (dist if grid.n_dist > 1 else "")}
-
-    current = []
+    counts = [[0] * n for _ in grid.emotions]
+    for m in real:
+        if m.status == "accepted" and m.emotion in grid.emotions:
+            counts[grid.emotions.index(m.emotion)][col(m.intensity)] += 1
+    cols = []
+    for j in range(n):
+        a, b = _edges(lo, hi, n, j)
+        cols.append({"lo": round(a, 3), "hi": round(b, 3), "band": grid.int_bin((a + b) / 2)})
+    current = None
     if emotion in grid.emotions and intensity is not None:
-        i = grid.int_bin(float(intensity))
-        r = rows.index((emotion, i))
-        current = [[r, zs.index(z)] for z, _ in grid.event_zones(event or {}) if z in zs]
+        current = [grid.emotions.index(emotion), col(intensity)]
     return {
         "kind": kind,
-        "rows": [{"emotion": e, "intensity": grid.int_label(i), "int_index": i} for e, i in rows],
-        "n_int": grid.n_int,
-        "zones": [zone_info(z) for z in zs],
+        "emotions": list(grid.emotions),
+        "columns": cols,
+        "bands": [grid.int_label(i) for i in range(grid.n_int)],
         "counts": counts,
         "max": max((c for row in counts for c in row), default=0),
-        "accepted": int(sum(1 for m in real if m.status == "accepted")),
+        "accepted": sum(map(sum, counts)),
         "simulated": sum(1 for m in metas if getattr(m, "synthetic", False)),
         "current": current,
     }

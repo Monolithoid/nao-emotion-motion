@@ -212,27 +212,21 @@ def test_progress_milestones_config(cfg):
             cfg.robot["progress"] = old
 
 
+
 def test_coverage_grid_counts_accepted_real_takes_and_marks_next_cell(cfg):
-    """Coverage map of the recording tabs: accepted real takes only, cell of the next take."""
+    """Coverage map of the recording tabs: emotion x intensity, accepted real takes only."""
     g = Grid.from_config(cfg)
-    e = cfg.emotions[0]
-    left_high_near = {"present": True, "azimuth_rad": math.radians(80), "elevation_rad": math.radians(40),
-                      "distance_m": cfg.robot.get("events", {}).get("distance_m", [0.3, 3.0])[0]}
-    metas = [SimpleNamespace(kind="arms", status="accepted", emotion=e, intensity=0.9, event=left_high_near),
-             SimpleNamespace(kind="arms", status="accepted", emotion=e, intensity=0.9, event={"present": False}),
-             SimpleNamespace(kind="arms", status="pending", emotion=e, intensity=0.9, event={"present": False}),
-             SimpleNamespace(kind="arms", status="accepted", emotion=e, intensity=0.9, event={"present": False},
-                             synthetic=True),
-             SimpleNamespace(kind="head", status="accepted", emotion=e, intensity=0.9, event={"present": False})]
-    d = coverage_grid(cfg, metas, "arms", emotion=e, intensity=0.9, event=left_high_near)
-    assert len(d["rows"]) == len(g.emotions) * g.n_int
-    assert len(d["zones"]) == g.n_az * g.n_el * g.n_dist + 1 and d["zones"][-1]["az"] is None
-    assert d["accepted"] == 2 and d["simulated"] == 1 and d["max"] == 1
-    row = [r["emotion"] for r in d["rows"]].index(e) + g.int_bin(0.9)
-    assert d["counts"][row][-1] == 1 and sum(map(sum, d["counts"])) == 2
-    # robot's left, high, near comes first; it is the cell the next take fills
-    assert d["current"] == [[row, 0]] and d["counts"][row][0] == 1
-    # unknown distance: every distance slice of the sector is marked
-    unk = dict(left_high_near, distance_m=None)
-    assert len(coverage_grid(cfg, metas, "arms", emotion=e, intensity=0.9, event=unk)["current"]) == g.n_dist
-    assert coverage_grid(cfg, metas, "arms")["current"] == []
+    e, e2 = cfg.emotions[0], cfg.emotions[1]
+    take = lambda emo, x, status="accepted", kind="arms", **kw: SimpleNamespace(
+        kind=kind, status=status, emotion=emo, intensity=x, event={"present": False}, **kw)
+    metas = [take(e, 0.95), take(e, 0.92), take(e2, g.intensity[0]), take(e, 0.95, "pending"),
+             take(e, 0.95, synthetic=True), take(e, 0.95, kind="head")]
+    d = coverage_grid(cfg, metas, "arms", emotion=e, intensity=0.97)
+    n = len(d["columns"])
+    assert d["emotions"] == g.emotions and all(len(r) == n for r in d["counts"])
+    assert d["columns"][0]["lo"] == g.intensity[0] and d["columns"][-1]["hi"] == g.intensity[1]
+    assert {c["band"] for c in d["columns"]} == set(range(g.n_int)) and len(d["bands"]) == g.n_int
+    assert d["accepted"] == 3 and d["simulated"] == 1 and d["max"] == 2
+    assert d["counts"][0][-1] == 2 and d["counts"][1][0] == 1
+    assert d["current"] == [0, n - 1]
+    assert coverage_grid(cfg, metas, "arms")["current"] is None
