@@ -292,6 +292,7 @@
         <label title="Pénalité sur la taille des poids : plus grand = modèle plus simple">Weight decay <input type="number" id="tr-wd" step="0.0001" min="0" class="num"></label>
         <label title="Pas d'apprentissage">lr <input type="number" id="tr-lr" step="0.001" min="0" class="num"></label>
         <label title="Pénalité sur les à-coups des trajectoires">Lissage <input type="number" id="tr-smooth" step="0.01" min="0" class="num"></label>
+        <label title="Adds, in memory only, the left/right mirror of every training take WITHOUT an event (takes with an event are never mirrored). Mirrors that leave the factory limits or go beyond the calibrated zone more than the original are dropped. Validation uses real takes only.">Miroir <span><input type="checkbox" id="tr-mirror"> gauche/droite des prises sans événement</span></label>
       </div>
       <div class="row">
         <button id="tr-preset-small" title="Réseau 32 (une couche), dropout 0,1, weight decay 0,01, lissage 0,05">Préréglage « peu de données »</button>

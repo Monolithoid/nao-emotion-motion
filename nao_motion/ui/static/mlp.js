@@ -22,6 +22,7 @@
     for (const [k, id] of Object.entries(FIELDS)) if ($(id).value.trim() !== "") o[k] = $(id).value.trim();
     return o;
   }
+  const mirrorDefault = () => (M().training || {}).mirror ?? true;
   function setFields(v) { for (const [k, id] of Object.entries(FIELDS)) $(id).value = v[k] ?? ""; changed(); }
   function placeholders() {
     const A = groupModel(netGroup), T = M().training || {};
@@ -41,7 +42,7 @@
             lr: num("lr", T.lr), smoothness_weight: num("smoothness_weight", T.smoothness_weight)};
   }
   function changed() {
-    try { localStorage.setItem(STORE, JSON.stringify(overrides())); } catch (e) {}
+    try { localStorage.setItem(STORE, JSON.stringify({...overrides(), mirror: $("tr-mirror").checked})); } catch (e) {}
     drawNet(); summary();
   }
   function summary() {
@@ -49,6 +50,7 @@
     $("tr-net-sum").textContent = Object.keys(o).length
       ? `Réglages de l'onglet Réseau : ${Object.entries(o).map(([k, v]) => `${{hidden: "couches", dropout: "dropout", weight_decay: "weight decay", lr: "lr", smoothness_weight: "lissage"}[k]} ${v}`).join(" · ")}`
       : "Réglages : ceux de model.yaml (modifiables dans l'onglet Réseau)";
+    $("tr-net-sum").textContent += $("tr-mirror").checked ? " · miroir activé" : " · miroir désactivé";
     return s;
   }
 
@@ -195,7 +197,7 @@
         const gain = v !== undefined && b ? 1 - v / b : null, a = assess(m);
         return `<tr class="clickable${r.run === selected ? " on" : ""}" data-run="${esc(r.run)}" title="${esc(r.run)}">` +
           `<td>${i + 1}</td><td>${fmtStamp(r.stamp)}</td><td><span class="dot" style="background:${GCOL[r.component] || "#888"}"></span>${GROUPS[r.component] || esc(r.component)}</td>` +
-          `<td>${s.hidden ? s.hidden.join("-") + (s.dropout ? ` · d${fr(s.dropout, 2)}` : "") : "—"}</td>` +
+          `<td>${s.hidden ? s.hidden.join("-") + (s.dropout ? ` · d${fr(s.dropout, 2)}` : "") + (s.mirror ? " · ⇆" : "") : "—"}</td>` +
           `<td class="num">${fr(v)}</td><td class="num">${fr(b)}</td>` +
           `<td class="num"><span class="verdict ${gain === null ? "" : gain >= 0.1 ? "v-good" : gain >= 0 ? "v-warn" : "v-bad"}">${gain === null ? "—" : pct(gain)}</span></td>` +
           `<td class="num">${m.guardian ? m.guardian.accepted + "/" + m.guardian.total : "—"} <span class="vdot ${worst(a)}" title="${esc(a.map((x) => x.text).join("\n"))}"></span></td></tr>`;
@@ -303,7 +305,10 @@
     const g = m.guardian, gt = m.guardian_takes, s = m.settings;
     return `exemples ${m.n_examples} (entraînement ${m.n_train} / validation ${m.n_val}, groupes ${m.n_train_groups}/${m.n_val_groups})\n` +
       (m.val_duration_mae_s !== undefined ? `erreur de durée (val.) ${fr(m.val_duration_mae_s)} s · (entr.) ${fr(m.train_duration_mae_s)} s\n` : "") +
-      (s ? `réglages : réseau ${s.hidden.join("-")} · dropout ${s.dropout} · weight decay ${s.weight_decay} · lr ${s.lr} · lissage ${s.smoothness_weight} · ${s.epochs} époques\n` : "") +
+      (s ? `réglages : réseau ${s.hidden.join("-")} · dropout ${s.dropout} · weight decay ${s.weight_decay} · lr ${s.lr} · lissage ${s.smoothness_weight} · ${s.epochs} époques${s.mirror !== undefined ? " · miroir " + (s.mirror ? "oui" : "non") : ""}\n` : "") +
+      (m.mirror && m.mirror.enabled ? (m.mirror.unavailable ? `miroir gauche/droite : indisponible (${m.mirror.unavailable})\n` :
+        `miroir gauche/droite : +${m.mirror.added} prises miroir à l'entraînement (${m.mirror.eligible} prises sans événement, ${m.mirror.dropped} miroirs écartés, ${m.mirror.skipped_with_event} prises avec événement non miroitées)\n` +
+        (m.mirror.dropped_takes && m.mirror.dropped_takes.length ? m.mirror.dropped_takes.map((d) => `  écarté : ${d.take_id} : ${d.reason}`).join("\n") + "\n" : "")) : "") +
       (g ? `guardian (au jeu seulement, jamais utilisé par l'entraînement) : ${g.accepted}/${g.total} gestes générés jouables` +
         (g.raw_accepted !== undefined ? ` (bruts ${g.raw_accepted}/${g.total}, ralentissement médian ×${g.median_slow_down})` : "") + " " + JSON.stringify(g.violations_by_code) + "\n" : "") +
       (gt ? `guardian sur les prises : ${gt.raw_accepted}/${gt.total} telles quelles, ${gt.accepted_playable}/${gt.total} une fois rendues jouables` +
@@ -369,16 +374,18 @@
   }
 
   function train(c) {
-    return api("train", {component: c, epochs: parseInt($("tr-epochs").value), include_pending: $("tr-pending").checked, overrides: overrides()}).then(refresh);
+    return api("train", {component: c, epochs: parseInt($("tr-epochs").value), include_pending: $("tr-pending").checked, overrides: {...overrides(), mirror: $("tr-mirror").checked}}).then(refresh);
   }
 
   function init() {
     // restore the last settings typed (this browser only)
-    try { const v = JSON.parse(localStorage.getItem(STORE) || "{}"); for (const [k, id] of Object.entries(FIELDS)) if (v[k] !== undefined) $(id).value = v[k]; } catch (e) {}
+    $("tr-mirror").checked = mirrorDefault();
+    try { const v = JSON.parse(localStorage.getItem(STORE) || "{}"); for (const [k, id] of Object.entries(FIELDS)) if (v[k] !== undefined) $(id).value = v[k]; if (typeof v.mirror === "boolean") $("tr-mirror").checked = v.mirror; } catch (e) {}
     placeholders();
     Object.values(FIELDS).forEach((id) => $(id).addEventListener("input", changed));
     $("tr-preset-small").onclick = () => setFields({hidden: "32", dropout: 0.1, weight_decay: 0.01, smoothness_weight: 0.05});
-    $("tr-preset-reset").onclick = () => setFields({});
+    $("tr-preset-reset").onclick = () => { $("tr-mirror").checked = mirrorDefault(); setFields({}); };
+    $("tr-mirror").addEventListener("change", changed);
     const layers = () => (effective(netGroup).hidden || groupModel(netGroup).hidden || [64]).slice();
     $("net-add-layer").onclick = () => { const h = layers(); if (h.length < 4) { h.push(h[h.length - 1]); $("tr-hidden").value = h.join(","); changed(); } };
     $("net-del-layer").onclick = () => { const h = layers(); if (h.length > 1) { h.pop(); $("tr-hidden").value = h.join(","); changed(); } };

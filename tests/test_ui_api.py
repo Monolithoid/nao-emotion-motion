@@ -110,14 +110,11 @@ def test_training_runs_chronological_with_history(trained):
     assert "val_baseline_per_joint" in m and set(m["val_baseline_per_joint"]) == set(m["val_rmse_per_joint"])
     h = api.get_train_history({"run": runs[0]["run"]})["history"]
     assert h and {"epoch", "train_loss", "val_loss"} <= set(h[0])
+    # network tab: the config gives each group's joints, the event features and K
+    c = api.get_config({})
+    assert c["net"]["joints"]["arms"] == trained["wb"].cfg.arm_joints and len(c["net"]["event_features"]) == 6
+    assert c["model"]["representation"]["n_control_points"] >= 4
     for bad in ("../x", "..", "nope"):
         with pytest.raises(ValueError):
             api.get_train_history({"run": bad})
 
-
-def test_config_describes_the_network(cfg, tmp_path):
-    """Network tab: the config gives each group's joints, the event features and K."""
-    from tests.conftest import make_wb
-    c = Api(make_wb(tmp_path, cfg)).get_config({})
-    assert c["net"]["joints"]["arms"] == cfg.arm_joints and len(c["net"]["event_features"]) == 6
-    assert c["model"]["representation"]["n_control_points"] >= 4
