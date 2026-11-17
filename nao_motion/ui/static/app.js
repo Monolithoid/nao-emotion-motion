@@ -359,7 +359,7 @@ async function init() {
     await api("arm", {armed: on, confirm: on}).catch(() => (e.target.checked = false));
   };
   // bras
-  // pas de confirmation (souhait de Joachim) : l'avertissement de la page (#a-alert) la remplace
+  // pas de confirmation (souhait de Monolithoid) : l'avertissement de la page (#a-alert) la remplace
   $("a-prepare").onclick = () =>
     api("record/prepare", {kind: "arms", emotion: $("a-emotion").value, intensity: parseFloat($("a-intensity").value), intention: $("a-intention").value, confirm: true}).then(() => { draftShown = null; });
   $("a-start").onclick = () => api("record/start", {});
