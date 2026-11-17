@@ -46,6 +46,7 @@ class Workbench:
         self.jobs: Dict[str, dict] = {}
         self.engine: Optional[MotionEngine] = None
         self.plans: Dict[str, dict] = {}
+        self.play_info: Optional[dict] = None  # last generated gesture played (Generation tab)
         self.sim_demonstration = self.adapter.name == "sim"
         self.rng = np.random.default_rng(0)
         self.lock = threading.RLock()
@@ -591,14 +592,38 @@ class Workbench:
         plan_id = new_id("plan")
         plan = None
         if plan_cycle and self.adapter.is_connected():
+            # preview of the cycle that "Play" would send now; it is planned again from the
+            # measured posture when the operator presses Play (the robot may have moved since)
             try:
-                plan = self.ctrl.plan_cycle(played, from_pose="rest")
-                out["cycle"] = plan.to_dict()
+                plan, start = self.plan_generated(played, "auto", "rest")
+                out["cycle"] = dict(plan.to_dict(), start=start, end="rest")
             except ControllerError as e:
                 out["cycle_error"] = str(e)
-        self.plans[plan_id] = {"gen": gen, "plan": plan}
+        self.plans[plan_id] = {"gen": gen, "played": played, "plan": plan}
+        del_keys = list(self.plans)[:-20]  # keep the last generated gestures only
+        for k in del_keys:
+            self.plans.pop(k, None)
         out["plan_id"] = plan_id
         return out
+
+    def plan_generated(self, played, start="auto", end="rest"):
+        """Full cycle around a generated gesture, from the MEASURED posture, validated as a whole
+        by the guardian (factory limits are the absolute ceiling). Nothing is sent here.
+
+        start: "rest" (the robot must be measured at rest), "current" (from the measured
+        posture, via the start pose), or "auto" (rest when measured there, else current).
+        end: "rest" or "start" (stop in the start pose)."""
+        if start not in ("auto", "rest", "current"):
+            raise ControllerError("start : 'auto', 'rest' ou 'current'")
+        if end not in ("rest", "start"):
+            raise ControllerError("end : 'rest' ou 'start'")
+        cur = self.ctrl.measured(played.joints)
+        if start == "auto":
+            far = [j for j in self.ctrl._near(cur, "rest", 2 * self.cfg.guardian.start_tolerance_rad)
+                   if not self.cfg.is_hand(j)]
+            start = "current" if far else "rest"
+        plan = self.ctrl.plan_cycle(played, from_pose=start, to_pose=end)
+        return plan, start
 
     def playable(self, traj):
         """Gesture actually proposed for playback: adapted (slowed down, brought back inside the
@@ -609,31 +634,56 @@ class Workbench:
         a = make_playable(self.cfg, traj)
         return a.traj, a
 
-    def execute_plan(self, plan_id, background=True):
+    def execute_plan(self, plan_id, background=True, start=None, end="rest"):
+        """Plays a generated gesture on the robot (simulated or real). With start=None the plan
+        prepared at generation time is played as is (old behaviour); otherwise the cycle is
+        planned again now from the measured posture (see plan_generated). The whole cycle must
+        pass the guardian: on a refusal NOTHING is sent."""
         self.check_no_calibration()
         entry = self.plans.get(plan_id)
-        if entry is None or entry["plan"] is None:
-            raise ControllerError("Plan inconnu ou non planifiable")
-        plan = entry["plan"]
+        if entry is None:
+            raise ControllerError("Geste inconnu : générer d'abord")
+        if self._busy():
+            raise ControllerError("Robot occupé (exécution, enregistrement ou balayage en cours)")
+        if not self.adapter.is_connected():
+            raise ControllerError("Robot non connecté (onglet Robot)")
+        if not self.ctrl.armed:
+            raise ControllerError("Contrôleur désarmé : cocher « moteurs armés » ; aucun mouvement envoyé")
+        if self.ctrl.state == State.HOLDING:
+            self.ctrl.acknowledge()  # posture held after a stop: the operator asks to move again
+        if start is None:
+            plan, used = entry["plan"], "rest"
+            if plan is None:
+                raise ControllerError("Plan inconnu ou non planifiable")
+        else:
+            plan, used = self.plan_generated(entry["played"], start, end)
         if not plan.report.ok:
             from .guardian import GuardianRejection
+            self.play_info = {"state": "refused", "plan_id": plan_id, "start": used, "end": end,
+                              "error": "Guardian : cycle refusé, rien n'a été envoyé", "at": time.time()}
             raise GuardianRejection(plan.report)
-        if not self.ctrl.armed:
-            raise ControllerError("Contrôleur désarmé : aucun mouvement envoyé")
+        info = {"state": "playing", "plan_id": plan_id, "start": used, "end": end,
+                "duration_s": plan.traj.duration, "segments": plan.segments, "at": time.time()}
+        self.play_info = info
 
         def work():
             try:
-                self.ctrl.execute(plan)
+                info["result"] = self.ctrl.execute(plan)
+                info["state"] = "stopped" if info["result"] == "stopped" else "done"
             except Exception as e:
                 self.ctrl.last_error = str(e)
+                info["state"], info["error"] = "error", str(e)
                 if not background:
                     raise
+            finally:
+                info["ended_at"] = time.time()
 
         if background:
             threading.Thread(target=work, daemon=True).start()
         else:
             work()
-        return {"started": True, "duration_s": plan.traj.duration}
+        return {"started": True, "duration_s": plan.traj.duration, "start": used, "end": end,
+                "cycle": plan.to_dict()}
 
     def stop(self):
         """Arrêt explicite global : enregistrement, relecture et exécution."""
@@ -654,4 +704,4 @@ class Workbench:
                 "recording": self.recording_status(), "event": self.current_event().to_dict(),
                 "roles": self.adapter.roles, "calibrated": self.cfg.calibrated,
                 "poses_calibrated": self.cfg.poses_calibrated, "log": self.ctrl.events[-10:],
-                "sim_demonstration": self.sim_demonstration}
+                "sim_demonstration": self.sim_demonstration, "play": self.play_info}

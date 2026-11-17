@@ -168,10 +168,26 @@ def _min_jerk(q0, q1, v_max, a_max, rate_hz=50.0, min_duration=0.4):
 
 
 def _quintic(q0, v0, a0, q1, v1, a1, v_max, a_max, rate_hz=50.0, min_duration=0.4, max_duration=6.0):
-    """Transition matched in position, velocity and acceleration at both ends."""
+    """Transition matched in position, velocity and acceleration at both ends. When no duration
+    keeps velocity and acceleration under the caps, the acceleration match is dropped (position
+    and velocity stay continuous) and the least bad of the two is kept. Same as
+    nao_motion.control.transitions.quintic_matched."""
+    best, score = _quintic_search(q0, v0, a0, q1, v1, a1, v_max, a_max, rate_hz, min_duration, max_duration)
+    if score > 1.0:
+        z = [0.0] * len(q0)
+        alt, s2 = _quintic_search(q0, v0, z, q1, v1, z, v_max, a_max, rate_hz, min_duration, max_duration)
+        if s2 < score:
+            return alt
+    return best
+
+
+def _quintic_search(q0, v0, a0, q1, v1, a1, v_max, a_max, rate_hz, min_duration, max_duration):
     d = max([abs(b - a) for a, b in zip(q0, q1)] or [0.0])
+    # caps raised to the matched boundary values: the gesture may enter or leave faster
+    vcap = [max(v_max, abs(v0[j]), abs(v1[j])) for j in range(len(q0))]
+    acap = [max(a_max, abs(a0[j]), abs(a1[j])) for j in range(len(q0))]
     T = max(min_duration, 1.875 * d / v_max)
-    best = None
+    best, best_score = None, float("inf")
     while T <= max_duration:
         n = max(3, int(math.ceil(T * rate_hz)) + 1)
         tt = _linspace(0.0, T, n)
@@ -182,19 +198,20 @@ def _quintic(q0, v0, a0, q1, v1, a1, v_max, a_max, rate_hz=50.0, min_duration=0.
                       (20 * (q1[j] - q0[j]) - (8 * v1[j] + 12 * v0[j]) * T - (3 * a0[j] - a1[j]) * T2) / (2 * T3),
                       (30 * (q0[j] - q1[j]) + (14 * v1[j] + 16 * v0[j]) * T + (3 * a0[j] - 2 * a1[j]) * T2) / (2 * T4),
                       (12 * (q1[j] - q0[j]) - (6 * v1[j] + 6 * v0[j]) * T - (a0[j] - a1[j]) * T2) / (2 * T5)])
-        rows, vmax, amax = [], 0.0, 0.0
+        rows, score = [], 0.0
         for t in tt:
             row = []
-            for c in C:
+            for j, c in enumerate(C):
                 row.append(sum(c[k] * t ** k for k in range(6)))
-                vmax = max(vmax, abs(sum(k * c[k] * t ** (k - 1) for k in range(1, 6))))
-                amax = max(amax, abs(sum(k * (k - 1) * c[k] * t ** (k - 2) for k in range(2, 6))))
+                score = max(score, abs(sum(k * c[k] * t ** (k - 1) for k in range(1, 6))) / vcap[j],
+                            abs(sum(k * (k - 1) * c[k] * t ** (k - 2) for k in range(2, 6))) / acap[j])
             rows.append(row)
-        best = _traj(tt, rows)
-        if vmax <= v_max and amax <= a_max:
+        if score < best_score - 1e-9:  # keep the least bad duration, never just the longest
+            best, best_score = _traj(tt, rows), score
+        if score <= 1.0:
             break
         T *= 1.15
-    return best
+    return best, best_score
 
 
 def _boundary(tr, at_end=False):

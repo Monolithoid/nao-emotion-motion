@@ -35,6 +35,20 @@ def _quintic_coeffs(q0, v0, a0, q1, v1, a1, T):
 
 def quintic_matched(q0, v0, a0, q1, v1, a1, joints, v_max: float, a_max: float,
                     rate_hz: float = 50.0, min_duration: float = 0.4, max_duration: float = 6.0) -> Trajectory:
+    """See _quintic_search. When no duration keeps velocity and acceleration under the caps
+    while matching the boundary ACCELERATION too (a gesture entered while still accelerating
+    overshoots its entry speed just before it), the acceleration match is dropped: only position
+    and velocity stay continuous, and the least bad of the two is kept."""
+    best, score = _quintic_search(q0, v0, a0, q1, v1, a1, joints, v_max, a_max, rate_hz, min_duration, max_duration)
+    if score > 1.0:
+        z = np.zeros_like(np.asarray(a0, float))
+        alt, s2 = _quintic_search(q0, v0, z, q1, v1, z, joints, v_max, a_max, rate_hz, min_duration, max_duration)
+        if s2 < score:
+            return alt
+    return best
+
+
+def _quintic_search(q0, v0, a0, q1, v1, a1, joints, v_max, a_max, rate_hz, min_duration, max_duration):
     """Transition quintique raccordée en position, vitesse et accélération aux deux bouts.
 
     Sert à entrer dans un geste généré (qui peut commencer avec une vitesse non
@@ -43,8 +57,15 @@ def quintic_matched(q0, v0, a0, q1, v1, a1, joints, v_max: float, a_max: float,
     """
     q0, v0, a0, q1, v1, a1 = (np.asarray(x, float) for x in (q0, v0, a0, q1, v1, a1))
     d = float(np.max(np.abs(q1 - q0))) if q0.size else 0.0
+    # The gesture may enter or leave faster than v_max / a_max (the guardian accepted it at
+    # its own limits): the transition cannot be slower than its matched boundary, so the caps
+    # are raised to the boundary values. Without this no duration satisfies the caps, the
+    # search ran up to max_duration and the long quintic overshot by several radians (cycle
+    # refused, gesture never playable).
+    vcap = np.maximum(v_max, np.maximum(np.abs(v0), np.abs(v1)))
+    acap = np.maximum(a_max, np.maximum(np.abs(a0), np.abs(a1)))
     T = max(min_duration, 1.875 * d / v_max)
-    best = None
+    best, best_score = None, np.inf
     while T <= max_duration:
         n = max(3, int(np.ceil(T * rate_hz)) + 1)
         t = np.linspace(0, T, n)
@@ -52,11 +73,13 @@ def quintic_matched(q0, v0, a0, q1, v1, a1, joints, v_max: float, a_max: float,
         P = np.stack([t**k for k in range(6)], axis=1) @ C
         V = np.stack([k * t**(k - 1) if k else 0 * t for k in range(6)], axis=1) @ C
         A = np.stack([k * (k - 1) * t**(k - 2) if k > 1 else 0 * t for k in range(6)], axis=1) @ C
-        best = Trajectory(list(joints), t, P)
-        if np.abs(V).max() <= v_max and np.abs(A).max() <= a_max:
+        score = max(float((np.abs(V) / vcap).max()), float((np.abs(A) / acap).max())) if q0.size else 0.0
+        if score < best_score - 1e-9:  # otherwise keep the least bad duration, never the longest
+            best, best_score = Trajectory(list(joints), t, P), score
+        if score <= 1.0:
             break
         T *= 1.15
-    return best
+    return best, best_score
 
 
 def boundary_derivatives(traj: Trajectory, at_end: bool = False):

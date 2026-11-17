@@ -286,6 +286,12 @@ class Api:
             raise ValueError("Confirmation explicite requise")
         return self.wb.execute_plan(d["plan_id"])
 
+    def post_play(self, d):
+        """Generation tab, "Play on the robot": the explicit operator action (button or key 2).
+        The cycle is planned again from the measured posture and must pass the guardian whole;
+        motors must already be armed. No dialog (operator preference): permanent warning on the page."""
+        return self.wb.execute_plan(d["plan_id"], start=d.get("start", "auto"), end=d.get("end", "rest"))
+
 
     # calibration du guardian (aucune route ne commande de mouvement) ----------
     def post_calibration_open(self, d):
