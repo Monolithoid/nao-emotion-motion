@@ -44,7 +44,10 @@ class Api:
                 "events": {"distance_m": [0.3, 3.0], "azimuth_deg": [-90, 90], "elevation_deg": [-30, 45],
                            **(c.robot.get("events") or {})},
                 "countdown_s": c.robot.get("recording", {}).get("countdown_s", 3),
-                "model": {k: c.model.get(k) for k in ("arm_model", "head_model", "hands_model", "training")}}
+                "model": {k: c.model.get(k) for k in ("arm_model", "head_model", "hands_model", "training", "representation")},
+                # network tab: what goes in and out of each group's MLP
+                "net": {"joints": {"arms": c.arm_joints, "head": c.head_joints, "hands": c.hand_joints},
+                        "event_features": ["présent", "sin az", "cos az", "élévation", "distance connue", "proximité"]}}
 
     def get_status(self, q):
         return self.wb.status()
@@ -98,7 +101,12 @@ class Api:
                              intensity=float(inten) if inten not in (None, "") else None)
 
     def get_train(self, q):
-        return {"jobs": list(self.wb.jobs.values())[-10:], "runs": self.wb.runs()[:20]}
+        return {"jobs": list(self.wb.jobs.values())[-10:], "runs": self.wb.runs()[-200:]}
+
+    def get_train_history(self, q):
+        """Loss curve of one run (for the training results chart)."""
+        from urllib.parse import unquote
+        return {"run": unquote(q.get("run", "")), "history": self.wb.run_history(unquote(q.get("run", "")))}
 
     def get_event(self, q):
         return self.wb.current_event().to_dict()

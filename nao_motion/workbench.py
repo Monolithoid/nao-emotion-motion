@@ -516,12 +516,30 @@ class Workbench:
         return job
 
     def runs(self):
+        """Training runs in chronological order (oldest first), whatever the group.
+        Run folders are named <group>-<YYYYmmdd-HHMMSS-us>: sorting by name grouped them by group."""
         import json
         out = []
-        for p in sorted(self.runs_dir.glob("*/metrics.json"), reverse=True):
-            d = json.loads(p.read_text())
-            out.append({"run": p.parent.name, "path": str(p.parent), "metrics": d["metrics"]})
+        for p in self.runs_dir.glob("*/metrics.json"):
+            try:
+                d = json.loads(p.read_text())
+            except (OSError, ValueError):
+                continue
+            name = p.parent.name
+            comp, _, stamp = name.partition("-")
+            out.append({"run": name, "path": str(p.parent), "component": comp, "stamp": stamp,
+                        "metrics": d.get("metrics", {})})
+        out.sort(key=lambda r: (r["stamp"], r["run"]))
         return out
+
+    def run_history(self, run: str):
+        """Loss curve (train/val every 10 epochs) of one run, read from its metrics.json."""
+        import json
+        p = (self.runs_dir / run / "metrics.json")
+        if "/" in run or "\\" in run or run.startswith(".") or not p.resolve().is_relative_to(self.runs_dir.resolve()) \
+                or not p.exists():
+            raise ValueError(f"Unknown run: {run}")
+        return json.loads(p.read_text()).get("history", [])
 
     # -- génération ---------------------------------------------------------------
     def get_engine(self) -> MotionEngine:
