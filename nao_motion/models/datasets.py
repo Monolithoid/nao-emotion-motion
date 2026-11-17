@@ -83,6 +83,58 @@ def group_examples(store: TakeStore, cfg: Config, kind: str, statuses: Sequence[
     return _pack(X, Y, D, G, T, E, I, len(joints), K)
 
 
+def mirrored_examples(store: TakeStore, cfg: Config, kind: str, take_ids: Sequence[str],
+                      target: str = "measured"):
+    """Left/right mirrors of the given takes (in memory only, see data/mirror.py).
+
+    Only takes WITHOUT an event are mirrored; a mirrored take that is not feasible on the
+    robot (factory limits, calibrated zone) is dropped. Returns (Examples, report).
+    Mirrored examples keep their source's group (they must stay on the same side of the
+    split) and are named `<take_id>~mirror`."""
+    from ..data.mirror import can_mirror, check_mirror, factory_limits, mirror_trajectory
+    K, n = _rep(cfg)
+    joints = group_joints(cfg, kind)
+    norm = Norm.from_config(cfg, joints)
+    factory, fsource = factory_limits(cfg, joints)
+    rep = {"eligible": 0, "added": 0, "dropped": 0, "skipped_with_event": 0, "dropped_takes": [],
+           "factory_limits": fsource, "calibration": cfg.calibration_version}
+    X, Y, D, G, T, E, I = [], [], [], [], [], [], []
+    if not can_mirror(joints):
+        rep["unavailable"] = f"no left/right mirror for joints {list(joints)}"
+        return _pack(X, Y, D, G, T, E, I, len(joints), K), rep
+    for tid in take_ids:
+        m = store.load_meta(tid)
+        if m.event_ctx.present:
+            rep["skipped_with_event"] += 1
+            continue
+        rep["eligible"] += 1
+        take = store.load(tid)
+        seg = _target_segment(store, take, joints, target)
+        mir = mirror_trajectory(seg)
+        reason = check_mirror(cfg, seg, mir, factory)
+        if reason:
+            rep["dropped"] += 1
+            rep["dropped_takes"].append({"take_id": tid, "reason": reason})
+            continue
+        ctrl, dur = encode_trajectory(mir, K, n)
+        X.append(motion_input(cfg.emotions, m.emotion, m.intensity, m.event_ctx))
+        Y.append(norm.fwd(ctrl).ravel())
+        D.append(np.log(dur))
+        G.append(store.group_id(m)); T.append(f"{tid}~mirror"); E.append(m.emotion); I.append(m.intensity)
+        rep["added"] += 1
+    return _pack(X, Y, D, G, T, E, I, len(joints), K), rep
+
+
+def concat_examples(a: Examples, b: Examples) -> Examples:
+    if len(b) == 0:
+        return a
+    if len(a) == 0:
+        return b
+    return Examples(np.concatenate([a.X, b.X]), np.concatenate([a.Y, b.Y]), np.concatenate([a.log_dur, b.log_dur]),
+                    a.groups + b.groups, a.take_ids + b.take_ids, a.emotions + b.emotions,
+                    np.concatenate([a.intensities, b.intensities]))
+
+
 def arm_examples(store: TakeStore, cfg: Config, statuses: Sequence[str] = ("accepted",)) -> Examples:
     return group_examples(store, cfg, "arms", statuses)
 

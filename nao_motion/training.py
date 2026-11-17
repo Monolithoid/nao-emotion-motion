@@ -21,7 +21,7 @@ from .data.representation import bspline_basis, decode
 from .data.store import TakeStore
 from .events import EVENT_FEATURES, EventContext
 from .guardian import Guardian
-from .models.datasets import Examples, group_examples, group_joints, grouped_split
+from .models.datasets import Examples, concat_examples, group_examples, group_joints, grouped_split, mirrored_examples
 from .models.features import Norm, motion_input_dim
 from .models.nets import LoadedModel, build, save_checkpoint
 
@@ -130,7 +130,9 @@ _NO_TAKES = {"arms": "Aucune prise de bras utilisable (statut 'accepted' requis 
 
 
 # réglages modifiables pour un entraînement (interface / CLI), sans toucher à model.yaml
-OVERRIDABLE = ("hidden", "dropout", "weight_decay", "lr", "smoothness_weight", "epochs")
+OVERRIDABLE = ("hidden", "dropout", "weight_decay", "lr", "smoothness_weight", "epochs", "mirror")
+
+_TRUE, _FALSE = ("1", "true", "yes", "on"), ("0", "false", "no", "off")
 
 
 def check_overrides(o: Optional[dict]) -> dict:
@@ -142,7 +144,11 @@ def check_overrides(o: Optional[dict]) -> dict:
         if k not in OVERRIDABLE:
             raise TrainingError(f"Réglage inconnu : {k}")
         try:
-            if k == "hidden":
+            if k == "mirror":
+                if isinstance(v, str) and v.strip().lower() in _TRUE + _FALSE:
+                    v = v.strip().lower() in _TRUE
+                ok = isinstance(v, bool)
+            elif k == "hidden":
                 v = [int(x) for x in (v.replace(",", " ").split() if isinstance(v, str) else v)]
                 ok = 1 <= len(v) <= 4 and all(1 <= x <= 1024 for x in v)
             elif k == "epochs":
@@ -166,7 +172,11 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
     Entrée : [émotion, intensité, événement] ; sortie : points de contrôle du groupe
     et log de sa durée. Aucun autre modèle n'est requis ni chargé.
     `overrides` : réglages propres à cet entraînement (taille du réseau, dropout,
-    weight_decay, lr, lissage, époques) ; model.yaml n'est pas modifié."""
+    weight_decay, lr, lissage, époques, miroir) ; model.yaml n'est pas modifié.
+
+    Mirror (training.mirror, default on): left/right mirrors of the TRAINING takes without
+    an event are added in memory (data/mirror.py). Validation, the baseline and the
+    reported train/val RMSE use the real takes only, so the metrics stay comparable."""
     ov = check_overrides(overrides)
     if component not in COMPONENTS:
         raise ValueError(component)
@@ -188,22 +198,33 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
         tcfg["epochs"] = epochs
     tcfg.update({k: ov[k] for k in ("weight_decay", "lr", "smoothness_weight", "epochs") if k in ov})
     tr, va, _ = grouped_split(ex.groups, float(tcfg["val_fraction"]), int(tcfg["seed"]))
+    use_mirror = bool(ov.get("mirror", tcfg.get("mirror", True)))
+    fit_ex, fit_tr = ex, tr
+    mirror_rep = {"enabled": use_mirror}
+    if use_mirror:
+        # mirrors of TRAINING takes only: a validation take never leaks into training
+        mex, r = mirrored_examples(store, cfg, component, [ex.take_ids[i] for i in tr], target)
+        mirror_rep.update(r)
+        fit_ex = concat_examples(ex, mex)
+        fit_tr = np.concatenate([tr, np.arange(len(ex), len(ex) + len(mex))]).astype(int)
     in_dim = motion_input_dim(len(cfg.emotions))
     assert ex.X.shape[1] == in_dim
     arch = {"in_dim": in_dim, "out_dim": K * J + 1, "hidden": list(mc["hidden"]),
             "dropout": float(mc.get("dropout", 0)), "latent_dim": 0}
-    model, hist = _fit(ex, tr, va, arch, K, J, tcfg, True, log)
+    model, hist = _fit(fit_ex, fit_tr, va, arch, K, J, tcfg, True, log)
     norm = Norm.from_config(cfg, joints)
     metrics = _evaluate(model, ex, tr, va, norm, K, True)
     # réglages effectivement utilisés, et époque du modèle retenu (meilleure validation)
     metrics["settings"] = {"hidden": arch["hidden"], "dropout": arch["dropout"],
                            "weight_decay": float(tcfg["weight_decay"]), "lr": float(tcfg["lr"]),
                            "smoothness_weight": float(tcfg.get("smoothness_weight", 0.0)),
-                           "epochs": int(tcfg["epochs"]), "overrides": sorted(ov)}
+                           "epochs": int(tcfg["epochs"]), "mirror": use_mirror, "overrides": sorted(ov)}
+    metrics["mirror"] = mirror_rep
     if len(va) and hist:
         metrics["best_epoch"] = min(hist, key=lambda h: h["val_loss"])["epoch"]
     run = _run_dir(runs_dir, component)
     meta = _meta(cfg, component, joints, norm, K, ex, tr, va, tcfg)
+    meta["mirrored_take_ids"] = [t for t in fit_ex.take_ids[len(ex):]]
     meta["synthetic_data"] = any(store.load_meta(t).synthetic for t in ex.take_ids)
     meta.update({"event_features": EVENT_FEATURES, "independent": True,
                  "inputs": ["emotion", "intensity", "event[present,sin_az,cos_az,elev,dist_known,proximity]"],
@@ -327,8 +348,8 @@ def _guardian_on_takes(cfg, store, component, take_ids):
 
 def _write_report(run, metrics, hist, meta):
     (run / "metrics.json").write_text(json.dumps({"metrics": metrics, "history": hist}, indent=2, ensure_ascii=False))
-    (run / "split.json").write_text(json.dumps({"train": meta["train_take_ids"], "val": meta["val_take_ids"]},
-                                               indent=2))
+    (run / "split.json").write_text(json.dumps({"train": meta["train_take_ids"], "val": meta["val_take_ids"],
+                                                "train_mirrored": meta.get("mirrored_take_ids", [])}, indent=2))
 
 
 def latest(runs_dir, component) -> Optional[Path]:
