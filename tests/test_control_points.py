@@ -70,3 +70,42 @@ def test_training_with_its_own_control_points(tmp_path, cfg):
     gen = MotionEngine(cfg, arm_model=m).generate(cfg.emotions[0], 0.5)
     assert gen.arm_ctrl.shape == (k, len(cfg.arm_joints))
     assert gen.head_ctrl.shape[0] == default_k  # group without a model: start pose held
+
+
+def _wave_takes(wb, cfg, n=8, seed=3):
+    """Waves (« coucou ») done at different moments: averaging them gives a still elbow."""
+    rng = np.random.default_rng(seed)
+    j = cfg.arm_joints + cfg.head_joints
+    for _ in range(n):
+        dur, f, d0, a = rng.uniform(2.6, 3.2), rng.uniform(1.0, 1.4), rng.uniform(0.0, 0.8), rng.uniform(0.25, 0.35)
+        t = np.linspace(0, dur, int(dur * 50) + 1)
+        q = np.tile(cfg.pose("start", j), (len(t), 1))
+        env = np.sin(np.pi * t / dur) ** 2
+        q[:, j.index("RShoulderPitch")] -= 0.8 * env
+        q[:, j.index("RElbowRoll")] += a * env * np.sin(2 * np.pi * f * (t - d0))
+        meta = TakeMeta(take_id=new_id("arms"), session_id="s", kind="arms", emotion="joie", intensity=0.7,
+                        joints=j, guided_joints=cfg.arm_joints, driven_joints=cfg.head_joints,
+                        event=EventContext.none().to_dict(), calibration_version=cfg.calibration_version,
+                        config_fingerprint="x", adapter="test", sample_rate_hz=50, segment=(0.0, dur),
+                        status="accepted")
+        wb.store.save(meta, Trajectory(j, t, q))
+
+
+def test_motion_energy_keeps_waves_done_at_different_moments(tmp_path, cfg):
+    from nao_motion import training
+    wb = make_wb(tmp_path, cfg)
+    _wave_takes(wb, cfg)
+    ptp, kept = {}, {}
+    for ew in (0.0, 0.1):
+        job = wb.train("arms", epochs=250, background=False,
+                       overrides={"motion_energy_weight": ew, "n_control_points": 16, "folds": 0, "mirror": False})
+        assert job["state"] == "done", job["error"]
+        m = load_model(training.latest(wb.runs_dir, "arms"), cfg, "arms")
+        assert m.meta["metrics"]["settings"]["motion_energy_weight"] == ew
+        kept[ew] = m.meta["metrics"]["train_motion_kept"]
+        q = MotionEngine(cfg, arm_model=m).generate("joie", 0.7).arms.q[:, cfg.arm_joints.index("RElbowRoll")]
+        ptp[ew] = float(np.ptp(q))
+    # the mean of out-of-phase waves is nearly still; the energy term brings the wave back
+    # (take ids, hence the order of the examples, vary between runs: margins are loose)
+    assert ptp[0.1] > 1.3 * ptp[0.0], ptp
+    assert kept[0.0] < 0.8 < 0.9 < kept[0.1] < 1.2, kept

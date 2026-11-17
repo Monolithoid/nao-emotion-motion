@@ -6,7 +6,7 @@
 (function () {
   const GROUPS = {arms: "Bras", head: "Tête", hands: "Mains"};
   const GCOL = {arms: "#2f62d8", head: "#e07a12", hands: "#1d8a4b"};
-  const FIELDS = {hidden: "tr-hidden", dropout: "tr-dropout", weight_decay: "tr-wd", lr: "tr-lr", smoothness_weight: "tr-smooth", folds: "tr-folds", n_control_points: "tr-ctrl"};
+  const FIELDS = {hidden: "tr-hidden", dropout: "tr-dropout", weight_decay: "tr-wd", lr: "tr-lr", smoothness_weight: "tr-smooth", motion_energy_weight: "tr-energy", folds: "tr-folds", n_control_points: "tr-ctrl"};
   const STORE = "nao-net-settings";
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
@@ -30,7 +30,7 @@
   function placeholders() {
     const A = groupModel(netGroup), T = M().training || {};
     $("tr-hidden").placeholder = (A.hidden || []).join(","); $("tr-dropout").placeholder = A.dropout ?? "";
-    $("tr-wd").placeholder = T.weight_decay ?? ""; $("tr-lr").placeholder = T.lr ?? ""; $("tr-smooth").placeholder = T.smoothness_weight ?? "";
+    $("tr-wd").placeholder = T.weight_decay ?? ""; $("tr-lr").placeholder = T.lr ?? ""; $("tr-smooth").placeholder = T.smoothness_weight ?? ""; $("tr-energy").placeholder = T.motion_energy_weight ?? 0;
     $("tr-folds").placeholder = T.folds ?? 1;
     $("tr-ctrl").placeholder = (M().representation || {}).n_control_points ?? 8;
   }
@@ -54,7 +54,7 @@
   function summary() {
     const s = effective("arms"), o = overrides();
     $("tr-net-sum").textContent = Object.keys(o).length
-      ? `Réglages de l'onglet Réseau : ${Object.entries(o).map(([k, v]) => `${{hidden: "couches", dropout: "dropout", weight_decay: "weight decay", lr: "lr", smoothness_weight: "lissage", folds: "parts de validation croisée", n_control_points: "points de contrôle"}[k]} ${v}`).join(" · ")}`
+      ? `Réglages de l'onglet Réseau : ${Object.entries(o).map(([k, v]) => `${{hidden: "couches", dropout: "dropout", weight_decay: "weight decay", lr: "lr", smoothness_weight: "lissage", motion_energy_weight: "énergie du mouvement", folds: "parts de validation croisée", n_control_points: "points de contrôle"}[k]} ${v}`).join(" · ")}`
       : "Réglages : ceux de model.yaml (modifiables dans l'onglet Réseau)";
     $("tr-net-sum").textContent += $("tr-mirror").checked ? " · miroir activé" : " · miroir désactivé";
     const k = foldsSetting();
@@ -194,7 +194,9 @@
       const gain = 1 - v / b;
       out.push(gain >= 0.1 ? {k: "base", cls: "v-good", text: `validation ${pct(gain)} vs geste moyen : le réseau apprend mieux que la moyenne`}
         : gain >= 0 ? {k: "base", cls: "v-warn", text: `validation ${pct(gain)} vs geste moyen : à peine mieux, sous-apprentissage probable`}
-        : {k: "base", cls: "v-bad", text: `validation ${pct(gain)} vs geste moyen : moins bien que la moyenne`});
+        : (m.settings || {}).motion_energy_weight > 0
+          ? {k: "base", cls: "v-warn", text: `validation ${pct(gain)} vs geste moyen point par point : attendu avec l'énergie du mouvement, juger plutôt le mouvement gardé ci-dessous`}
+          : {k: "base", cls: "v-bad", text: `validation ${pct(gain)} vs geste moyen : moins bien que la moyenne`});
       const gap = v / Math.max(t, 1e-9);
       out.push(gap <= 1.5 ? {k: "gap", cls: "v-good", text: `écart validation / entraînement ×${fr(gap, 1)} : raisonnable`}
         : gap <= 2.5 ? {k: "gap", cls: "v-warn", text: `écart validation / entraînement ×${fr(gap, 1)} : début de surapprentissage`}
@@ -205,6 +207,13 @@
       out.push({k: "cv", cls, text: `validation croisée ${cv.folds} parts : ${pct(1 - cv.ratio_mean)} ± ${Math.round(sd * 100)} % vs geste moyen selon la part` +
         (cls === "v-good" ? " : résultat stable" : cls === "v-warn" ? " : résultat assez variable d'une part à l'autre" : " : résultat très variable, il manque des prises")});
       out.push({k: "kept", cls: "v-good", text: `modèle gardé : réentraîné sur les ${m.n_examples} prises pendant ${cv.final_epochs} époques (meilleure époque moyenne des parts, ${Math.round(cv.best_epoch_mean)} ± ${Math.round(cv.best_epoch_std)})`});
+    }
+    if (m.val_motion_kept !== undefined && m.val_motion_kept !== null) {
+      const k = m.val_motion_kept, r = m.val_baseline_motion_kept;
+      out.push({k: "motion", cls: k >= 0.8 && k <= 1.3 ? "v-good" : k >= 0.6 ? "v-warn" : "v-bad",
+        text: `mouvement gardé ${Math.round(k * 100)} % de celui des prises (geste moyen : ${r === null || r === undefined ? "—" : Math.round(r * 100) + " %"})` +
+          (k < 0.6 ? " : gestes aplatis, le modèle fait la moyenne des prises (énergie du mouvement à augmenter)" : k > 1.3 ? " : gestes plus agités que les prises (énergie du mouvement à baisser)" : "")});
+      if ((m.settings || {}).motion_energy_weight > 0) out.push({k: "energy", cls: "v-good", text: "avec l'énergie du mouvement, l'erreur point par point peut dépasser celle du geste moyen : une oscillation décalée dans le temps compte comme une erreur, un bras immobile non"});
     }
     const st = m.settings || {};
     if (m.best_epoch !== undefined && st.epochs) {
@@ -451,7 +460,7 @@
     return `exemples ${m.n_examples} (entraînement ${m.n_train} / validation ${m.n_val}, groupes ${m.n_train_groups}/${m.n_val_groups})\n` +
       (m.reconstruction_rmse_rad !== undefined && m.reconstruction_rmse_rad !== null ? `détail perdu avant l'apprentissage (prises vs courbes à ${(s && s.n_control_points) || "?"} points) ${fr(m.reconstruction_rmse_rad)} rad : non compté dans val/entr. ci-dessous\n` : "") +
       (m.val_duration_mae_s !== undefined ? `erreur de durée (val.) ${fr(m.val_duration_mae_s)} s · (entr.) ${fr(m.train_duration_mae_s)} s\n` : "") +
-      (s ? `réglages : réseau ${s.hidden.join("-")} · dropout ${s.dropout} · weight decay ${s.weight_decay} · lr ${s.lr} · lissage ${s.smoothness_weight}${s.n_control_points ? " · " + s.n_control_points + " points de contrôle" : ""} · ${s.epochs} époques${s.mirror !== undefined ? " · miroir " + (s.mirror ? "oui" : "non") : ""}\n` : "") +
+      (s ? `réglages : réseau ${s.hidden.join("-")} · dropout ${s.dropout} · weight decay ${s.weight_decay} · lr ${s.lr} · lissage ${s.smoothness_weight}${s.motion_energy_weight !== undefined ? " · énergie " + s.motion_energy_weight : ""}${s.n_control_points ? " · " + s.n_control_points + " points de contrôle" : ""} · ${s.epochs} époques${s.mirror !== undefined ? " · miroir " + (s.mirror ? "oui" : "non") : ""}\n` : "") +
       (m.mirror && m.mirror.enabled ? (m.mirror.unavailable ? `miroir gauche/droite : indisponible (${m.mirror.unavailable})\n` :
         `miroir gauche/droite : +${m.mirror.added} prises miroir à l'entraînement (${m.mirror.eligible} prises sans événement, ${m.mirror.dropped} miroirs écartés, ${m.mirror.skipped_with_event} prises avec événement non miroitées)\n` +
         (m.mirror.dropped_takes && m.mirror.dropped_takes.length ? m.mirror.dropped_takes.map((d) => `  écarté : ${d.take_id} : ${d.reason}`).join("\n") + "\n" : "")) : "") +
@@ -513,7 +522,7 @@
     const s = (r.metrics || {}).settings;
     if (!s) return;
     setFields({hidden: (s.hidden || []).join(","), dropout: s.dropout, weight_decay: s.weight_decay, lr: s.lr,
-               smoothness_weight: s.smoothness_weight, n_control_points: s.n_control_points || 8, folds: (r.metrics.cv && r.metrics.cv.requested) || s.folds || 1});  // runs before cross-validation: single split
+               smoothness_weight: s.smoothness_weight, motion_energy_weight: s.motion_energy_weight || 0, n_control_points: s.n_control_points || 8, folds: (r.metrics.cv && r.metrics.cv.requested) || s.folds || 1});  // runs before cross-validation: single split
     $("tr-mirror").checked = s.mirror === true;  // runs before the mirror option: no mirror
     if (s.epochs) $("tr-epochs").value = s.epochs;
     const b = document.querySelector(`[data-net-group="${r.component}"]`);

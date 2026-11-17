@@ -120,6 +120,7 @@ def cmd_train(a):
     wb = _wb(a, adapter="sim")
     ov = {"hidden": a.hidden, "dropout": a.dropout, "weight_decay": a.weight_decay, "lr": a.lr,
           "smoothness_weight": a.smoothness, "mirror": a.mirror, "folds": a.folds,
+          "motion_energy_weight": a.motion_energy,
           "n_control_points": a.control_points}
     job = wb.train(a.component, epochs=a.epochs, include_pending=a.include_pending, background=False,
                    overrides={k: v for k, v in ov.items() if v is not None})
@@ -410,6 +411,8 @@ def main(argv=None):
     s.add_argument("--hidden", help='couches cachées, ex. "32,32" (défaut : model.yaml)')
     s.add_argument("--dropout", type=float); s.add_argument("--weight-decay", type=float)
     s.add_argument("--lr", type=float); s.add_argument("--smoothness", type=float, help="poids du lissage")
+    s.add_argument("--motion-energy", type=float, help="weight of the motion energy term (keeps oscillations "
+                   "such as a wave that the takes show at different moments; default: model.yaml)")
     s.add_argument("--mirror", action=argparse.BooleanOptionalAction, default=None,
                    help="add left/right mirrors of the training takes without an event (default: model.yaml)")
     s.add_argument("--folds", type=int, help="cross-validation parts (e.g. 5); 0 or 1 = single split "
