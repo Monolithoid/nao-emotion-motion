@@ -162,3 +162,23 @@ def grouped_split(groups: List[str], val_fraction: float, seed: int):
     tr = [i for i, g in enumerate(groups) if g not in val_groups]
     va = [i for i, g in enumerate(groups) if g in val_groups]
     return np.array(tr, dtype=int), np.array(va, dtype=int), sorted(val_groups)
+
+
+def grouped_kfold(groups: List[str], k: int, seed: int):
+    """Cross-validation folds by group: the groups are shuffled (seed) and dealt into k parts
+    of near-equal size; returns [(train indices, validation indices)] * k. Every group is
+    validated exactly once, never in the same fold as its own training. k is capped at the
+    number of groups; fewer than two groups gives no fold."""
+    uniq = sorted(set(groups))
+    k = min(int(k), len(uniq))
+    if k < 2:
+        return []
+    rng = np.random.default_rng(seed)
+    rng.shuffle(uniq)
+    part = {g: i % k for i, g in enumerate(uniq)}
+    out = []
+    for f in range(k):
+        tr = [i for i, g in enumerate(groups) if part[g] != f]
+        va = [i for i, g in enumerate(groups) if part[g] == f]
+        out.append((np.array(tr, dtype=int), np.array(va, dtype=int)))
+    return out

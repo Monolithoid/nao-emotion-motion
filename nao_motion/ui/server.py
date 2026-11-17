@@ -106,7 +106,7 @@ class Api:
     def get_train_history(self, q):
         """Loss curve of one run (for the training results chart)."""
         from urllib.parse import unquote
-        return {"run": unquote(q.get("run", "")), "history": self.wb.run_history(unquote(q.get("run", "")))}
+        return {"run": unquote(q.get("run", "")), **self.wb.run_history(unquote(q.get("run", "")), full=True)}
 
     def get_event(self, q):
         return self.wb.current_event().to_dict()
