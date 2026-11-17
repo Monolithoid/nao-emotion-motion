@@ -72,6 +72,9 @@ def _model_entry(cfg: Config, comp: str, path: Path) -> dict:
     return {
         "joints": list(joints), "center": norm.center.tolist(), "scale": norm.scale.tolist(),
         "latent_dim": int(m.arch.get("latent_dim", 0)), "activation": "tanh", "clip": clip,
+        # the model's own number of control points (a training setting, can differ per group)
+        "n_control_points": int((m.meta.get("representation") or {}).get("n_control_points")
+                                or cfg.model["representation"]["n_control_points"]),
         "layers": [{"W": np.asarray(W, dtype=np.float64).tolist(), "b": np.asarray(b, dtype=np.float64).tolist()}
                    for W, b in zip(m.W, m.b)],
         "source": {"run": Path(path).parent.name, "digest": m.digest,
@@ -93,7 +96,7 @@ def bundle_dict(cfg: Config, models: Dict[str, Optional[Path]], allow_uncalibrat
         "emotions": list(cfg.emotions),
         "input_layout": "[emotions (one-hot or normalised mix)..., intensity 0..1, event present, "
                         "sin(azimuth), cos(azimuth), elevation (rad), distance known, 1/(1+distance m)]",
-        "n_control_points": int(cfg.model["representation"]["n_control_points"]),
+        "n_control_points": int(cfg.model["representation"]["n_control_points"]),  # default; see models[*]
         "rate_hz": 50.0,
         "timing": str((cfg.model.get("combine") or {}).get("timing", "hold")),
         "groups": {"arms": list(cfg.arm_joints), "head": list(cfg.head_joints), "hands": list(cfg.hand_joints)},

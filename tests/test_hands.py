@@ -103,7 +103,7 @@ def test_hands_pass_dataset_training_generation(trained, cfg, tmp_path):
     assert seg.q.max() - seg.q.min() > 0.2  # les mains ont bougé pendant le geste
 
     ex = head_examples(wb.store, cfg, kind="hands", target="command")
-    assert len(ex) == len(ids) and ex.Y.shape[1] == 8 * len(cfg.hand_joints)
+    assert len(ex) == len(ids) and ex.Y.shape[1] == int(cfg.model["representation"]["n_control_points"]) * len(cfg.hand_joints)
     # les prises de tête ne sont pas mélangées aux prises de mains
     assert not set(ex.take_ids) & {x.take_id for x in wb.store.list(kind="head")}
 

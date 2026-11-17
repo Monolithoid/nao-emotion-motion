@@ -119,7 +119,8 @@ def cmd_takes(a):
 def cmd_train(a):
     wb = _wb(a, adapter="sim")
     ov = {"hidden": a.hidden, "dropout": a.dropout, "weight_decay": a.weight_decay, "lr": a.lr,
-          "smoothness_weight": a.smoothness, "mirror": a.mirror, "folds": a.folds}
+          "smoothness_weight": a.smoothness, "mirror": a.mirror, "folds": a.folds,
+          "n_control_points": a.control_points}
     job = wb.train(a.component, epochs=a.epochs, include_pending=a.include_pending, background=False,
                    overrides={k: v for k, v in ov.items() if v is not None})
     if job["state"] != "done":
@@ -129,6 +130,26 @@ def cmd_train(a):
     print(f"Run : {job['run']}")
     print(json.dumps(m, indent=1, ensure_ascii=False))
     print("Aucun mouvement n'est déclenché par l'entraînement.")
+
+
+def cmd_fidelity(a):
+    from .config import load_config
+    from .data.fidelity import DEFAULT_KS, fidelity
+    from .data.store import TakeStore
+    cfg = load_config(a.config)
+    r = fidelity(TakeStore(a.data, cfg), cfg, a.component, a.ks or DEFAULT_KS)
+    if not r["rows"]:
+        print(r.get("warning", "No take"))
+        return 1
+    print(f"{r['n_takes']} accepted {'real' if r['real_takes'] else 'SIMULATED'} takes ({a.component}), "
+          f"model.yaml: {r['config_n_control_points']} points")
+    print("points  mean gap (rad)  worst take (rad)  amplitude kept (median / worst)")
+    for row in r["rows"]:
+        ak = row["amplitude_kept"]
+        print(f"{row['n_control_points']:6d}  {row['rmse_rad']:14.4f}  {row['worst_take_rmse_rad']:16.4f}  "
+              + ("-" if ak is None else f"{ak * 100:5.0f} % / {row['amplitude_kept_min'] * 100:3.0f} %"))
+    print("Whatever a curve loses here, no model can produce. Gap <= 0.02 rad: enough points; a generated "
+          "gesture that is too flat then comes from the model (it averages the takes).")
 
 
 def _event_from_args(a):
@@ -393,7 +414,14 @@ def main(argv=None):
                    help="add left/right mirrors of the training takes without an event (default: model.yaml)")
     s.add_argument("--folds", type=int, help="cross-validation parts (e.g. 5); 0 or 1 = single split "
                    "val_fraction (default: model.yaml training.folds)")
+    s.add_argument("--control-points", type=int, help="B-spline control points per joint, 4 to 64 "
+                   "(default: model.yaml representation.n_control_points); stored in the model")
     s.set_defaults(fn=cmd_train)
+    s = sub.add_parser("fidelity", help="how much detail K control points lose on the accepted takes "
+                       "(no training, no movement)")
+    s.add_argument("component", choices=["arms", "head", "hands"])
+    s.add_argument("--ks", type=int, nargs="+", help="numbers of control points to compare (default 8 12 16 24 32)")
+    s.set_defaults(fn=cmd_fidelity)
     s = sub.add_parser("generate", help="générer et valider (simulation uniquement)")
     s.add_argument("--emotion", default="joie"); s.add_argument("--mix", help='mélange JSON ex. {"joie":0.5,"surprise":0.5}')
     s.add_argument("--intensity", type=float, default=0.7)

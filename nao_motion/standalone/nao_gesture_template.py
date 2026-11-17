@@ -290,6 +290,11 @@ class Gesture(object):
 class _Model(object):
     def __init__(self, name, d, n_inputs, K):
         self.name = name
+        # control points per joint: the model's own (they can differ between groups), else the
+        # file-wide value of exports made before this field
+        K = int(d.get("n_control_points") or K)
+        self.K = K
+        self.knots = _knots(K)
         self.joints = list(d["joints"])
         self.center = [float(x) for x in d["center"]]
         self.scale = [float(x) for x in d["scale"]]
@@ -383,12 +388,12 @@ class GestureGenerator(object):
     # -- generation ------------------------------------------------------------------
     def _plan(self, model, x, variation, seed):
         out = model.predict(x)
-        J = len(model.joints)
-        ctrl = [out[i * J:(i + 1) * J] for i in range(self.K)]
+        J, K = len(model.joints), model.K
+        ctrl = [out[i * J:(i + 1) * J] for i in range(K)]
         if variation > 0:
             rng = random.Random(seed)
-            n = [[rng.gauss(0.0, variation) for _ in range(J)] for _ in range(self.K)]
-            sm = [[(n[i][j] + n[i - 1][j] + n[(i + 1) % self.K][j]) / 3 for j in range(J)] for i in range(self.K)]
+            n = [[rng.gauss(0.0, variation) for _ in range(J)] for _ in range(K)]
+            sm = [[(n[i][j] + n[i - 1][j] + n[(i + 1) % K][j]) / 3 for j in range(J)] for i in range(K)]
             sm[0], sm[-1] = [0.0] * J, [0.0] * J
             ctrl = [[c + s for c, s in zip(cr, sr)] for cr, sr in zip(ctrl, sm)]
         dur = min(self.guardian.max_duration_s, max(self.guardian.min_duration_s, math.exp(out[-1])))
@@ -418,9 +423,10 @@ class GestureGenerator(object):
             if name in plans:
                 ctrl, dur = plans[name]
                 d = T if self.timing == "stretch" else dur
-                rows = [_bspline_row(self._knots, self.K, min(1.0, max(0.0, t / d))) for t in tt]
+                K = len(ctrl)
+                rows = [_bspline_row(self.models[name].knots, K, min(1.0, max(0.0, t / d))) for t in tt]
                 for j in range(len(js)):
-                    cols.append([sum(B[i] * ctrl[i][j] for i in range(self.K)) for B in rows])
+                    cols.append([sum(B[i] * ctrl[i][j] for i in range(K)) for B in rows])
                 joints += js
             elif name in ("arms", "head"):
                 missing = [j for j in js if j not in start]

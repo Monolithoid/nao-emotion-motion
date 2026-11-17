@@ -228,3 +228,12 @@ tr.ticked td{background:color-mix(in srgb,var(--bad) 10%,transparent)}
 .trash-box{margin:10px 0;border:1px dashed var(--line);border-radius:6px;padding:6px 10px}
 .trash-box summary{cursor:pointer;color:var(--muted)}
 .trash-box[open] summary{margin-bottom:6px}
+/* Network tab: fidelity of the B-spline curves on the takes */
+.net-fid-box{border-top:1px solid var(--line);margin-top:10px;padding-top:6px}
+table.fid{border-collapse:collapse;font-size:13px;margin-top:4px}
+table.fid th,table.fid td{padding:2px 8px;text-align:right;border-bottom:1px solid var(--line)}
+table.fid th:first-child,table.fid td:first-child{text-align:center}
+table.fid tbody tr{cursor:pointer}
+table.fid tbody tr:hover{background:var(--line)}
+table.fid tr.on td{font-weight:600}
+table.fid tr.on td:first-child{box-shadow:inset 3px 0 0 var(--accent)}

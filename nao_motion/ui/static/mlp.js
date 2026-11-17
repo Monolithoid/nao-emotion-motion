@@ -6,7 +6,7 @@
 (function () {
   const GROUPS = {arms: "Bras", head: "Tête", hands: "Mains"};
   const GCOL = {arms: "#2f62d8", head: "#e07a12", hands: "#1d8a4b"};
-  const FIELDS = {hidden: "tr-hidden", dropout: "tr-dropout", weight_decay: "tr-wd", lr: "tr-lr", smoothness_weight: "tr-smooth", folds: "tr-folds"};
+  const FIELDS = {hidden: "tr-hidden", dropout: "tr-dropout", weight_decay: "tr-wd", lr: "tr-lr", smoothness_weight: "tr-smooth", folds: "tr-folds", n_control_points: "tr-ctrl"};
   const STORE = "nao-net-settings";
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
@@ -32,6 +32,7 @@
     $("tr-hidden").placeholder = (A.hidden || []).join(","); $("tr-dropout").placeholder = A.dropout ?? "";
     $("tr-wd").placeholder = T.weight_decay ?? ""; $("tr-lr").placeholder = T.lr ?? ""; $("tr-smooth").placeholder = T.smoothness_weight ?? "";
     $("tr-folds").placeholder = T.folds ?? 1;
+    $("tr-ctrl").placeholder = (M().representation || {}).n_control_points ?? 8;
   }
   // effective settings for a group: field if filled, else model.yaml
   function effective(g) {
@@ -43,7 +44,8 @@
     }
     const num = (k, d) => (o[k] !== undefined ? Number(o[k]) : d);
     return {hidden, dropout: num("dropout", A.dropout || 0), weight_decay: num("weight_decay", T.weight_decay),
-            lr: num("lr", T.lr), smoothness_weight: num("smoothness_weight", T.smoothness_weight)};
+            lr: num("lr", T.lr), smoothness_weight: num("smoothness_weight", T.smoothness_weight),
+            n_control_points: num("n_control_points", (M().representation || {}).n_control_points || 8)};
   }
   function changed() {
     try { localStorage.setItem(STORE, JSON.stringify({...overrides(), mirror: $("tr-mirror").checked})); } catch (e) {}
@@ -52,7 +54,7 @@
   function summary() {
     const s = effective("arms"), o = overrides();
     $("tr-net-sum").textContent = Object.keys(o).length
-      ? `Réglages de l'onglet Réseau : ${Object.entries(o).map(([k, v]) => `${{hidden: "couches", dropout: "dropout", weight_decay: "weight decay", lr: "lr", smoothness_weight: "lissage", folds: "parts de validation croisée"}[k]} ${v}`).join(" · ")}`
+      ? `Réglages de l'onglet Réseau : ${Object.entries(o).map(([k, v]) => `${{hidden: "couches", dropout: "dropout", weight_decay: "weight decay", lr: "lr", smoothness_weight: "lissage", folds: "parts de validation croisée", n_control_points: "points de contrôle"}[k]} ${v}`).join(" · ")}`
       : "Réglages : ceux de model.yaml (modifiables dans l'onglet Réseau)";
     $("tr-net-sum").textContent += $("tr-mirror").checked ? " · miroir activé" : " · miroir désactivé";
     const k = foldsSetting();
@@ -62,7 +64,8 @@
 
   // ---- network diagram ----------------------------------------------------------------
   const inDim = () => CFG.emotions.length + 1 + CFG.net.event_features.length;
-  const K = () => (M().representation || {}).n_control_points || 8;
+  // control points per joint: the Network tab field if valid, else model.yaml
+  const K = () => { const k = effective(netGroup).n_control_points; return Number.isInteger(k) && k >= 4 && k <= 64 ? k : ((M().representation || {}).n_control_points || 8); };
   const joints = (g) => (CFG.net.joints[g] || []);
   function nParams(dims) { let n = 0; for (let i = 1; i < dims.length; i++) n += dims[i - 1] * dims[i] + dims[i]; return n; }
 
@@ -158,6 +161,26 @@
         `<div class="verdict ${cls}">${ratio === null ? "" : `${fr(ratio, 1)} paramètre${ratio >= 2 ? "s" : ""} par valeur apprise · ` +
           (cls === "v-good" ? "taille raisonnable pour ces données" : cls === "v-warn" ? "réseau un peu gros pour ces données : surveiller l'écart entraînement / validation" : "réseau très gros pour ces données : risque de surapprentissage")}</div>` +
         `<div class="legend">Repère indicatif : ≤ 1 paramètre par valeur apprise (vert), ≤ 3 (orange). Le verdict réel est la validation dans l'onglet Entraînement.</div>`);
+  }
+
+  // ---- how many control points: fidelity of the curves on the takes ------------------------
+  const fid = {};
+  function measureFidelity() {
+    const g = netGroup;
+    $("net-fid").innerHTML = `<p class="hint">Mesure en cours…</p>`;
+    api("fidelity?component=" + g, undefined, {quiet: true})
+      .then((d) => { fid[g] = d; if (netGroup === g) fidelityView(); })
+      .catch((e) => { if (netGroup === g) $("net-fid").innerHTML = `<p class="hint">${esc(e.message)}</p>`; });
+  }
+  function fidelityView() {
+    const el = $("net-fid"), d = fid[netGroup]; if (!el) return;
+    if (!d) { el.innerHTML = ""; return; }
+    if (!d.rows.length) { el.innerHTML = `<p class="hint">Aucune prise acceptée pour ce groupe.</p>`; return; }
+    const k = K();
+    el.innerHTML = `<table class="fid"><thead><tr><th>Points</th><th title="Écart moyen entre les prises et leur courbe (toutes articulations)">Écart moyen</th><th title="La prise la plus mal reproduite">Pire prise</th><th title="Part médiane de l'amplitude des articulations qui bougent (plus de 0,1 rad) gardée par la courbe ; entre parenthèses, la pire">Amplitude gardée</th></tr></thead><tbody>` +
+      d.rows.map((r) => { const a = r.amplitude_kept, cls = r.rmse_rad <= 0.02 ? "v-good" : r.rmse_rad <= 0.05 ? "v-warn" : "v-bad";
+        return `<tr data-k="${r.n_control_points}" class="${r.n_control_points === k ? "on" : ""}" title="Utiliser ${r.n_control_points} points pour les prochains entraînements"><td>${r.n_control_points}</td><td class="${cls}">${fr(r.rmse_rad)} rad</td><td>${fr(r.worst_take_rmse_rad)} rad</td><td>${a === null ? "—" : Math.round(a * 100) + " %"}${r.amplitude_kept_min !== null ? ` (${Math.round(r.amplitude_kept_min * 100)} %)` : ""}</td></tr>`; }).join("") +
+      `</tbody></table><div class="legend">${d.n_takes} prise${d.n_takes > 1 ? "s" : ""} acceptée${d.n_takes > 1 ? "s" : ""}${d.real_takes ? "" : " SIMULÉES (aucune prise réelle)"}. Ce que la courbe perd ici, aucun modèle ne peut le produire. Écart ≤ 0,02 rad (≈ 1°) : assez de points, un geste généré trop lisse vient alors du modèle (il fait la moyenne des prises). Cliquer une ligne pour choisir ce nombre de points.</div>`;
   }
 
   // ---- training runs ------------------------------------------------------------------
@@ -426,8 +449,9 @@
   function details(m) {
     const g = m.guardian, gt = m.guardian_takes, s = m.settings;
     return `exemples ${m.n_examples} (entraînement ${m.n_train} / validation ${m.n_val}, groupes ${m.n_train_groups}/${m.n_val_groups})\n` +
+      (m.reconstruction_rmse_rad !== undefined && m.reconstruction_rmse_rad !== null ? `détail perdu avant l'apprentissage (prises vs courbes à ${(s && s.n_control_points) || "?"} points) ${fr(m.reconstruction_rmse_rad)} rad : non compté dans val/entr. ci-dessous\n` : "") +
       (m.val_duration_mae_s !== undefined ? `erreur de durée (val.) ${fr(m.val_duration_mae_s)} s · (entr.) ${fr(m.train_duration_mae_s)} s\n` : "") +
-      (s ? `réglages : réseau ${s.hidden.join("-")} · dropout ${s.dropout} · weight decay ${s.weight_decay} · lr ${s.lr} · lissage ${s.smoothness_weight} · ${s.epochs} époques${s.mirror !== undefined ? " · miroir " + (s.mirror ? "oui" : "non") : ""}\n` : "") +
+      (s ? `réglages : réseau ${s.hidden.join("-")} · dropout ${s.dropout} · weight decay ${s.weight_decay} · lr ${s.lr} · lissage ${s.smoothness_weight}${s.n_control_points ? " · " + s.n_control_points + " points de contrôle" : ""} · ${s.epochs} époques${s.mirror !== undefined ? " · miroir " + (s.mirror ? "oui" : "non") : ""}\n` : "") +
       (m.mirror && m.mirror.enabled ? (m.mirror.unavailable ? `miroir gauche/droite : indisponible (${m.mirror.unavailable})\n` :
         `miroir gauche/droite : +${m.mirror.added} prises miroir à l'entraînement (${m.mirror.eligible} prises sans événement, ${m.mirror.dropped} miroirs écartés, ${m.mirror.skipped_with_event} prises avec événement non miroitées)\n` +
         (m.mirror.dropped_takes && m.mirror.dropped_takes.length ? m.mirror.dropped_takes.map((d) => `  écarté : ${d.take_id} : ${d.reason}`).join("\n") + "\n" : "")) : "") +
@@ -489,7 +513,7 @@
     const s = (r.metrics || {}).settings;
     if (!s) return;
     setFields({hidden: (s.hidden || []).join(","), dropout: s.dropout, weight_decay: s.weight_decay, lr: s.lr,
-               smoothness_weight: s.smoothness_weight, folds: (r.metrics.cv && r.metrics.cv.requested) || s.folds || 1});  // runs before cross-validation: single split
+               smoothness_weight: s.smoothness_weight, n_control_points: s.n_control_points || 8, folds: (r.metrics.cv && r.metrics.cv.requested) || s.folds || 1});  // runs before cross-validation: single split
     $("tr-mirror").checked = s.mirror === true;  // runs before the mirror option: no mirror
     if (s.epochs) $("tr-epochs").value = s.epochs;
     const b = document.querySelector(`[data-net-group="${r.component}"]`);
@@ -545,7 +569,7 @@
     try { const v = JSON.parse(localStorage.getItem(STORE) || "{}"); for (const [k, id] of Object.entries(FIELDS)) if (v[k] !== undefined) $(id).value = v[k]; if (typeof v.mirror === "boolean") $("tr-mirror").checked = v.mirror; } catch (e) {}
     placeholders();
     Object.values(FIELDS).forEach((id) => $(id).addEventListener("input", changed));
-    $("tr-preset-small").onclick = () => setFields({hidden: "32", dropout: 0.1, weight_decay: 0.01, smoothness_weight: 0.05});
+    $("tr-preset-small").onclick = () => setFields({hidden: "32", dropout: 0.1, weight_decay: 0.01, smoothness_weight: 0});
     $("tr-preset-reset").onclick = () => { $("tr-mirror").checked = mirrorDefault(); setFields({}); };
     $("tr-mirror").addEventListener("change", changed);
     const layers = () => (effective(netGroup).hidden || groupModel(netGroup).hidden || [64]).slice();
@@ -554,8 +578,10 @@
     document.querySelectorAll("[data-net-group]").forEach((b) => b.onclick = () => {
       netGroup = b.dataset.netGroup;
       document.querySelectorAll("[data-net-group]").forEach((x) => x.classList.toggle("sel", x === b));
-      placeholders(); drawNet();
+      placeholders(); drawNet(); fidelityView();
     });
+    $("net-fid-go").onclick = measureFidelity;
+    $("net-fid").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-k]"); if (tr) { $("tr-ctrl").value = tr.dataset.k; changed(); fidelityView(); } });
     document.querySelectorAll("button[data-train]").forEach((b) => b.onclick = () => train(b.dataset.train));
     document.querySelectorAll("[data-tr-filter]").forEach((b) => b.onclick = () => {
       filter = b.dataset.trFilter;

@@ -55,7 +55,7 @@ def test_head_model_is_independent_of_arms(trained, cfg, tmp_path):
     assert head.meta["independent"] is True
     assert "arm_checkpoint" not in head.meta and "arm_joints" not in head.meta
     assert head.arch["in_dim"] == motion_input_dim(len(cfg.emotions))
-    assert head.arch["out_dim"] == 8 * len(cfg.head_joints) + 1
+    assert head.arch["out_dim"] == int(cfg.model["representation"]["n_control_points"]) * len(cfg.head_joints) + 1
     # un ancien modèle tête (dépendant des bras) est refusé avec un message clair
     ck = torch.load(Path(trained["head_run"]) / "model.pt", map_location="cpu", weights_only=True)
     del ck["meta"]["independent"]
@@ -203,7 +203,7 @@ def test_legacy_head_takes_on_replayed_arms_still_train(trained, cfg, tmp_path):
     assert wb.store.load(meta.take_id).meta.arm_take_id == am.take_id
     ex = head_examples(wb.store, cfg)
     assert ex.take_ids == [meta.take_id]
-    assert ex.Y.shape[1] == 8 * len(cfg.head_joints)
+    assert ex.Y.shape[1] == int(cfg.model["representation"]["n_control_points"]) * len(cfg.head_joints)
     job = wb.train("head", epochs=20, background=False)
     assert job["state"] == "done", job["error"]
 

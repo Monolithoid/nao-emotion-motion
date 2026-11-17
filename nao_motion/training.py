@@ -135,7 +135,8 @@ _NO_TAKES = {"arms": "Aucune prise de bras utilisable (statut 'accepted' requis 
 
 
 # réglages modifiables pour un entraînement (interface / CLI), sans toucher à model.yaml
-OVERRIDABLE = ("hidden", "dropout", "weight_decay", "lr", "smoothness_weight", "epochs", "mirror", "folds")
+OVERRIDABLE = ("hidden", "dropout", "weight_decay", "lr", "smoothness_weight", "epochs", "mirror", "folds",
+               "n_control_points")
 MAX_FOLDS = 20
 
 _TRUE, _FALSE = ("1", "true", "yes", "on"), ("0", "false", "no", "off")
@@ -160,6 +161,10 @@ def check_overrides(o: Optional[dict]) -> dict:
             elif k == "epochs":
                 v = int(v)
                 ok = 1 <= v <= 100000
+            elif k == "n_control_points":
+                from .data.fidelity import check_k
+                v = check_k(v)
+                ok = True
             elif k == "folds":
                 f = float(v)
                 v = int(f)
@@ -197,7 +202,8 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
     ov = check_overrides(overrides)
     if component not in COMPONENTS:
         raise ValueError(component)
-    K = int(cfg.model["representation"]["n_control_points"])
+    # control points per joint: this training's setting, else model.yaml; stored in the model
+    K = int(ov.get("n_control_points") or cfg.model["representation"]["n_control_points"])
     joints = group_joints(cfg, component)
     if not joints:
         raise TrainingError("Aucune main configurée (joints.yaml, section hands)")
@@ -207,7 +213,7 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
         mc = cfg.model["arm_model"]
     mc = dict(mc, **{k: ov[k] for k in ("hidden", "dropout") if k in ov})
     target = mc.get("target", "measured") if component == "hands" else "measured"
-    ex = group_examples(store, cfg, component, statuses, target)
+    ex = group_examples(store, cfg, component, statuses, target, n_ctrl=K)
     if len(ex) == 0:
         raise TrainingError(_NO_TAKES[component])
     tcfg = dict(cfg.model["training"])
@@ -227,7 +233,7 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
         fit_ex, fit_tr, rep = ex, tr, {"enabled": use_mirror}
         if use_mirror:
             # mirrors of TRAINING takes only: a validation take never leaks into training
-            mex, r = mirrored_examples(store, cfg, component, [ex.take_ids[i] for i in tr], target)
+            mex, r = mirrored_examples(store, cfg, component, [ex.take_ids[i] for i in tr], target, n_ctrl=K)
             rep.update(r)
             fit_ex = concat_examples(ex, mex)
             fit_tr = np.concatenate([tr, np.arange(len(ex), len(ex) + len(mex))]).astype(int)
@@ -249,8 +255,16 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
                            "weight_decay": float(tcfg["weight_decay"]), "lr": float(tcfg["lr"]),
                            "smoothness_weight": float(tcfg.get("smoothness_weight", 0.0)),
                            "epochs": int(tcfg["epochs"]), "mirror": use_mirror,
-                           "folds": len(splits) if splits else 1, "overrides": sorted(ov)}
+                           "folds": len(splits) if splits else 1, "n_control_points": K,
+                           "overrides": sorted(ov)}
     metrics["mirror"] = mirror_rep
+    # detail lost before any learning: takes vs their K-point curves (the model is compared
+    # with those curves, so val/train RMSE never show this part)
+    from .data.fidelity import reconstruction_rmse
+    try:
+        metrics["reconstruction_rmse_rad"] = reconstruction_rmse(store, cfg, component, K, ex.take_ids)
+    except Exception as e:  # report only, never blocks a training
+        metrics["reconstruction_error"] = str(e)
     curves = {}
     if cv:
         # loss curves of the folds and of the final model: in metrics.json, outside the metrics
