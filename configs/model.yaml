@@ -1,6 +1,8 @@
 schema_version: 1
 representation:
-  n_control_points: 8       # points de contrôle B-spline cubique par articulation
+  n_control_points: 12      # cubic B-spline control points per joint (was 8: flattened beats, waves and quick
+                            # peaks, see `nao-motion fidelity`). Each model stores its own value, so models
+                            # trained with 8 keep working. Per training: Network tab or --control-points
   n_eval_samples: 100       # échantillons de phase utilisés pour l'ajustement et les métriques
 arm_model:
   hidden: [64, 64]
@@ -24,7 +26,9 @@ training:
                             # on the part it never saw (every take validated once); the KEPT model is then
                             # trained on ALL the takes for the mean best epoch of the parts. 0 or 1 = single split
   seed: 0
-  smoothness_weight: 0.01
+  smoothness_weight: 0.0    # penalty on the curvature of the control points. It flattens quick gestures (with 8
+                            # points, 0.01 kept ~20 % of a 2-beat gesture); the curve is already smooth by
+                            # construction and the guardian checks speed/acceleration at playback
   duration_weight: 0.05     # poids de l erreur sur log(durée)
   mirror: true              # add left/right mirrors of the training takes WITHOUT an event (in memory only;
                             # validation stays on real takes ; unfeasible mirrors are dropped, see data/mirror.py)

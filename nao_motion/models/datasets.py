@@ -39,9 +39,10 @@ class Examples:
         return len(self.take_ids)
 
 
-def _rep(cfg):
+def _rep(cfg, n_ctrl: Optional[int] = None):
+    """(control points per joint, phase samples). `n_ctrl` overrides model.yaml for one training."""
     r = cfg.model["representation"]
-    return int(r["n_control_points"]), int(r["n_eval_samples"])
+    return int(n_ctrl or r["n_control_points"]), int(r["n_eval_samples"])
 
 
 def group_joints(cfg: Config, kind: str):
@@ -65,9 +66,9 @@ def _target_segment(store: TakeStore, take: Take, joints, target: str) -> Trajec
 
 
 def group_examples(store: TakeStore, cfg: Config, kind: str, statuses: Sequence[str] = ("accepted",),
-                   target: str = "measured") -> Examples:
+                   target: str = "measured", n_ctrl: Optional[int] = None) -> Examples:
     """[émotion, intensité, événement] -> [points de contrôle normalisés du groupe, log durée]."""
-    K, n = _rep(cfg)
+    K, n = _rep(cfg, n_ctrl)
     joints = group_joints(cfg, kind)
     norm = Norm.from_config(cfg, joints)
     X, Y, D, G, T, E, I = [], [], [], [], [], [], []
@@ -84,7 +85,7 @@ def group_examples(store: TakeStore, cfg: Config, kind: str, statuses: Sequence[
 
 
 def mirrored_examples(store: TakeStore, cfg: Config, kind: str, take_ids: Sequence[str],
-                      target: str = "measured"):
+                      target: str = "measured", n_ctrl: Optional[int] = None):
     """Left/right mirrors of the given takes (in memory only, see data/mirror.py).
 
     Only takes WITHOUT an event are mirrored; a mirrored take that is not feasible on the
@@ -92,7 +93,7 @@ def mirrored_examples(store: TakeStore, cfg: Config, kind: str, take_ids: Sequen
     Mirrored examples keep their source's group (they must stay on the same side of the
     split) and are named `<take_id>~mirror`."""
     from ..data.mirror import can_mirror, check_mirror, factory_limits, mirror_trajectory
-    K, n = _rep(cfg)
+    K, n = _rep(cfg, n_ctrl)
     joints = group_joints(cfg, kind)
     norm = Norm.from_config(cfg, joints)
     factory, fsource = factory_limits(cfg, joints)

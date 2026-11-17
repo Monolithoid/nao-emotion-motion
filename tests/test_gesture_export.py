@@ -18,12 +18,12 @@ from nao_motion.guardian import Guardian
 from .conftest import make_wb
 
 
-def _fake_npz(path, cfg, comp, seed, hidden=(16, 16)):
+def _fake_npz(path, cfg, comp, seed, hidden=(16, 16), K=None):
     """Numpy export in the `LoadedModel.export_numpy` format, without PyTorch: random hidden
     layers, last layer set for a gentle gesture around the start pose (~1.5 s) that varies
     a little with the emotion and the event."""
     joints = {"arms": cfg.arm_joints, "head": cfg.head_joints, "hands": cfg.hand_joints}[comp]
-    K, J = int(cfg.model["representation"]["n_control_points"]), len(joints)
+    K, J = int(K or cfg.model["representation"]["n_control_points"]), len(joints)
     dims = [len(cfg.emotions) + 1 + EVENT_FEATURES, *hidden, K * J + 1]
     rng = np.random.default_rng(seed)
     arrays = {}
@@ -32,12 +32,14 @@ def _fake_npz(path, cfg, comp, seed, hidden=(16, 16)):
         arrays[f"b{i}"] = rng.normal(0, 0.1, dims[i + 1]).astype(np.float32)
     last = len(dims) - 2
     bump = np.sin(np.pi * np.arange(K) / (K - 1))[:, None] * rng.uniform(-0.06, 0.06, J)[None, :]
-    arrays[f"W{last}"] = (rng.normal(0, 0.004, (dims[-1], dims[-2]))
+    # noise scaled with the spacing of the control points: same gentle accelerations whatever K
+    arrays[f"W{last}"] = (rng.normal(0, 0.004 * (8 / K) ** 2, (dims[-1], dims[-2]))
                           * np.append(np.abs(bump.reshape(-1)) > 0, 0)[:, None]).astype(np.float32)
     arrays[f"b{last}"] = np.append(bump.reshape(-1), np.log(1.5)).astype(np.float32)
     meta = {"emotions": cfg.emotions, "joints": list(joints), "independent": True,
             "event_features": EVENT_FEATURES, "calibration_version": cfg.calibration_version,
-            "train_take_ids": ["a", "b"], "val_take_ids": ["c"], "synthetic_data": True}
+            "train_take_ids": ["a", "b"], "val_take_ids": ["c"], "synthetic_data": True,
+            "representation": {"n_control_points": K}}
     header = {"component": comp, "arch": {"in_dim": dims[0], "out_dim": dims[-1], "hidden": list(hidden),
                                           "latent_dim": 0}, "meta": meta, "source_digest": f"fake{seed}",
               "activation": "tanh"}
@@ -229,3 +231,19 @@ def test_rest_transition_check_matches_project(exported):
         rep = gen.guardian.check_rest_transition(tr.t.tolist(), joints, tr.q.tolist())
         assert rep.ok == ref.ok
         assert sorted({x.code for x in rep.violations}) == sorted({x.code for x in ref.violations})
+
+
+def test_models_with_different_control_points(tmp_path, cfg):
+    """Each group can have its own number of control points; the exported generator follows."""
+    runs = tmp_path / "runs"
+    models = {c: _fake_npz(runs / f"{c}-x" / "model_numpy.npz", cfg, c, i, K=k)
+              for i, (c, k) in enumerate([("arms", 12), ("head", 6), ("hands", 9)])}
+    out = export_generator(cfg, tmp_path / "out", models=models, allow_uncalibrated=True)
+    data = json.loads(open(out["data"]).read())
+    assert [data["models"][c]["n_control_points"] for c in ("arms", "head", "hands")] == [12, 6, 9]
+    gen = _load_lib(out["library"]).GestureGenerator(data, allow_uncalibrated=True)
+    eng = MotionEngine.from_paths(cfg, models["arms"], models["head"], models["hands"])
+    ref = eng.generate(cfg.emotions[0], 0.6, EventContext.none())
+    joints, tt, rows, _ = gen.gesture(cfg.emotions[0], 0.6, None)
+    assert joints == ref.combined.joints
+    np.testing.assert_allclose(np.array(rows), ref.combined.q, atol=1e-9)

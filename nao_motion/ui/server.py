@@ -113,6 +113,16 @@ class Api:
     def get_train(self, q):
         return {"jobs": list(self.wb.jobs.values())[-10:], "runs": self.wb.runs()[-200:]}
 
+    def get_fidelity(self, q):
+        """Network tab: how much detail K control points lose on the accepted takes of a group
+        (read only, no model, no movement)."""
+        from ..data.fidelity import DEFAULT_KS, fidelity
+        comp = q.get("component", "arms")
+        if comp not in ("arms", "head", "hands"):
+            raise ValueError(f"groupe inconnu : {comp}")
+        ks = [int(k) for k in q["ks"].split(",")] if q.get("ks") else DEFAULT_KS
+        return fidelity(self.wb.store, self.wb.cfg, comp, ks)
+
     def get_train_history(self, q):
         """Loss curve of one run (for the training results chart)."""
         from urllib.parse import unquote

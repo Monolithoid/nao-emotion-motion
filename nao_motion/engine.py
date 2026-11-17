@@ -36,6 +36,13 @@ Emotion = Union[str, Dict[str, float]]
 TIMINGS = ("hold", "stretch")
 
 
+def model_k(model, default: int) -> int:
+    """Control points per joint of a trained model: its own (stored at training, the setting can
+    differ between runs), else model.yaml for models older than that field."""
+    rep = (getattr(model, "meta", None) or {}).get("representation") or {}
+    return int(rep.get("n_control_points") or default)
+
+
 @dataclass
 class Generated:
     arms: Trajectory
@@ -62,7 +69,7 @@ class MotionEngine:
         self.head_model = head_model
         self.hands_model = hands_model
         self.rate = rate_hz
-        self.K = int(cfg.model["representation"]["n_control_points"])
+        self.K = int(cfg.model["representation"]["n_control_points"])  # groups without a model
         self.arm_norm = Norm.from_config(cfg, cfg.arm_joints)
         self.head_norm = Norm.from_config(cfg, cfg.head_joints)
         self.hand_norm = Norm.from_config(cfg, cfg.hand_joints) if cfg.hand_joints else None
@@ -85,7 +92,7 @@ class MotionEngine:
               variation: float = 0.0, seed: Optional[int] = None):
         """Points de contrôle normalisés (K×J) et durée (s) d'un groupe."""
         out = model.predict(motion_input(self.cfg.emotions, emotion, intensity, event))[0]
-        ctrl_n = out[:-1].reshape(self.K, -1)
+        ctrl_n = out[:-1].reshape(model_k(model, self.K), -1)
         if variation > 0:
             ctrl_n = ctrl_n + self._smooth_noise(ctrl_n.shape, variation, seed)
         g = self.cfg.guardian
@@ -154,7 +161,7 @@ class MotionEngine:
             d = T if self.timing == "stretch" else dur
             # au-delà de sa durée, le groupe tient sa pose finale (phase bornée à 1)
             u = np.clip(tt / d, 0.0, 1.0)
-            return Trajectory(joints, tt, bspline_basis(self.K, u) @ ctrl), ctrl
+            return Trajectory(joints, tt, bspline_basis(ctrl.shape[0], u) @ ctrl), ctrl
 
         def held(joints):
             q0 = np.array(cfg.pose("start", joints))

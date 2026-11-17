@@ -122,6 +122,10 @@ class LoadedModel:
                                   "le réentraîner, il n'a plus besoin des bras")
         if m.get("event_features", 0) != EVENT_FEATURES:
             raise CheckpointError(f"Modèle {name} entraîné sans l'événement complet (angle, distance) : le réentraîner")
+        k = (m.get("representation") or {}).get("n_control_points")
+        if k and self.arch.get("out_dim") != int(k) * len(m["joints"]) + 1:
+            raise CheckpointError(f"Modèle {name} incohérent : {self.arch.get('out_dim')} sorties pour {k} points "
+                                  f"de contrôle x {len(m['joints'])} articulations")
         if m["calibration_version"] != cfg.calibration_version:
             self.warnings.append(f"Calibration différente : modèle {m['calibration_version']}, "
                                  f"config {cfg.calibration_version}")

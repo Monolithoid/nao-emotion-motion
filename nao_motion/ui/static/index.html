@@ -324,16 +324,22 @@
         <label title="Fraction de neurones désactivés au hasard pendant l'entraînement (0 à 0,9)">Dropout <input type="number" id="tr-dropout" step="0.05" min="0" max="0.9" class="num"></label>
         <label title="Pénalité sur la taille des poids : plus grand = modèle plus simple">Weight decay <input type="number" id="tr-wd" step="0.0001" min="0" class="num"></label>
         <label title="Pas d'apprentissage">lr <input type="number" id="tr-lr" step="0.001" min="0" class="num"></label>
-        <label title="Pénalité sur les à-coups des trajectoires">Lissage <input type="number" id="tr-smooth" step="0.01" min="0" class="num"></label>
+        <label title="Points de contrôle de la courbe (B-spline) par articulation : plus de points = gestes plus détaillés (battements, secousses, pics rapides), mais plus de valeurs à apprendre par prise. 4 à 64.">Points de contrôle
+          <span><input type="number" id="tr-ctrl" step="1" min="4" max="64" class="num"> par articulation</span></label>
+        <label title="Pénalité sur la courbure des points de contrôle : aplatit les battements et les pics rapides, d'autant plus qu'il y a peu de points. 0 = aucune (la courbe est déjà lisse par construction).">Lissage <input type="number" id="tr-smooth" step="0.01" min="0" class="num"></label>
         <label title="Validation croisée : les prises sont réparties en N parts (par prise) ; N modèles sont entraînés, chacun validé sur la part qu'il n'a jamais vue, donc chaque prise sert une fois de validation. Le modèle gardé est ensuite réentraîné sur TOUTES les prises, pendant le nombre moyen d'époques trouvé par les parts. Entraînement environ N + 1 fois plus long. 0 ou 1 = ancien découpage unique 75/25.">Validation croisée
           <span><input type="number" id="tr-folds" step="1" min="0" max="20" class="num"> parts (0 ou 1 = découpage unique 75/25)</span></label>
         <label title="Adds, in memory only, the left/right mirror of every training take WITHOUT an event (takes with an event are never mirrored). Mirrors that leave the factory limits or go beyond the calibrated zone more than the original are dropped. Validation uses real takes only.">Miroir <span><input type="checkbox" id="tr-mirror"> gauche/droite des prises sans événement</span></label>
       </div>
       <div class="row">
-        <button id="tr-preset-small" title="Réseau 32 (une couche), dropout 0,1, weight decay 0,01, lissage 0,05">Préréglage « peu de données »</button>
+        <button id="tr-preset-small" title="Réseau 32 (une couche), dropout 0,1, weight decay 0,01, lissage 0">Préréglage « peu de données »</button>
         <button id="tr-preset-reset">Valeurs de model.yaml</button>
       </div>
       <div id="net-stats" class="net-stats"></div>
+      <div class="net-fid-box">
+        <div class="row"><button id="net-fid-go" title="Projette chaque prise acceptée du groupe affiché sur des courbes de 8, 12, 16, 24 et 32 points et mesure ce qui est perdu (aucun entraînement, aucun mouvement)">Combien de points ? Mesurer sur les prises</button></div>
+        <div id="net-fid"></div>
+      </div>
       <div class="row">
         <button data-train="arms">Entraîner les bras</button><button data-train="head">Entraîner la tête</button><button data-train="hands">Entraîner les mains</button>
       </div>
