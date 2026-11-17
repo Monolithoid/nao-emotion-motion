@@ -312,10 +312,57 @@ async function generate() {
   $("g-report").textContent = `geste : ${(tr.t[tr.t.length - 1] - tr.t[0]).toFixed(2)} s · guardian : ${mr.ok ? "accepté" : "REFUSÉ"}\n` +
     (ad && ad.changed ? `made playable: ${ad.notes.join(" ; ")} (raw gesture ${out.generated.duration_s.toFixed(2)} s, guardian on raw: ${out.raw_report.ok ? "accepted" : "refused"})\n` : "") +
     (mr.violations.length ? JSON.stringify(mr.violations, null, 1) + "\n" : "") +
-    (cy ? `cycle complet : ${cy.report.ok ? "accepté" : "REFUSÉ"} (${cy.duration_s.toFixed(2)} s) ${cy.report.violations.length ? JSON.stringify(cy.report.violations, null, 1) : ""}` : (out.cycle_error ? "cycle : " + out.cycle_error : "")) +
+    (cy ? `cycle complet (${cy.start === "rest" ? "from rest" : "from the current posture"}, if played now) : ${cy.report.ok ? "accepté" : "REFUSÉ"} (${cy.duration_s.toFixed(2)} s) ${cy.report.violations.length ? JSON.stringify(cy.report.violations, null, 1) : ""}` : (out.cycle_error ? "cycle : " + out.cycle_error : "")) +
     (out.generated.notes.length ? "\nnotes : " + out.generated.notes.join(" ; ") : "");
-  lastPlan = out.plan_id;
-  $("g-exec").disabled = !(cy && cy.report.ok);
+  lastPlan = out.plan_id; lastGen = out;
+  updatePlay();
+  return out;
+}
+
+// ---- Generation tab: play the generated gesture on the robot ----------------------
+let lastGen = null, playing = false;
+// why Play is unavailable right now ("" when it can be pressed)
+function playBlocker() {
+  if (!lastGen) return "Generate a gesture first (key 1).";
+  if (!STATUS) return "Waiting for the robot status…";
+  if (!STATUS.connected) return "Robot not connected (Robot tab).";
+  if (!STATUS.armed) return "Motors not armed: tick « moteurs armés » at the top of the page.";
+  if (STATUS.controller === "executing" || playing) return "A motion is already being played.";
+  if (STATUS.controller === "fault") return "Controller in fault: check the robot, then reconnect.";
+  if (STATUS.recording && ["countdown", "recording"].includes(STATUS.recording.state)) return "Recording in progress.";
+  return "";
+}
+function updatePlay() {
+  const why = playBlocker(), btn = $("g-play");
+  if (!btn) return;
+  btn.disabled = !!why;
+  const p = STATUS && STATUS.play;
+  let txt = why;
+  if (p && lastGen && p.plan_id === lastGen.plan_id) {
+    const from = p.start === "rest" ? "from rest" : "from the current posture";
+    txt = (p.state === "playing" ? `▶ Playing ${from} (${(+p.duration_s).toFixed(1)} s)…` :
+      p.state === "done" ? `✓ Played ${from} (${(+p.duration_s).toFixed(1)} s).` :
+      p.state === "stopped" ? "■ Stopped: posture held." :
+      p.state === "refused" ? `✗ ${p.error}` : `✗ Error: ${p.error}`) + (why && p.state !== "playing" ? "\n" + why : "");
+  }
+  $("g-play-why").textContent = txt;
+}
+async function play() {
+  if (playBlocker()) { updatePlay(); return; }
+  playing = true; $("g-play").disabled = true;
+  try {
+    const r = await api("play", {plan_id: lastPlan, start: $("g-start").value, end: $("g-end").value}, {quiet: true});
+    STATUS.play = {state: "playing", plan_id: lastPlan, start: r.start, end: r.end, duration_s: r.duration_s};
+    const c = r.cycle, tr = c && lastGen && (lastGen.played || lastGen.generated.trajectory);
+    if (tr) {  // cursor over the gesture while the whole cycle plays
+      const g = c.segments.find((x) => x[0] === "geste");
+      if (g) setTimeout(() => animate($("g-plot"), 0, tr.t[tr.t.length - 1]), g[1] * 1000);
+    }
+  } catch (e) {
+    $("g-play-why").textContent = "✗ " + e.message;
+    playing = false; return;
+  }
+  playing = false; updatePlay();
 }
 
 // ---- liaisons -------------------------------------------------------------------
@@ -383,7 +430,9 @@ async function init() {
   // entraînement et réseau : mlp.js
   // génération
   $("g-go").onclick = generate;
-  $("g-exec").onclick = () => lastPlan && window.confirm(real() ? "Exécuter sur le ROBOT RÉEL ?" : "Exécuter sur le robot simulé ?") && api("execute", {plan_id: lastPlan, confirm: true});
+  // no confirmation (operator preference): the permanent warning #g-alert replaces it
+  $("g-play").onclick = play;
+  setInterval(updatePlay, 300);
   // robot
   $("r-connect").onclick = () => api("connect", {});
   const stored = (() => { try { return JSON.parse(localStorage.getItem("nao-robot") || "{}"); } catch (e) { return {}; } })();

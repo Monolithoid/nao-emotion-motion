@@ -392,12 +392,32 @@
     <label>Variation <input type="number" id="g-var" value="0" step="0.02" min="0" class="num"></label>
     <label><input type="checkbox" id="g-event" checked> utiliser l'événement</label>
     <button id="g-random" title="Tire émotion, intensité, angle et distance au hasard (touche 0)">Tirage aléatoire</button>
-    <button id="g-go">Générer et valider</button>
+    <button id="g-go" title="Key 1">1 Générer et valider</button>
   </div>
   <details open><summary>Événement</summary><div id="g-fov"></div></details>
   <div class="plot" id="g-plot"></div>
   <div id="g-report" class="mono"></div>
-  <div class="row"><button id="g-exec" disabled>Exécuter le cycle (repos → départ → geste → départ → repos)</button></div>
+  <fieldset class="g-play">
+    <legend>Play on the robot</legend>
+    <div class="row">
+      <label>Start <select id="g-start">
+        <option value="auto" selected>auto: rest if measured there, else current posture</option>
+        <option value="rest">rest only</option>
+        <option value="current">current posture</option>
+      </select></label>
+      <label>End <select id="g-end">
+        <option value="rest" selected>back to rest</option>
+        <option value="start">stay in the start pose</option>
+      </select></label>
+      <button id="g-play" disabled title="Plays the last generated gesture (key 2)">2 ▶ Play on the robot</button>
+    </div>
+    <div id="g-play-why" class="mono"></div>
+    <div class="alert" id="g-alert"><b>Warning:</b> <kbd>2</kbd> / <i>Play</i> sends the gesture to the robot
+      <b>without confirmation</b> as soon as motors are armed: the cycle (posture → start → gesture → start → rest)
+      is planned from the measured posture, made playable, then checked whole by the guardian (factory limits =
+      absolute ceiling); if refused, nothing is sent. Keep the area clear. <b>Stop</b> (top of the page) halts and
+      holds the posture.</div>
+  </fieldset>
 </section>
 
 <section id="tab-calib" class="tab">

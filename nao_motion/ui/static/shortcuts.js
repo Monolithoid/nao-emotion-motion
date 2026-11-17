@@ -12,6 +12,8 @@
 //   0          lance le « Tirage aléatoire » équilibré (émotion, intensité, angle, distance) des
 //              onglets Bras, Tête, Mains et Génération. Le tirage ne fait que remplir la
 //              consigne et l'événement : aucun mouvement.
+//   1 / 2      onglet Génération : « Générer et valider » / « Play on the robot » (sans
+//              confirmation, moteurs armés requis ; avertissement permanent #g-alert).
 //   V          inverse gauche/droite du champ de vision (vue robot de dos <-> vue observateur
 //              de face), mêmes onglets ; affichage seul, l'événement ne change pas.
 // Les touches sont ignorées quand le focus est dans un champ de saisie (texte, nombre,
@@ -33,6 +35,8 @@
   };
   // bouton « Tirage aléatoire » par onglet
   const RANDOM = {arms: "a-random", head: "h-random", hands: "m-random", gen: "g-random"};
+  // Generation tab: 1 = generate and validate, 2 = play the last generated gesture
+  const GEN = ["g-go", "g-play"], GEN_LABEL = ["générer et valider", "play on the robot"];
   const ARMS = ["left_arm", "right_arm"], ALL = ["head", "left_arm", "right_arm"];
   const lastHold = {arms: false, head: false, hands: false};
   const bar = document.getElementById("shortcuts");
@@ -152,6 +156,7 @@
     let h = `<span><kbd>Espace</kbd> relâcher ${t.label}</span>`;
     if (kind) h += `<span><kbd>1</kbd>–<kbd>4</kbd> étapes</span>` +
       `<span><kbd>→</kbd> étape suivante : <b>${nextStep(kind) + 1} · ${STEP_LABEL[nextStep(kind)]}</b></span>`;
+    if (tab === "gen") h += `<span><kbd>1</kbd> générer et valider</span><span><kbd>2</kbd> <b>play on the robot</b></span>`;
     if (randomButton(tab)) h += `<span><kbd>0</kbd> tirage aléatoire</span>`;
     if (RANDOM[tab] && window.FOV) h += `<span><kbd>V</kbd> vue ${window.FOV.view() === "observer" ? "observateur" : "robot"}</span>`;
     if (kind && draftReady(kind)) h += `<span><kbd>Entrée</kbd> <b>accepter la prise</b></span>` +
@@ -182,6 +187,17 @@
     if (RANDOM[tab] && window.FOV && (e.code === "KeyV" || e.key === "v" || e.key === "V")) {
       e.preventDefault();
       if (!e.repeat) flash(window.FOV.toggleView() === "observer" ? "V · vue observateur (face)" : "V · vue robot (dos)");
+      return;
+    }
+    if (tab === "gen") {
+      const g = /^(?:Digit|Numpad)([12])$/.exec(e.code) || /^([12])$/.exec(e.key);
+      if (!g) return;
+      e.preventDefault();
+      if (e.repeat) return;
+      const btn = document.getElementById(GEN[+g[1] - 1]);
+      if (!btn || btn.disabled) { flash(`${g[1]} : indisponible` + (g[1] === "2" ? " (voir sous le bouton Play)" : "")); return; }
+      flash(`${g[1]} · ${GEN_LABEL[+g[1] - 1]}`);
+      btn.click();
       return;
     }
     if (!kind) return;
