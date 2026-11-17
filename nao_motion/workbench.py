@@ -690,6 +690,7 @@ class Workbench:
         def work():
             try:
                 info["result"] = self.ctrl.execute(plan, guardian=guardian)
+                info["warnings"] = list(self.ctrl.tracking_warnings)
                 info["state"] = "stopped" if info["result"] == "stopped" else "done"
             except Exception as e:
                 self.ctrl.last_error = str(e)
