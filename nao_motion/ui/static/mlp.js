@@ -13,6 +13,8 @@
   const fr = (x, d = 3) => (x === undefined || x === null || !isFinite(x)) ? "—" : Number(x).toFixed(d).replace(".", ",");
   const pct = (x) => (x >= 0 ? "−" : "+") + Math.abs(Math.round(x * 100)) + " %";
   let netGroup = "arms", runs = [], selected = null, filter = "", newestFirst = false, hist = {}, lastSig = "", progress = null;
+  const runSel = new Set(), runTrashSel = new Set();  // ticked trainings / ticked trashed trainings
+  let runTrash = [];
 
   // ---- settings -----------------------------------------------------------------------
   const M = () => (CFG.model || {});
@@ -203,19 +205,99 @@
     let list = runs.map((r, i) => ({r, i})).filter((x) => !filter || x.r.component === filter);
     if (newestFirst) list = list.slice().reverse();
     if (!list.length) { el.innerHTML = `<p class="hint">Aucun entraînement${filter ? " pour ce groupe" : ""}.</p>`; return; }
-    el.innerHTML = `<table class="tr-table"><thead><tr><th>#</th><th>Date</th><th>Groupe</th><th>Réseau</th><th class="num">Valid.</th><th class="num">Réf.</th><th class="num">vs réf.</th><th class="num">Guardian</th></tr></thead><tbody>` +
+    el.innerHTML = `<table class="tr-table"><thead><tr><th><input type="checkbox" id="tr-all" title="Tick every training shown"></th><th>#</th><th>Date</th><th>Groupe</th><th>Réseau</th><th class="num">Valid.</th><th class="num">Réf.</th><th class="num">vs réf.</th><th class="num">Guardian</th></tr></thead><tbody>` +
       list.map(({r, i}) => {
         const m = r.metrics || {}, s = m.settings || {}, v = m.val_rmse_rad, b = m.val_baseline_label_mean_rmse_rad;
         const gain = v !== undefined && b ? 1 - v / b : null, a = assess(m);
-        return `<tr class="clickable${r.run === selected ? " on" : ""}" data-run="${esc(r.run)}" title="${esc(r.run)}">` +
-          `<td>${i + 1}</td><td>${fmtStamp(r.stamp)}</td><td><span class="dot" style="background:${GCOL[r.component] || "#888"}"></span>${GROUPS[r.component] || esc(r.component)}</td>` +
+        return `<tr class="clickable${r.run === selected ? " on" : ""}${runSel.has(r.run) ? " ticked" : ""}" data-run="${esc(r.run)}" title="${esc(r.run)}">` +
+          `<td class="sel"><input type="checkbox" data-rtick="${esc(r.run)}"${runSel.has(r.run) ? " checked" : ""}></td>` +
+          `<td>${i + 1}</td><td>${fmtStamp(r.stamp)}</td><td><span class="dot" style="background:${GCOL[r.component] || "#888"}"></span>${GROUPS[r.component] || esc(r.component)}${r.active ? ` <span class="tag active" title="Active model of this group: used by generation and published by export-dataset">active</span>` : ""}</td>` +
           `<td>${s.hidden ? s.hidden.join("-") + (s.dropout ? ` · d${fr(s.dropout, 2)}` : "") + (s.mirror ? " · ⇆" : "") + (s.folds > 1 ? ` · ×${s.folds}` : "") : "—"}</td>` +
           `<td class="num">${fr(v)}</td><td class="num">${fr(b)}</td>` +
           `<td class="num"><span class="verdict ${gain === null ? "" : gain >= 0.1 ? "v-good" : gain >= 0 ? "v-warn" : "v-bad"}">${gain === null ? "—" : pct(gain)}</span></td>` +
           `<td class="num">${m.guardian ? m.guardian.accepted + "/" + m.guardian.total : "—"} <span class="vdot ${worst(a)}" title="${esc(a.map((x) => x.text).join("\n"))}"></span></td></tr>`;
       }).join("") + "</tbody></table>";
+    runSelInfo();
     const on = el.querySelector("tr.on");
     if (on && el.dataset.scrolled !== selected) { on.scrollIntoView({block: "nearest"}); el.dataset.scrolled = selected; }
+  }
+
+  // ---- selection and trash of trainings ------------------------------------------------
+  const visibleRuns = () => runs.filter((r) => !filter || r.component === filter);
+  function runSelInfo() {
+    const n = runSel.size, act = runs.filter((r) => runSel.has(r.run) && r.active);
+    $("tr-trash").disabled = !n;
+    $("tr-trash").textContent = n ? `Move ${n} training${n > 1 ? "s" : ""} to trash` : "Move to trash";
+    $("tr-sel-info").innerHTML = act.length
+      ? `<span class="v-warn">includes the active model of ${act.map((r) => GROUPS[r.component]).join(", ")}: the previous training of that group becomes the active model</span>`
+      : (n ? `${n} ticked` : "");
+    const all = $("tr-all"), vis = visibleRuns();
+    if (all) { all.checked = n > 0 && vis.every((r) => runSel.has(r.run)); all.indeterminate = n > 0 && !all.checked; }
+  }
+  async function loadRunTrash() {
+    const d = await api("trash", undefined, {quiet: true}).catch(() => null);
+    if (!d) return;
+    runTrash = d.runs;
+    for (const r of [...runTrashSel]) if (!runTrash.some((x) => x.run === r)) runTrashSel.delete(r);
+    $("tr-trash-sum").innerHTML = `Trash: <b>${runTrash.length}</b> training${runTrash.length > 1 ? "s" : ""}` +
+      (runTrash.length ? ` (${fmtBytes(d.runs_bytes)}, in <code>runs/trash/</code>, restorable)` : " (empty)");
+    $("tr-empty").disabled = !runTrash.length;
+    $("tr-trash-list").innerHTML = runTrash.length ? `<table class="tr-table"><thead><tr><th><input type="checkbox" id="trt-all"></th><th>Date</th><th>Groupe</th><th>Size</th><th>Trashed</th></tr></thead><tbody>` +
+      runTrash.map((r) => `<tr><td class="sel"><input type="checkbox" data-rttick="${esc(r.run)}"${runTrashSel.has(r.run) ? " checked" : ""}></td><td>${fmtStamp(r.stamp)}</td>` +
+        `<td><span class="dot" style="background:${GCOL[r.component] || "#888"}"></span>${GROUPS[r.component] || esc(r.component)}${r.was_active ? ` <span class="tag" title="Was the active model when trashed">was active</span>` : ""}</td>` +
+        `<td>${fmtBytes(r.bytes)}</td><td>${esc((r.trashed_at || "").replace("T", " "))}</td></tr>`).join("") + "</tbody></table>" : "";
+    runTrashInfo();
+  }
+  function runTrashInfo() {
+    const n = runTrashSel.size;
+    $("tr-restore").disabled = $("tr-purge").disabled = !n;
+    $("tr-restore").textContent = n ? `Restore ${n}` : "Restore selected";
+    $("tr-purge").textContent = n ? `Delete ${n} for good` : "Delete selected for good";
+    const all = $("trt-all");
+    if (all) { all.checked = n > 0 && n === runTrash.length; all.indeterminate = n > 0 && !all.checked; }
+  }
+  const activeMsg = (ch) => Object.entries(ch || {}).map(([g, r]) => `${GROUPS[g]}: ${r ? "active model is now the training of " + fmtStamp(r.split("-").slice(1).join("-")) : "no model left"}`).join(" · ");
+  function initTrash() {
+    $("tr-runs").addEventListener("change", (e) => {
+      if (e.target.id === "tr-all") visibleRuns().forEach((r) => e.target.checked ? runSel.add(r.run) : runSel.delete(r.run));
+      else if (e.target.dataset.rtick) e.target.checked ? runSel.add(e.target.dataset.rtick) : runSel.delete(e.target.dataset.rtick);
+      renderList();
+    });
+    $("tr-sel-old").onclick = () => { visibleRuns().forEach((r) => r.active ? runSel.delete(r.run) : runSel.add(r.run)); renderList(); };
+    $("tr-sel-none").onclick = () => { runSel.clear(); renderList(); };
+    $("tr-trash").onclick = async () => {
+      const list = [...runSel];
+      if (!list.length) return;
+      const r = await api("trash/runs", {runs: list});
+      runSel.clear(); lastSig = "";
+      $("tr-trash-box").open = true;
+      await refresh(); loadRunTrash();
+      const msg = activeMsg(r.active_changed);
+      $("tr-sel-info").innerHTML = `${r.trashed.length} training${r.trashed.length > 1 ? "s" : ""} moved to the trash (${fmtBytes(r.bytes)})` + (msg ? ` · <span class="v-warn">${esc(msg)}</span>` : "");
+    };
+    $("tr-trash-list").addEventListener("change", (e) => {
+      if (e.target.id === "trt-all") runTrash.forEach((r) => e.target.checked ? runTrashSel.add(r.run) : runTrashSel.delete(r.run));
+      else if (e.target.dataset.rttick) e.target.checked ? runTrashSel.add(e.target.dataset.rttick) : runTrashSel.delete(e.target.dataset.rttick);
+      document.querySelectorAll("#tr-trash-list input[data-rttick]").forEach((i) => i.checked = runTrashSel.has(i.dataset.rttick));
+      runTrashInfo();
+    });
+    $("tr-restore").onclick = async () => {
+      const r = await api("trash/restore", {runs: [...runTrashSel]});
+      runTrashSel.clear(); lastSig = "";
+      await refresh(); loadRunTrash();
+      const msg = activeMsg(r.active_changed);
+      if (msg) $("tr-sel-info").innerHTML = `<span class="v-warn">${esc(msg)}</span>`;
+    };
+    const purge = async (items) => {
+      const n = items ? items.length : runTrash.length;
+      if (!n || !window.confirm(`Delete ${n} training${n > 1 ? "s" : ""} FOR GOOD? This cannot be undone.`)) return;
+      await api("trash/empty", {what: "runs", items, confirm: true});
+      runTrashSel.clear(); loadRunTrash();
+    };
+    $("tr-purge").onclick = () => purge([...runTrashSel]);
+    $("tr-empty").onclick = () => purge(undefined);
+    document.querySelector('nav button[data-tab="train"]').addEventListener("click", loadRunTrash);
+    loadRunTrash();
   }
 
   // ---- charts ----------------------------------------------------------------------------
@@ -444,6 +526,7 @@
     if (sig === lastSig) return;
     const fresh = lastSig !== "" && d.runs.length > runs.length;
     lastSig = sig; runs = d.runs;
+    for (const r of [...runSel]) if (!runs.some((x) => x.run === r)) runSel.delete(r);
     // follow the newest run (on first load and when a training finishes)
     if (!selected || fresh || !runs.some((r) => r.run === selected)) {
       const vis = runs.filter((r) => !filter || r.component === filter);
@@ -486,7 +569,8 @@
       $("tr-order").textContent = newestFirst ? "↑ plus récent en haut" : "↓ plus ancien en haut";
       renderList();
     };
-    $("tr-runs").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-run]"); if (tr) select(tr.dataset.run); });
+    $("tr-runs").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-run]"); if (tr && !e.target.closest("td.sel")) select(tr.dataset.run); });
+    initTrash();
     $("tr-view").addEventListener("click", (e) => { const p = e.target.closest("circle[data-run]"); if (p) select(p.dataset.run); });
     document.querySelector('nav button[data-tab="net"]').addEventListener("click", () =>
       api("progress", undefined, {quiet: true}).then((d) => { progress = d; drawNet(); }).catch(() => {}));

@@ -53,8 +53,11 @@ class Api:
         return self.wb.status()
 
     def get_takes(self, q):
+        """Takes, each with `in_export`: true when `export-dataset` (default filters) would publish it."""
+        from ..data.dataset import select_takes
         kind = q.get("kind")
-        return [m.to_dict() for m in self.wb.store.list(kind=kind)]
+        exported = {m.take_id for m in select_takes(self.wb.store.root)}
+        return [{**m.to_dict(), "in_export": m.take_id in exported} for m in self.wb.store.list(kind=kind)]
 
     def get_take(self, take_id):
         st = self.wb.store
@@ -107,6 +110,54 @@ class Api:
         """Loss curve of one run (for the training results chart)."""
         from urllib.parse import unquote
         return {"run": unquote(q.get("run", "")), **self.wb.run_history(unquote(q.get("run", "")), full=True)}
+
+    # trash of takes and training runs (moving is reversible, emptying is not) ------------------
+    def get_trash(self, q):
+        from ..data import trash
+        takes = trash.list_trashed_takes(self.wb.store.root)
+        runs = trash.list_trashed_runs(self.wb.runs_dir)
+        return {"takes": takes, "runs": runs, "takes_bytes": sum(t["bytes"] for t in takes),
+                "runs_bytes": sum(r["bytes"] for r in runs)}
+
+    def post_trash_takes(self, d):
+        """{"ids": [...]}: move takes to data/trash/takes/ (out of training, progress and export)."""
+        from ..data import trash
+        return trash.trash_takes(self.wb.store.root, d.get("ids") or [])
+
+    def post_trash_runs(self, d):
+        """{"runs": [...]}: move trainings to runs/trash/. Trashing an active model makes the
+        newest remaining training of its group the active one (`active_changed`)."""
+        from ..data import trash
+        if any(j["state"] == "running" for j in self.wb.jobs.values()):
+            raise ValueError("A training is running: wait for it to end")
+        out = trash.trash_runs(self.wb.runs_dir, d.get("runs") or [])
+        if out["active_changed"]:
+            self.wb.engine = None  # reloaded at the next generation
+        return out
+
+    def post_trash_restore(self, d):
+        """{"takes": [...], "runs": [...]}: put back what was trashed."""
+        from ..data import trash
+        out = {}
+        if d.get("takes"):
+            out.update(trash.restore_takes(self.wb.store.root, d["takes"]))
+        if d.get("runs"):
+            r = trash.restore_runs(self.wb.runs_dir, d["runs"])
+            out["restored_runs"], out["active_changed"] = r["restored"], r["active_changed"]
+            if r["active_changed"]:
+                self.wb.engine = None
+        return out
+
+    def post_trash_empty(self, d):
+        """{"what": "takes" | "runs", "items": [...] (optional), "confirm": true}: deletes FOR GOOD."""
+        from ..data import trash
+        if not d.get("confirm"):
+            raise ValueError("Explicit confirmation required: emptying the trash cannot be undone")
+        what = d.get("what")
+        if what not in ("takes", "runs"):
+            raise ValueError(f"Unknown trash: {what}")
+        return trash.empty(self.wb.store.root if what == "takes" else None,
+                           self.wb.runs_dir if what == "runs" else None, d.get("items"))
 
     def get_event(self, q):
         return self.wb.current_event().to_dict()
