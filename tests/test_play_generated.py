@@ -252,3 +252,89 @@ def test_refusal_before_sending_does_not_leave_a_fault(gwb, cfg):
         gwb.ctrl.execute(plan, guardian=False)
     assert gwb.ctrl.state == State.IDLE and gwb.ctrl.armed
     assert gwb.adapter.command_log == []
+
+
+def _delayed_reads(wb, delay_s, offset=None):
+    """The simulated robot answers with the command sent `delay_s` earlier (bridge + setAngles
+    latency), optionally plus a fixed offset on some joints (a blocked / pushed joint)."""
+    ad = wb.adapter
+    real = ad.read_angles
+
+    def read(joints):
+        now, past = ad.now(), None
+        for t, js, q in ad.command_log:
+            if t <= now - delay_s and list(js) == list(joints):
+                past = q
+        out = np.array(past if past is not None else real(joints), float)
+        for j, d in (offset or {}).items():
+            if j in joints:
+                out[list(joints).index(j)] += d
+        return out
+    ad.read_angles = read
+
+
+def test_late_joint_does_not_stop_the_play_but_a_blocked_one_does(gwb, cfg):
+    """LWristYaw tripped the stop at 0.36 > 0.35 on the real robot: the measurement was compared
+    with the command a single step earlier, so mere latency on a fast joint looked like a fault."""
+    from nao_motion.control.controller import State
+    fast = gesture(cfg, amp=0.4, dur=0.6)  # ~2.1 rad/s peak: 0.25 s late = ~0.4 rad behind
+    gwb.ctrl.arm(confirm=True)
+    plan = gwb.ctrl.plan_cycle(fast, from_pose="current")
+    gwb.ctrl.tracking_error_per_joint = {}  # same threshold everywhere for this check
+    _delayed_reads(gwb, 0.25)
+    assert gwb.ctrl.execute(plan, guardian=False) == "done"
+    assert gwb.ctrl.state == State.IDLE
+    # a joint held 0.6 rad away from its command is still stopped
+    _delayed_reads(gwb, 0.0, {"LShoulderPitch": 0.6})
+    with pytest.raises(ControllerError, match="pendant"):  # persistent gap: stopped
+        gwb.ctrl._stream(gesture(cfg))
+    _delayed_reads(gwb, 0.0, {"LShoulderPitch": 1.0})
+    with pytest.raises(ControllerError, match="immédiat"):  # very large gap: stopped at once
+        gwb.ctrl._stream(gesture(cfg))
+
+
+def test_short_tracking_spike_only_warns(gwb, cfg):
+    """A brief gap above the threshold (NAO hiccup) warns, the play goes on."""
+    ad = gwb.adapter
+    _put_in_start_pose(gwb, cfg)
+    ad.set_roles(driven=cfg.all_joints)
+    real = ad.read_angles
+    t0 = ad.now()
+
+    def read(joints):
+        q = np.array(real(joints), float)
+        if 0.5 < ad.now() - t0 < 0.7 and "LShoulderPitch" in joints:
+            q[list(joints).index("LShoulderPitch")] += 0.5
+        return q
+    ad.read_angles = read
+    assert gwb.ctrl._stream(gesture(cfg)) == "done"
+    assert any("LShoulderPitch" in w for w in gwb.ctrl.tracking_warnings)
+
+
+def test_tracking_thresholds_per_joint_and_guardian_off(gwb, cfg):
+    c = gwb.ctrl
+    tol = dict(zip(cfg.all_joints, c.tracking_tolerance(cfg.all_joints)))
+    assert tol["LWristYaw"] == 0.5 and tol["LShoulderPitch"] == c.tracking_error
+    off = dict(zip(cfg.all_joints, c.tracking_tolerance(cfg.all_joints, c.tracking_factor_guardian_off)))
+    assert off["LShoulderPitch"] == pytest.approx(c.tracking_error * c.tracking_factor_guardian_off)
+
+
+def test_tracking_fault_cuts_the_motors(gwb, cfg):
+    """A persistent gap (blocked / pushed limb) stops the play and relaxes the played joints."""
+    from nao_motion.control.controller import State, TrackingFault
+    _put_in_start_pose(gwb, cfg)
+    gwb.ctrl.arm(confirm=True)
+    plan = gwb.ctrl.plan_cycle(gesture(cfg), from_pose="current")
+    ad, real = gwb.adapter, gwb.adapter.read_angles
+
+    def read(joints):  # the limb gets blocked once the play has started
+        q = np.array(real(joints), float)
+        if ad.command_log and "LShoulderPitch" in joints:
+            q[list(joints).index("LShoulderPitch")] += 0.6
+        return q
+    ad.read_angles = read
+    with pytest.raises(TrackingFault):
+        gwb.ctrl.execute(plan)
+    assert gwb.ctrl.state == State.FAULT and not gwb.ctrl.armed
+    assert all(gwb.adapter.roles[j] == "guided" for j in plan.traj.joints)
+    assert "Moteurs coupés" in gwb.ctrl.last_error

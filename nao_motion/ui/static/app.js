@@ -355,6 +355,7 @@ function updatePlay() {
       p.state === "done" ? `✓ Played ${from} (${(+p.duration_s).toFixed(1)} s).` :
       p.state === "stopped" ? "■ Stopped: posture held." :
       p.state === "refused" ? `✗ ${p.error}` : `✗ Error: ${p.error}`) + (why && p.state !== "playing" ? "\n" + why : "");
+    if (p.warnings && p.warnings.length) txt += "\n⚠ tracking (tolerated): " + p.warnings.join(" ; ");
     if (p.guardian === false) txt += "\nGUARDIAN OFF: raw gesture" + (p.guardian_would ? ` (the guardian would have ${p.guardian_would.ok ? "accepted" : "REFUSED"} it)` : "") +
       (p.notes && p.notes.length ? " · " + p.notes.join(" ; ") : "");
   }

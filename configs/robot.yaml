@@ -22,9 +22,24 @@ execution:
   # ce qui permet de vérifier arrêt/connexion à chaque pas. Le pont expose aussi
   # angleInterpolation, non utilisé par le contrôleur dans ce premier socle.
   stream_rate_hz: 25
-  tracking_error_rad: 0.35  # écart consigne/mesure au-delà duquel on arrête et maintient
+  # Tracking (measured vs command). NAO tracking is noisy: above tracking_error_rad the play
+  # only WARNS; it stops (and holds) when the gap stays above it for tracking_persist_s, or goes
+  # above tracking_stop_rad at any moment.
+  tracking_error_rad: 0.35
+  tracking_persist_s: 0.5
+  tracking_stop_rad: 0.8
+  # On such a stop: relax = cut the motors of the played joints (arms may drop), hold = keep
+  # the measured posture stiff.
+  tracking_stop_action: relax
   max_fraction_speed: 0.3   # utilisé par setAngles
   hand_tracking_error: 0.5  # mains (fraction d'ouverture) : le moteur de la main suit plus lentement
+  # The measured angle is compared with the command over the last tracking_lag_s (latency of
+  # the bridge and of setAngles), so a joint that is only late does not stop the play.
+  tracking_lag_s: 0.3
+  # Per-joint thresholds (rad), override tracking_error_rad. Wrists are light and fast.
+  tracking_error_per_joint: {LWristYaw: 0.5, RWristYaw: 0.5}
+  # Guardian off (Generation tab test): thresholds multiplied by this factor (raw, faster gestures).
+  tracking_error_factor_guardian_off: 1.5
   # Control points of a generated gesture that fall outside the guardian zone (calibrated
   # limits minus margin, coupled constraints within one group) are moved to the nearest point
   # inside before decoding (nao_motion/guardian/project.py). A B-spline stays in the convex hull

@@ -42,6 +42,10 @@ class ControllerError(RuntimeError):
     pass
 
 
+class TrackingFault(ControllerError):
+    """The measured posture stayed far from the command (blocked or pushed joint)."""
+
+
 class NothingSent(ControllerError):
     """Refusal before the first command: nothing was sent, so the controller stays IDLE
     (a fault would block every later play until it is acknowledged)."""
@@ -77,6 +81,22 @@ class Controller:
         self.tracking_error = float(ex.get("tracking_error_rad", 0.35))
         # mains : le moteur de la main suit plus lentement qu'une articulation du bras
         self.hand_tracking_error = float(ex.get("hand_tracking_error", 0.5))
+        # per-joint thresholds (e.g. light, fast wrists) and the lag the robot is allowed: the
+        # measured angle is compared with the command over the last tracking_lag_s, not with a
+        # single past instant (bridge + setAngles latency made fast gestures trip the stop)
+        self.tracking_error_per_joint = {str(k): float(v) for k, v in
+                                         (ex.get("tracking_error_per_joint") or {}).items()}
+        self.tracking_lag = float(ex.get("tracking_lag_s", 0.3))
+        self.tracking_factor_guardian_off = float(ex.get("tracking_error_factor_guardian_off", 1.5))
+        # NAO tracking is noisy: above the threshold the play only WARNS; it stops when the gap
+        # stays above it for tracking_persist_s, or exceeds tracking_stop_rad at any time
+        self.tracking_persist = float(ex.get("tracking_persist_s", 0.5))
+        self.tracking_stop = float(ex.get("tracking_stop_rad", 0.8))
+        self.tracking_warnings: List[str] = []
+        # what a tracking fault does: "relax" cuts the motors of the played joints (operator's
+        # choice 2026-11-17: safest when a limb is blocked or pushed; arms may drop), "hold"
+        # keeps the measured posture stiff
+        self.tracking_stop_action = str(ex.get("tracking_stop_action", "relax"))
         self.events: List[str] = []
 
     def _log(self, msg):
@@ -331,11 +351,25 @@ class Controller:
                 raise NothingSent(f"Le robot a bougé depuis la planification ({list(far)}) : rejouer. "
                                   "Rien n'a été envoyé.")
             self.adapter.set_roles(driven=joints)
-            result = self._stream(plan.traj, on_tick)
+            result = self._stream(plan.traj, on_tick, factor=1.0 if guardian else self.tracking_factor_guardian_off)
         except ConnectionLost as e:
             self.state = State.FAULT
             self.armed = False
             self.last_error = f"Connexion perdue : {e}. Le pont arrête et maintient côté robot."
+            self._log(self.last_error)
+            raise
+        except TrackingFault as e:
+            self._safe_hold()
+            cut = ""
+            if self.tracking_stop_action == "relax":
+                try:
+                    self.adapter.relax(list(joints))
+                    cut = " Moteurs coupés (raideur nulle) sur les articulations jouées."
+                except AdapterError as e2:
+                    cut = f" Coupure des moteurs impossible ({e2}) : posture maintenue."
+            self.last_error = f"{e}.{cut}"
+            self.state = State.FAULT
+            self.armed = False
             self._log(self.last_error)
             raise
         except (GuardianRejection, NothingSent) as e:
@@ -361,14 +395,22 @@ class Controller:
         except AdapterError:
             pass
 
-    def _stream(self, traj: Trajectory, on_tick=None) -> str:
+    def tracking_tolerance(self, joints, factor: float = 1.0) -> np.ndarray:
+        return factor * np.array([self.tracking_error_per_joint.get(
+            j, self.hand_tracking_error if self.cfg.is_hand(j) else self.tracking_error) for j in joints])
+
+    def _stream(self, traj: Trajectory, on_tick=None, factor: float = 1.0) -> str:
         a = self.adapter
         dt = 1.0 / self.rate
         t0 = a.now()
         end = traj.t[-1]
         check_every = max(1, int(self.rate / 10))
-        tol = np.array([self.hand_tracking_error if self.cfg.is_hand(j) else self.tracking_error
-                        for j in traj.joints])
+        tol = self.tracking_tolerance(traj.joints, factor)
+        hard = np.maximum(tol, self.tracking_stop * factor)
+        lags = np.linspace(0.0, max(self.tracking_lag, 2 * dt), 13)
+        since = np.full(len(traj.joints), np.nan)  # time each joint went above its threshold
+        worst = np.zeros(len(traj.joints))
+        self.tracking_warnings = []
         k = 0
         while True:
             if self._stop.is_set():
@@ -383,14 +425,30 @@ class Controller:
                 on_tick(t, q)
             if k % check_every == 0:
                 meas = a.read_angles(traj.joints)
-                # comparaison avec la consigne un pas plus tôt (latence de suivi)
-                ref = traj.sample(np.array([max(0.0, tc - 2 * dt)]))[0]
-                dev = np.abs(meas - ref)
-                if np.any(dev > tol):
-                    i = int(np.argmax(dev - tol))
-                    raise ControllerError(f"Écart de suivi {dev[i]:.2f} sur {traj.joints[i]} > {tol[i]}")
+                # distance to the commanded path over the last tracking_lag_s (latency of the
+                # bridge and of setAngles): a joint that is merely late is not stopped, a blocked
+                # or pushed one is
+                refs = traj.sample(np.maximum(0.0, tc - lags))
+                dev = np.abs(refs - meas[None, :]).min(axis=0)
+                over = dev > tol
+                since = np.where(over, np.where(np.isnan(since), t, since), np.nan)
+                for i in np.nonzero(over & (dev > worst))[0]:
+                    worst[i] = dev[i]
+                held = np.nan_to_num(t - since, nan=0.0)
+                bad = np.nonzero((dev > hard) | (over & (held >= self.tracking_persist)))[0]
+                if bad.size:
+                    i = int(bad[np.argmax(dev[bad] - tol[bad])])
+                    why = (f"> {hard[i]:.2f} (arrêt immédiat)" if dev[i] > hard[i]
+                           else f"> {tol[i]:.2f} pendant {held[i]:.1f} s")
+                    raise TrackingFault(
+                        f"Écart de suivi {dev[i]:.2f} sur {traj.joints[i]} {why} (robot.yaml execution : "
+                        f"tracking_error_rad, tracking_error_per_joint, tracking_persist_s, tracking_stop_rad)")
             k += 1
             if t >= end:
+                self.tracking_warnings = [f"{j} : écart jusqu'à {w:.2f} rad (seuil {tol[i]:.2f}, toléré)"
+                                          for i, (j, w) in enumerate(zip(traj.joints, worst)) if w > 0]
+                for w in self.tracking_warnings:
+                    self._log("avertissement suivi : " + w)
                 return "done"
             a.sleep(max(0.0, t0 + k * dt - a.now()))
 
