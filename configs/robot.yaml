@@ -25,6 +25,12 @@ execution:
   tracking_error_rad: 0.35  # écart consigne/mesure au-delà duquel on arrête et maintient
   max_fraction_speed: 0.3   # utilisé par setAngles
   hand_tracking_error: 0.5  # mains (fraction d'ouverture) : le moteur de la main suit plus lentement
+  # Control points of a generated gesture that fall outside the guardian zone (calibrated
+  # limits minus margin, coupled constraints within one group) are moved to the nearest point
+  # inside before decoding (nao_motion/guardian/project.py). A B-spline stays in the convex hull
+  # of its control points, so the curve stays in the zone; speed is still handled below.
+  # Also applied with the guardian off. Checkbox in the Generation tab.
+  project_control_points: true
   # Generated gestures are made playable before the guardian checks them: slowed down just
   # enough for the velocity/acceleration limits and brought back inside the limits
   # (nao_motion/guardian/playable.py). The guardian still validates the result and refuses

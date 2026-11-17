@@ -570,7 +570,8 @@ class Workbench:
             self.engine = MotionEngine.from_paths(self.cfg, a, h, m)
         return self.engine
 
-    def generate(self, emotion, intensity, use_event=True, variation=0.0, seed=None, plan_cycle=True) -> dict:
+    def generate(self, emotion, intensity, use_event=True, variation=0.0, seed=None, plan_cycle=True,
+                 project_zone=None) -> dict:
         """Génère et valide ; ne bouge rien. Retourne un plan identifié pour exécution explicite."""
         eng = self.get_engine()
         ev = self.current_event() if use_event else EventContext.none()
@@ -581,7 +582,10 @@ class Workbench:
                 hands_now = self.ctrl.measured(self.cfg.hand_joints) if self.cfg.hand_joints else None
         except Exception:
             head_now = hands_now = None
-        gen = eng.generate(emotion, intensity, ev, head_now, variation, seed, hands_current=hands_now)
+        if project_zone is None:
+            project_zone = bool(self.cfg.robot.get("execution", {}).get("project_control_points", True))
+        gen = eng.generate(emotion, intensity, ev, head_now, variation, seed, hands_current=hands_now,
+                           project_zone=project_zone)
         played, adapt = self.playable(gen.combined)
         out = {"generated": gen.to_dict(), "motion_report": self.guardian.validate(played).to_dict()}
         if adapt is not None:

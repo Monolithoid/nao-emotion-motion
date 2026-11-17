@@ -301,7 +301,7 @@ const refreshTrain = () => window.MLP && window.MLP.refresh();
 // ---- génération -----------------------------------------------------------------
 async function generate() {
   const e1 = $("g-emotion").value, e2 = $("g-emotion2").value, w = parseFloat($("g-mix").value);
-  const body = {emotion: e1, intensity: parseFloat($("g-intensity").value), variation: parseFloat($("g-var").value), use_event: $("g-event").checked};
+  const body = {emotion: e1, intensity: parseFloat($("g-intensity").value), variation: parseFloat($("g-var").value), use_event: $("g-event").checked, project_zone: $("g-project").checked};
   if (e2 && e2 !== e1) body.mix = {[e1]: 1 - w, [e2]: w};
   const out = await api("generate", body);
   const tr = out.played || out.generated.trajectory;  // the gesture that would be played
@@ -436,6 +436,7 @@ async function init() {
   $("g-go").onclick = generate;
   // no confirmation (operator preference): the permanent warning #g-alert replaces it
   $("g-play").onclick = play;
+  $("g-project").checked = CFG.project_control_points !== false;  // default from robot.yaml
   // guardian off for a test: never remembered, red frame + permanent warning while ticked
   $("g-noguard").checked = false;
   $("g-noguard").onchange = (e) => {

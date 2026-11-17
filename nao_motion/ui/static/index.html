@@ -397,6 +397,7 @@
     <label>Intensité <input type="range" id="g-intensity" min="0" max="1" step="0.05" value="0.7"> <span id="g-int-val"></span></label>
     <label>Variation <input type="number" id="g-var" value="0" step="0.02" min="0" class="num"></label>
     <label><input type="checkbox" id="g-event" checked> utiliser l'événement</label>
+    <label title="Control points of the MLP output that fall outside the guardian zone are moved to the nearest point inside (shortest translation). The curve then stays in the zone; speed is still adapted. Also applies with the guardian off."><input type="checkbox" id="g-project" checked> project control points into the zone</label>
     <button id="g-random" title="Tire émotion, intensité, angle et distance au hasard (touche 0)">Tirage aléatoire</button>
     <button id="g-go" title="Key 1">1 Générer et valider</button>
   </div>
