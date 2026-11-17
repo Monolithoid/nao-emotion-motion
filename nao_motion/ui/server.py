@@ -75,6 +75,13 @@ class Api:
                              "guardian": self.wb.guardian.validate(rp, context_pose=ctx).to_dict()}
         return out
 
+    def get_take_view(self, take_id, q):
+        """Takes tab viewer: curves per joint, B-spline fit at `n` control points, and with
+        `model=1` what the active model generates for the same inputs (read only)."""
+        from ..data.take_view import take_view
+        n = int(q["n"]) if q.get("n") else None
+        return take_view(self.wb, take_id, n, with_model=q.get("model") in ("1", "true"))
+
     def get_record_draft(self, q):
         rec = self.wb.recording
         if rec is None or rec.result is None:
@@ -399,8 +406,11 @@ def make_handler(api: Api):
                 if method == "POST":
                     n = int(self.headers.get("Content-Length", 0))
                     d = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                v = re.fullmatch(r"takes/([\w\-]+)/view", name)
                 m = re.fullmatch(r"takes/([\w\-]+)", name)
-                if m:
+                if v and method == "GET":
+                    res = api.get_take_view(v.group(1), q)
+                elif m:
                     res = api.get_take(m.group(1)) if method == "GET" else api.post_take(m.group(1), d)
                 else:
                     fn = getattr(api, f"{method.lower()}_{name.replace('/', '_')}", None)
