@@ -42,6 +42,10 @@ class ControllerError(RuntimeError):
     pass
 
 
+class TrackingFault(ControllerError):
+    """The measured posture stayed far from the command (blocked or pushed joint)."""
+
+
 class NothingSent(ControllerError):
     """Refusal before the first command: nothing was sent, so the controller stays IDLE
     (a fault would block every later play until it is acknowledged)."""
@@ -89,6 +93,10 @@ class Controller:
         self.tracking_persist = float(ex.get("tracking_persist_s", 0.5))
         self.tracking_stop = float(ex.get("tracking_stop_rad", 0.8))
         self.tracking_warnings: List[str] = []
+        # what a tracking fault does: "relax" cuts the motors of the played joints (operator's
+        # choice 2026-11-17: safest when a limb is blocked or pushed; arms may drop), "hold"
+        # keeps the measured posture stiff
+        self.tracking_stop_action = str(ex.get("tracking_stop_action", "relax"))
         self.events: List[str] = []
 
     def _log(self, msg):
@@ -350,6 +358,20 @@ class Controller:
             self.last_error = f"Connexion perdue : {e}. Le pont arrête et maintient côté robot."
             self._log(self.last_error)
             raise
+        except TrackingFault as e:
+            self._safe_hold()
+            cut = ""
+            if self.tracking_stop_action == "relax":
+                try:
+                    self.adapter.relax(list(joints))
+                    cut = " Moteurs coupés (raideur nulle) sur les articulations jouées."
+                except AdapterError as e2:
+                    cut = f" Coupure des moteurs impossible ({e2}) : posture maintenue."
+            self.last_error = f"{e}.{cut}"
+            self.state = State.FAULT
+            self.armed = False
+            self._log(self.last_error)
+            raise
         except (GuardianRejection, NothingSent) as e:
             self.state = State.IDLE
             self.last_error = str(e)
@@ -418,7 +440,7 @@ class Controller:
                     i = int(bad[np.argmax(dev[bad] - tol[bad])])
                     why = (f"> {hard[i]:.2f} (arrêt immédiat)" if dev[i] > hard[i]
                            else f"> {tol[i]:.2f} pendant {held[i]:.1f} s")
-                    raise ControllerError(
+                    raise TrackingFault(
                         f"Écart de suivi {dev[i]:.2f} sur {traj.joints[i]} {why} (robot.yaml execution : "
                         f"tracking_error_rad, tracking_error_per_joint, tracking_persist_s, tracking_stop_rad)")
             k += 1

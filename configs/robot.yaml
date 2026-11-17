@@ -28,6 +28,9 @@ execution:
   tracking_error_rad: 0.35
   tracking_persist_s: 0.5
   tracking_stop_rad: 0.8
+  # On such a stop: relax = cut the motors of the played joints (arms may drop), hold = keep
+  # the measured posture stiff.
+  tracking_stop_action: relax
   max_fraction_speed: 0.3   # utilisé par setAngles
   hand_tracking_error: 0.5  # mains (fraction d'ouverture) : le moteur de la main suit plus lentement
   # The measured angle is compared with the command over the last tracking_lag_s (latency of

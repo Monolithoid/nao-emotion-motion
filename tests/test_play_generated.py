@@ -317,3 +317,24 @@ def test_tracking_thresholds_per_joint_and_guardian_off(gwb, cfg):
     assert tol["LWristYaw"] == 0.5 and tol["LShoulderPitch"] == c.tracking_error
     off = dict(zip(cfg.all_joints, c.tracking_tolerance(cfg.all_joints, c.tracking_factor_guardian_off)))
     assert off["LShoulderPitch"] == pytest.approx(c.tracking_error * c.tracking_factor_guardian_off)
+
+
+def test_tracking_fault_cuts_the_motors(gwb, cfg):
+    """A persistent gap (blocked / pushed limb) stops the play and relaxes the played joints."""
+    from nao_motion.control.controller import State, TrackingFault
+    _put_in_start_pose(gwb, cfg)
+    gwb.ctrl.arm(confirm=True)
+    plan = gwb.ctrl.plan_cycle(gesture(cfg), from_pose="current")
+    ad, real = gwb.adapter, gwb.adapter.read_angles
+
+    def read(joints):  # the limb gets blocked once the play has started
+        q = np.array(real(joints), float)
+        if ad.command_log and "LShoulderPitch" in joints:
+            q[list(joints).index("LShoulderPitch")] += 0.6
+        return q
+    ad.read_angles = read
+    with pytest.raises(TrackingFault):
+        gwb.ctrl.execute(plan)
+    assert gwb.ctrl.state == State.FAULT and not gwb.ctrl.armed
+    assert all(gwb.adapter.roles[j] == "guided" for j in plan.traj.joints)
+    assert "Moteurs coupés" in gwb.ctrl.last_error
