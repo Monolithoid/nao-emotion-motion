@@ -3,6 +3,16 @@ const $ = (id) => document.getElementById(id);
 let CFG = null, STATUS = null, lastPlan = null, currentTake = null;
 const COLORS = ["#2f62d8","#d8572f","#1d8a4b","#9b3fc4","#c49b1f","#1f9bc4","#c41f6b","#6b7a1f","#555","#e08a00","#0aa","#a33"];
 
+// readable guardian refusal: one line per violation, with the cycle segment where it happens
+const SEG = {repos_vers_depart: "rest → start", vers_depart: "measured posture → start", depart_vers_geste: "start → gesture",
+  geste: "GESTURE", geste_vers_depart: "gesture → start", depart_vers_repos: "start → rest", "départ": "first point"};
+function violationsText(vs) {
+  const n = (x) => (x == null ? "" : (+x).toFixed(3));
+  return (vs || []).map((v) => `  • ${v.code}${v.joint ? " " + v.joint : ""}` +
+    (v.segment ? ` in [${SEG[v.segment] || v.segment}]` : "") + (v.time_s != null ? ` at ${(+v.time_s).toFixed(2)} s` : "") +
+    (v.value != null ? `: ${n(v.value)}` + (v.limit != null ? ` (limit ${n(v.limit)})` : "") : "") + ` — ${v.message}`).join("\n");
+}
+
 async function api(path, body, {quiet = false, timeoutMs = 0} = {}) {
   const opt = body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)};
   // délai côté page : une requête bloquée ne fige jamais l'interface
@@ -10,7 +20,7 @@ async function api(path, body, {quiet = false, timeoutMs = 0} = {}) {
   if (ctl) { opt.signal = ctl.signal; setTimeout(() => ctl.abort(), timeoutMs); }
   const r = await fetch("/api/" + path, opt);
   const d = await r.json();
-  if (!r.ok) { const msg = d.error + (d.report ? "\n" + JSON.stringify(d.report.violations, null, 1) : ""); if (!quiet) alert(msg); throw new Error(msg); }
+  if (!r.ok) { const msg = d.error + (d.report ? "\n" + violationsText(d.report.violations) : ""); if (!quiet) alert(msg); throw new Error(msg); }
   return d;
 }
 const real = () => STATUS && STATUS.real_robot;
@@ -311,8 +321,8 @@ async function generate() {
   const ad = out.adaptation;
   $("g-report").textContent = `geste : ${(tr.t[tr.t.length - 1] - tr.t[0]).toFixed(2)} s · guardian : ${mr.ok ? "accepté" : "REFUSÉ"}\n` +
     (ad && ad.changed ? `made playable: ${ad.notes.join(" ; ")} (raw gesture ${out.generated.duration_s.toFixed(2)} s, guardian on raw: ${out.raw_report.ok ? "accepted" : "refused"})\n` : "") +
-    (mr.violations.length ? JSON.stringify(mr.violations, null, 1) + "\n" : "") +
-    (cy ? `cycle complet (${cy.start === "rest" ? "from rest" : "from the current posture"}, if played now) : ${cy.report.ok ? "accepté" : "REFUSÉ"} (${cy.duration_s.toFixed(2)} s) ${cy.report.violations.length ? JSON.stringify(cy.report.violations, null, 1) : ""}` : (out.cycle_error ? "cycle : " + out.cycle_error : "")) +
+    (mr.violations.length ? violationsText(mr.violations) + "\n" : "") +
+    (cy ? `cycle complet (${cy.start === "rest" ? "from rest" : "from the current posture"}, if played now) : ${cy.report.ok ? "accepté" : "REFUSÉ"} (${cy.duration_s.toFixed(2)} s) ${cy.report.violations.length ? "\n" + violationsText(cy.report.violations) : ""}` : (out.cycle_error ? "cycle : " + out.cycle_error : "")) +
     (out.generated.notes.length ? "\nnotes : " + out.generated.notes.join(" ; ") : "");
   lastPlan = out.plan_id; lastGen = out;
   updatePlay();
@@ -328,7 +338,8 @@ function playBlocker() {
   if (!STATUS.connected) return "Robot not connected (Robot tab).";
   if (!STATUS.armed) return "Motors not armed: tick « moteurs armés » at the top of the page.";
   if (STATUS.controller === "executing" || playing) return "A motion is already being played.";
-  if (STATUS.controller === "fault") return "Controller in fault: check the robot, then reconnect.";
+  if (STATUS.controller === "fault") return `Controller in FAULT: ${STATUS.last_error || "see the log (Robot tab)"}\n` +
+    "Check the robot, then « Acknowledge » (no motion) and re-arm.";
   if (STATUS.recording && ["countdown", "recording"].includes(STATUS.recording.state)) return "Recording in progress.";
   return "";
 }
@@ -348,6 +359,7 @@ function updatePlay() {
       (p.notes && p.notes.length ? " · " + p.notes.join(" ; ") : "");
   }
   $("g-play-why").textContent = txt;
+  $("g-ack").classList.toggle("hidden", !(STATUS && STATUS.controller === "fault"));
 }
 async function play() {
   if (playBlocker()) { updatePlay(); return; }
@@ -436,6 +448,7 @@ async function init() {
   $("g-go").onclick = generate;
   // no confirmation (operator preference): the permanent warning #g-alert replaces it
   $("g-play").onclick = play;
+  $("g-ack").onclick = () => api("acknowledge", {}).then(refreshStatus);
   $("g-project").checked = CFG.project_control_points !== false;  // default from robot.yaml
   // guardian off for a test: never remembered, red frame + permanent warning while ticked
   $("g-noguard").checked = false;

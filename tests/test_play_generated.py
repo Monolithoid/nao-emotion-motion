@@ -188,3 +188,67 @@ def test_projected_control_points_keep_the_curve_in_the_zone(gwb, cfg):
                       if (p >= lo).all() and (p <= hi).all() and all(a @ p <= b for a, b in half)]
             np.testing.assert_array_equal(gen.arm_ctrl[inside], raw.arm_ctrl[inside])
     assert gwb.generate("joie", 0.9, use_event=False, project_zone=False)["generated"]["inputs"]["project_zone"] is False
+
+
+def _cfg_wide_factory(j="LShoulderRoll", widen=0.4):
+    import copy
+    from nao_motion.config import load_config
+    cfg = copy.deepcopy(load_config())
+    lo, hi = cfg.limits[j]
+    cfg.rest_limits[j] = (lo - widen, hi + widen)  # factory range wider than the calibrated zone
+    return cfg, lo, hi
+
+
+def test_play_from_a_posture_outside_the_zone(tmp_path):
+    """Arms placed by hand outside the calibrated zone (e.g. LShoulderRoll close to the body):
+    the approach segment to the start pose is checked on the factory limits, like rest -> start.
+    It used to be checked on the zone, so the whole cycle was refused at t = 0 while the gesture
+    itself was accepted."""
+    cfg, lo, hi = _cfg_wide_factory()
+    wb = make_wb(tmp_path, cfg)
+    for j, v in zip(cfg.all_joints, cfg.pose("start", cfg.all_joints)):
+        wb.adapter.q[j] = wb.adapter.target[j] = v
+    wb.adapter.q["LShoulderRoll"] = wb.adapter.target["LShoulderRoll"] = lo - 0.15
+    wb.plans["p"] = {"gen": None, "played": gesture(cfg), "plan": None}
+    plan, start = wb.plan_generated(gesture(cfg), "auto", "rest")
+    assert start == "current" and plan.report.ok, plan.report.to_dict()
+    wb.ctrl.arm(confirm=True)
+    wb.execute_plan("p", background=False, start="auto")
+    assert wb.play_info["state"] == "done"
+
+
+def test_play_with_rest_outside_the_zone(tmp_path):
+    """Rest outside the calibrated zone (arms on the legs: allowed since 2026-11-04). The plan was
+    accepted, but execute() checked the whole cycle again against the zone and refused it."""
+    cfg, lo, hi = _cfg_wide_factory("LShoulderPitch")
+    cfg.poses["rest"]["left_arm"]["LShoulderPitch"] = hi + 0.2
+    wb = make_wb(tmp_path, cfg)
+    wb.adapter.q["LShoulderPitch"] = wb.adapter.target["LShoulderPitch"] = hi + 0.2
+    wb.plans["p"] = {"gen": None, "played": gesture(cfg), "plan": None}
+    wb.ctrl.arm(confirm=True)
+    r = wb.execute_plan("p", background=False, start="auto")
+    assert r["start"] == "rest" and wb.play_info["state"] == "done", wb.play_info
+
+
+def test_refusal_names_the_cycle_segment(gwb, cfg):
+    out = _generate(gwb, cfg)
+    gwb.plans[out["plan_id"]]["played"] = gesture(cfg, amp=1.5)
+    plan, _ = gwb.plan_generated(gesture(cfg, amp=1.5), "auto", "rest")
+    assert not plan.report.ok
+    assert {v.segment for v in plan.report.violations} >= {"geste"}
+    assert all(v.segment for v in plan.report.violations if v.time_s is not None)
+
+
+def test_refusal_before_sending_does_not_leave_a_fault(gwb, cfg):
+    """A play refused before the first command (robot moved since planning) sends nothing:
+    the controller stays IDLE instead of FAULT, so the next Play works without acknowledging."""
+    from nao_motion.control.controller import NothingSent, Plan, State
+    from nao_motion.guardian import Report
+    g = gesture(cfg)
+    g.q = g.q + 0.3  # first point far from the measured posture
+    plan = Plan(g, [("geste", 0.0, g.duration)], Report(True, []))
+    gwb.ctrl.arm(confirm=True)
+    with pytest.raises(NothingSent):
+        gwb.ctrl.execute(plan, guardian=False)
+    assert gwb.ctrl.state == State.IDLE and gwb.ctrl.armed
+    assert gwb.adapter.command_log == []

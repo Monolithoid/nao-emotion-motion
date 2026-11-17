@@ -25,7 +25,7 @@ import numpy as np
 
 from ..adapters.base import AdapterError, ConnectionLost
 from ..config import Config
-from ..guardian import Guardian, GuardianRejection, Report
+from ..guardian import Guardian, GuardianRejection, Report, Violation
 from ..trajectory import Trajectory
 from .transitions import boundary_derivatives, min_jerk, quintic_matched
 
@@ -40,6 +40,11 @@ class State(str, enum.Enum):
 
 class ControllerError(RuntimeError):
     pass
+
+
+class NothingSent(ControllerError):
+    """Refusal before the first command: nothing was sent, so the controller stays IDLE
+    (a fault would block every later play until it is acknowledged)."""
 
 
 @dataclass
@@ -208,7 +213,10 @@ class Controller:
             # le repos peut être hors zone (contact) : segment vérifié à part
             segs = [("repos_vers_depart", self._rest_transition(q_cur, start, joints))]
         else:
-            segs = [("vers_depart", self._transition(q_cur, start, joints))]
+            # The measured posture may lie outside the calibrated zone (arms placed by hand,
+            # resting on the legs...): like rest -> start, this approach segment is checked on
+            # the factory limits at reduced speed, not on the zone (else refused at t = 0).
+            segs = [("vers_depart", self._rest_transition(q_cur, start, joints))]
         segs += [("depart_vers_geste", quintic_matched(start, z, z, motion.q[0], v0, a0, joints, vlim, alim)),
                  ("geste", motion),
                  ("geste_vers_depart", quintic_matched(motion.q[-1], v1, a1, start, z, z, joints, vlim, alim))]
@@ -222,12 +230,20 @@ class Controller:
         others = [j for j in self.cfg.all_joints if j not in joints]
         ctx = self.measured(others) if others and current is None else {}
         motion_report = self.guardian.validate(motion, context_pose=ctx)
-        rep = self._validate_segments(segs, {"repos_vers_depart", "depart_vers_repos"}, cur, ctx)
-        notes.append("Segments repos <-> départ : limites d'usine et vitesse réduite seulement (le repos peut être "
-                     "hors zone) ; leur absence de heurt relève de la calibration.")
+        rep = self._validate_segments(segs, {"repos_vers_depart", "vers_depart", "depart_vers_repos"}, cur, ctx)
+        notes.append("Segments posture mesurée / repos <-> départ : limites d'usine et vitesse réduite seulement "
+                     "(posture et repos peuvent être hors zone) ; leur absence de heurt relève de la calibration.")
         if not motion_report.ok:
+            g0 = next(a for n, a, _ in segments if n == "geste")
+            for x in motion_report.violations:
+                x.segment = "geste"
+                if x.time_s is not None:
+                    x.time_s += g0
             rep.ok = False
             rep.violations = motion_report.violations + rep.violations
+        for x in rep.violations:
+            if x.segment is None and x.time_s is not None:
+                x.segment = next((n for n, a, b in segments if a - 1e-6 <= x.time_s <= b + 1e-6), None)
         if others:
             notes.append(f"Articulations non commandées (maintenues) : {others}")
         return Plan(full, segments, rep, motion_report, notes)
@@ -254,10 +270,10 @@ class Controller:
         q = np.array([cur[j] for j in joints])
         start = np.array(self.cfg.pose("start", joints))
         rest = np.array(self.cfg.pose("rest", joints))
-        segs = [("vers_depart", self._transition(q, start, joints)),
+        segs = [("vers_depart", self._rest_transition(q, start, joints)),
                 ("depart_vers_repos", self._rest_transition(start, rest, joints))]
         full = Trajectory.concat([s for _, s in segs])
-        rep = self._validate_segments(segs, {"depart_vers_repos"}, cur, {})
+        rep = self._validate_segments(segs, {"vers_depart", "depart_vers_repos"}, cur, {})
         segments, t = [], 0.0
         for name, s in segs:
             segments.append((name, round(t, 4), round(t + s.duration, 4)))
@@ -298,14 +314,22 @@ class Controller:
         joints = plan.traj.joints
         try:
             # revalidation contre l'état mesuré juste avant d'envoyer
+            # The plan was validated whole, segment by segment, when it was built (posture /
+            # rest <-> start on the factory limits, the rest on the calibrated zone). Checking the
+            # concatenated cycle again against the zone here refused every cycle whose rest or
+            # measured posture lies outside it. What can have changed since is the robot's
+            # posture: its first point must still match the measured state.
             cur = self.measured(joints)
-            if guardian:
-                self.guardian.require(plan.traj, start_state=cur, check_duration=False)
-            else:
-                far = [j for k, j in enumerate(joints)
-                       if abs(cur[j] - float(plan.traj.q[0, k])) > 2 * self.cfg.guardian.start_tolerance_rad]
-                if far:  # no jump at the first command, guardian or not
-                    raise ControllerError(f"Le robot a bougé depuis la planification ({far}) : rejouer")
+            tol = self.cfg.guardian.start_tolerance_rad * (1 if guardian else 2)
+            far = {j: round(abs(cur[j] - float(plan.traj.q[0, k])), 3) for k, j in enumerate(joints)
+                   if abs(cur[j] - float(plan.traj.q[0, k])) > tol}
+            if far:  # no jump at the first command, guardian or not
+                if guardian:
+                    raise GuardianRejection(Report(False, [
+                        Violation("start_mismatch", "Premier point éloigné de l'état mesuré", joint=j, value=d,
+                                  limit=tol, segment="départ") for j, d in far.items()]))
+                raise NothingSent(f"Le robot a bougé depuis la planification ({list(far)}) : rejouer. "
+                                  "Rien n'a été envoyé.")
             self.adapter.set_roles(driven=joints)
             result = self._stream(plan.traj, on_tick)
         except ConnectionLost as e:
@@ -314,7 +338,7 @@ class Controller:
             self.last_error = f"Connexion perdue : {e}. Le pont arrête et maintient côté robot."
             self._log(self.last_error)
             raise
-        except GuardianRejection as e:
+        except (GuardianRejection, NothingSent) as e:
             self.state = State.IDLE
             self.last_error = str(e)
             raise

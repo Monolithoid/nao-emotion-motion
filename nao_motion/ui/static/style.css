@@ -270,3 +270,6 @@ table.fid tr.on td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 .g-noguard{color:var(--bad);font-weight:600}
 .g-play.noguard{border-color:var(--bad);border-width:3px}
 #g-noguard-alert{font-size:15px;max-width:none}
+.g-actions{display:inline-flex;flex-direction:column;gap:6px;vertical-align:top}
+.g-actions button{width:100%}
+.g-actions button#g-play:not(:disabled){font-weight:600}

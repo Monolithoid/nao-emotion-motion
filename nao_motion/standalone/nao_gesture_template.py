@@ -62,7 +62,9 @@ EVENT_FEATURES = 6  # [present, sin(az), cos(az), elevation, distance known, 1/(
 COMPONENTS = ("arms", "head", "hands")
 TIMINGS = ("hold", "stretch")
 DEGREE = 3
-REST_SEGMENTS = ("rest_to_start", "start_to_rest")
+# segments checked on the factory limits at reduced speed: rest and the measured posture may lie
+# outside the movement zone (same rule as the workbench controller)
+REST_SEGMENTS = ("rest_to_start", "to_start", "start_to_rest")
 
 
 class GestureError(ValueError):
@@ -508,7 +510,7 @@ class GestureGenerator(object):
         if from_rest:
             segs = [("rest_to_start", _min_jerk(q_cur, start, g.rest_velocity * 0.8, g.max_acceleration * 0.25))]
         else:
-            segs = [("to_start", _min_jerk(q_cur, start, g.transition_velocity, g.max_acceleration * 0.5))]
+            segs = [("to_start", _min_jerk(q_cur, start, g.rest_velocity * 0.8, g.max_acceleration * 0.25))]
         segs += [("start_to_gesture", _quintic(start, z, z, motion["q"][0], v0, a0, vlim, alim)),
                  ("gesture", motion),
                  ("gesture_to_start", _quintic(motion["q"][-1], v1, a1, start, z, z, vlim, alim))]

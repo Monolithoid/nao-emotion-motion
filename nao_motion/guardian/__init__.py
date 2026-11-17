@@ -31,6 +31,7 @@ class Violation:
     time_s: Optional[float] = None
     value: Optional[float] = None
     limit: Optional[float] = None
+    segment: Optional[str] = None  # cycle segment where it happens (set by the controller)
 
     def to_dict(self):
         return {k: v for k, v in self.__dict__.items() if v is not None}
