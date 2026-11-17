@@ -43,7 +43,9 @@ def test_cross_validation_training(trained, cfg):
     assert job["state"] == "done", job["error"]
     assert any(p.get("stage") == "modèle final" for p in job["progress"])
     run = Path(job["run"])
-    d = json.loads((run / "metrics.json").read_text())
+    text = (run / "metrics.json").read_text()
+    assert "NaN" not in text  # read by the browser: NaN is not valid JSON
+    d = json.loads(text)
     m, cv = d["metrics"], d["metrics"]["cv"]
     assert cv["folds"] == 3 and len(cv["per_fold"]) == 3 and m["settings"]["folds"] == 3
     # every take validated once, by a model that did not train on it

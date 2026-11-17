@@ -357,7 +357,9 @@ def _cross_validate(ex, splits, fit, norm, K, tcfg, log, folds_req):
           "ratio_mean": float(np.mean(ratios)) if ratios else None,
           "ratio_std": float(np.std(ratios)) if ratios else None,
           "best_epoch_mean": float(np.mean(best)), "best_epoch_std": float(np.std(best)),
-          "final_epochs": final_epochs, "final_history": final_hist, "fold_histories": hists,
+          "final_epochs": final_epochs,
+          # no validation for the final model: train loss only (NaN is not valid JSON for the browser)
+          "final_history": [{"epoch": h["epoch"], "train_loss": h["train_loss"]} for h in final_hist], "fold_histories": hists,
           "kept": "final model trained on all the takes for the mean best epoch of the folds",
           "per_fold": rows}
     if k < folds_req:
