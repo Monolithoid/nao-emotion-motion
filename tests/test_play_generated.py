@@ -338,3 +338,14 @@ def test_tracking_fault_cuts_the_motors(gwb, cfg):
     assert gwb.ctrl.state == State.FAULT and not gwb.ctrl.armed
     assert all(gwb.adapter.roles[j] == "guided" for j in plan.traj.joints)
     assert "Moteurs coupés" in gwb.ctrl.last_error
+
+
+def test_guardian_diagnosis(gwb, cfg):
+    from nao_motion.guardian.diagnose import diagnose
+    n0 = len(gwb.adapter.command_log)
+    d = Api(gwb).post_guardian_diagnose({})
+    assert d["n"] == 3 * len(cfg.emotions) and d["connected"]
+    assert set(d["refusals"]) == {"raw", "playable", "cycle"} and d["hints"]
+    assert {r["velocity_source"] for r in d["limits"]["joints"]} == {"guardian.yaml"}
+    assert len(gwb.adapter.command_log) == n0  # nothing sent
+    assert diagnose(gwb, intensities=(0.5,))["n"] == len(cfg.emotions)

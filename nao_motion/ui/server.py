@@ -305,6 +305,11 @@ class Api:
             raise ValueError("Confirmation explicite requise")
         return self.wb.execute_plan(d["plan_id"])
 
+    def post_guardian_diagnose(self, d):
+        """Batch diagnosis of the guardian refusals on the generated gestures (nothing is sent)."""
+        from ..guardian.diagnose import diagnose
+        return diagnose(self.wb, project_zone=d.get("project_zone"))
+
     def post_play(self, d):
         """Generation tab, "Play on the robot": the explicit operator action (button or key 2).
         The cycle is planned again from the measured posture and must pass the guardian whole;

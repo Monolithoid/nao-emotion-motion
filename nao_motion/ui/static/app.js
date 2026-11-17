@@ -449,6 +449,27 @@ async function init() {
   $("g-go").onclick = generate;
   // no confirmation (operator preference): the permanent warning #g-alert replaces it
   $("g-play").onclick = play;
+  $("g-diag-go").onclick = async () => {
+    $("g-diag-out").textContent = "Running…";
+    const d = await api("guardian/diagnose", {project_zone: $("g-project").checked}).catch((e) => ({error: e.message}));
+    if (d.error) { $("g-diag-out").textContent = "✗ " + d.error; return; }
+    const tbl = (rows) => rows.length ? rows.map((r) => `  ${String(r.gestures).padStart(3)} × ${r.code} ${r.joint}` +
+      (r.segment ? ` [${SEG[r.segment] || r.segment}]` : "")).join("\n") : "  none";
+    const L = d.limits;
+    $("g-diag-out").textContent =
+      `${d.n} gestures · accepted: raw ${d.ok.raw}/${d.n} · made playable ${d.ok.playable}/${d.n}` +
+      (d.connected ? ` · whole cycle ${d.ok.cycle}/${d.n}` : " · cycle not checked (no robot connected)") +
+      `\nslow-down to respect the limits: median ×${d.slow_down.median} · max ×${d.slow_down.max}` +
+      (d.slow_down.capped_by_max_duration ? ` · ${d.slow_down.capped_by_max_duration} capped by the max duration` : "") +
+      "\n\nWHAT THIS MEANS\n" + d.hints.map((x) => "• " + x).join("\n") +
+      "\n\nRefused on the RAW gesture (gestures per check):\n" + tbl(d.refusals.raw) +
+      "\nStill refused after making it playable:\n" + tbl(d.refusals.playable) +
+      (d.connected ? "\nWhole cycle:\n" + tbl(d.refusals.cycle) : "") +
+      `\n\nLimits in force (calibration ${L.calibration}${L.calibrated ? "" : ", NOT calibrated"}):\n` +
+      L.joints.map((r) => `  ${r.joint.padEnd(15)} zone [${r.zone[0]}, ${r.zone[1]}] · v ${r.velocity} (${r.velocity_source}) · a ${r.acceleration} (${r.acceleration_source})`).join("\n") +
+      "\nCoupled constraints:\n" + (L.coupled.map((c) => `  ${c.name} (${c.source}) : ` +
+        Object.entries(c.terms).map(([j, k]) => `${k}·${j}`).join(" + ") + ` ≤ ${c.bound}`).join("\n") || "  none");
+  };
   $("g-ack").onclick = () => api("acknowledge", {}).then(refreshStatus);
   $("g-project").checked = CFG.project_control_points !== false;  // default from robot.yaml
   // guardian off for a test: never remembered, red frame + permanent warning while ticked
