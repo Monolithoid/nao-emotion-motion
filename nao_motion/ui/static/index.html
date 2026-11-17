@@ -397,6 +397,7 @@
     <label>Intensité <input type="range" id="g-intensity" min="0" max="1" step="0.05" value="0.7"> <span id="g-int-val"></span></label>
     <label>Variation <input type="number" id="g-var" value="0" step="0.02" min="0" class="num"></label>
     <label><input type="checkbox" id="g-event" checked> utiliser l'événement</label>
+    <label title="Control points of the MLP output that fall outside the guardian zone are moved to the nearest point inside (shortest translation). The curve then stays in the zone; speed is still adapted. Also applies with the guardian off."><input type="checkbox" id="g-project" checked> project control points into the zone</label>
     <button id="g-random" title="Tire émotion, intensité, angle et distance au hasard (touche 0)">Tirage aléatoire</button>
     <button id="g-go" title="Key 1">1 Générer et valider</button>
   </div>
@@ -415,8 +416,13 @@
         <option value="rest" selected>back to rest</option>
         <option value="start">stay in the start pose</option>
       </select></label>
+      <label class="g-noguard"><input type="checkbox" id="g-noguard"> Guardian off (test, at my own risk)</label>
       <button id="g-play" disabled title="Plays the last generated gesture (key 2)">2 ▶ Play on the robot</button>
     </div>
+    <div class="alert hidden" id="g-noguard-alert"><b>GUARDIAN OFF.</b> <i>Play</i> sends the <b>raw</b> model
+      gesture (no adaptation, no slowing down) and the guardian verdict is <b>ignored</b>: no calibrated zone, no
+      velocity / acceleration / coupled-joint checks. Only kept: <b>factory limits as an absolute ceiling</b>
+      (positions clipped into them), the stop on tracking error, and <b>Stop</b>. Unticked at every page load.</div>
     <div id="g-play-why" class="mono"></div>
     <div class="alert" id="g-alert"><b>Warning:</b> <kbd>2</kbd> / <i>Play</i> sends the gesture to the robot
       <b>without confirmation</b> as soon as motors are armed: the cycle (posture → start → gesture → start → rest)

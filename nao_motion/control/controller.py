@@ -265,14 +265,33 @@ class Controller:
         return Plan(full, segments, rep)
 
     # -- exécution -----------------------------------------------------------
-    def execute(self, plan: Plan, on_tick: Optional[Callable[[float, np.ndarray], None]] = None) -> str:
-        """Exécute un plan validé. Retourne 'done', 'stopped' ou lève en cas de faute."""
+    def factory_ceiling(self, traj: Trajectory):
+        """Factory limits (rest_limits: factory limits read at calibration when known, else the
+        configured limits) = absolute ceiling, kept even with the guardian off. Returns the
+        trajectory clipped into them and the list of clipped joints."""
+        lo = np.array([self.cfg.rest_limits[j][0] for j in traj.joints])
+        hi = np.array([self.cfg.rest_limits[j][1] for j in traj.joints])
+        q = np.clip(traj.q, lo, hi)
+        clipped = [j for k, j in enumerate(traj.joints) if np.any(q[:, k] != traj.q[:, k])]
+        return Trajectory(traj.joints, traj.t.copy(), q), clipped
+
+    def execute(self, plan: Plan, on_tick: Optional[Callable[[float, np.ndarray], None]] = None,
+                guardian: bool = True) -> str:
+        """Exécute un plan validé. Retourne 'done', 'stopped' ou lève en cas de faute.
+
+        guardian=False (test choisi par l'opérateur, à ses risques) : ni le verdict du guardian
+        ni sa revalidation ne sont appliqués ; seules les limites d'usine restent un plafond
+        absolu (refus si un point les dépasse) ; l'arrêt sur écart de suivi reste actif."""
         with self._lock:
             if not self.armed:
                 raise ControllerError("Contrôleur désarmé : aucun mouvement envoyé")
             if self.state != State.IDLE:
                 raise ControllerError(f"Exécution impossible dans l'état {self.state.value}")
-            if not plan.report.ok:
+            if not guardian:
+                _, out = self.factory_ceiling(plan.traj)
+                if out:
+                    raise ControllerError(f"Hors limites d'usine (plafond absolu) : {out}. Rien n'a été envoyé.")
+            elif not plan.report.ok:
                 raise GuardianRejection(plan.report)
             self._stop.clear()
             self.state = State.EXECUTING
@@ -280,7 +299,13 @@ class Controller:
         try:
             # revalidation contre l'état mesuré juste avant d'envoyer
             cur = self.measured(joints)
-            self.guardian.require(plan.traj, start_state=cur, check_duration=False)
+            if guardian:
+                self.guardian.require(plan.traj, start_state=cur, check_duration=False)
+            else:
+                far = [j for k, j in enumerate(joints)
+                       if abs(cur[j] - float(plan.traj.q[0, k])) > 2 * self.cfg.guardian.start_tolerance_rad]
+                if far:  # no jump at the first command, guardian or not
+                    raise ControllerError(f"Le robot a bougé depuis la planification ({far}) : rejouer")
             self.adapter.set_roles(driven=joints)
             result = self._stream(plan.traj, on_tick)
         except ConnectionLost as e:

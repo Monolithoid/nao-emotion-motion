@@ -44,6 +44,7 @@ class Api:
                 "events": {"distance_m": [0.3, 3.0], "azimuth_deg": [-90, 90], "elevation_deg": [-30, 45],
                            **(c.robot.get("events") or {})},
                 "countdown_s": c.robot.get("recording", {}).get("countdown_s", 3),
+                "project_control_points": bool((c.robot.get("execution") or {}).get("project_control_points", True)),
                 "model": {k: c.model.get(k) for k in ("arm_model", "head_model", "hands_model", "training", "representation")},
                 # network tab: what goes in and out of each group's MLP
                 "net": {"joints": {"arms": c.arm_joints, "head": c.head_joints, "hands": c.hand_joints},
@@ -288,7 +289,8 @@ class Api:
     def post_generate(self, d):
         emotion = d.get("mix") or d["emotion"]
         out = self.wb.generate(emotion, float(d["intensity"]), bool(d.get("use_event", True)),
-                               float(d.get("variation", 0)), d.get("seed"))
+                               float(d.get("variation", 0)), d.get("seed"),
+                               project_zone=d.get("project_zone"))
         return out
 
     def post_request(self, d):
@@ -307,7 +309,8 @@ class Api:
         """Generation tab, "Play on the robot": the explicit operator action (button or key 2).
         The cycle is planned again from the measured posture and must pass the guardian whole;
         motors must already be armed. No dialog (operator preference): permanent warning on the page."""
-        return self.wb.execute_plan(d["plan_id"], start=d.get("start", "auto"), end=d.get("end", "rest"))
+        return self.wb.execute_plan(d["plan_id"], start=d.get("start", "auto"), end=d.get("end", "rest"),
+                                    guardian=d.get("guardian", True) is not False)
 
 
     # calibration du guardian (aucune route ne commande de mouvement) ----------

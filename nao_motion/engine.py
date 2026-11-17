@@ -130,7 +130,8 @@ class MotionEngine:
 
     def generate(self, emotion: Emotion, intensity: float, event: Optional[EventContext] = None,
                  head_current: Optional[Dict[str, float]] = None, variation: float = 0.0,
-                 seed: Optional[int] = None, hands_current: Optional[Dict[str, float]] = None) -> Generated:
+                 seed: Optional[int] = None, hands_current: Optional[Dict[str, float]] = None,
+                 project_zone: bool = False) -> Generated:
         """Geste combiné bras + tête + mains. `head_current` et `hands_current` ne sont plus des
         entrées des modèles (gardés pour compatibilité d'appel) : les transitions depuis la
         posture mesurée sont planifiées par le contrôleur."""
@@ -154,6 +155,13 @@ class MotionEngine:
 
         def build(group, joints, norm, ctrl_n, dur, lo=None, hi=None):
             ctrl = norm.inv(ctrl_n)
+            if project_zone:
+                # control points outside the guardian zone -> nearest point inside (convex hull
+                # property: the decoded curve stays in the zone for these position constraints)
+                from .guardian.project import project_control_points
+                ctrl, moved, n_moved = project_control_points(cfg, ctrl, joints)
+                if n_moved:
+                    notes.append(f"{group}: {n_moved} control point(s) moved into the zone (max {moved:.3f} rad)")
             if lo is not None:
                 # points de contrôle ramenés dans la plage : par la propriété d'enveloppe convexe
                 # des B-splines, la courbe y reste aussi, sans cassure de vitesse
@@ -192,5 +200,6 @@ class MotionEngine:
         durations = {k: round(d, 3) for k, (_, d) in plans.items()}
         return Generated(arms, head, combined, arm_ctrl, head_ctrl, T,
                          {"emotion": emotion, "intensity": intensity, "event": event.to_dict(),
-                          "variation": variation, "seed": seed, "timing": self.timing}, notes, hands, hand_ctrl,
+                          "variation": variation, "seed": seed, "timing": self.timing,
+                          "project_zone": bool(project_zone)}, notes, hands, hand_ctrl,
                          durations)

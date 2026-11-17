@@ -301,7 +301,7 @@ const refreshTrain = () => window.MLP && window.MLP.refresh();
 // ---- génération -----------------------------------------------------------------
 async function generate() {
   const e1 = $("g-emotion").value, e2 = $("g-emotion2").value, w = parseFloat($("g-mix").value);
-  const body = {emotion: e1, intensity: parseFloat($("g-intensity").value), variation: parseFloat($("g-var").value), use_event: $("g-event").checked};
+  const body = {emotion: e1, intensity: parseFloat($("g-intensity").value), variation: parseFloat($("g-var").value), use_event: $("g-event").checked, project_zone: $("g-project").checked};
   if (e2 && e2 !== e1) body.mix = {[e1]: 1 - w, [e2]: w};
   const out = await api("generate", body);
   const tr = out.played || out.generated.trajectory;  // the gesture that would be played
@@ -344,6 +344,8 @@ function updatePlay() {
       p.state === "done" ? `✓ Played ${from} (${(+p.duration_s).toFixed(1)} s).` :
       p.state === "stopped" ? "■ Stopped: posture held." :
       p.state === "refused" ? `✗ ${p.error}` : `✗ Error: ${p.error}`) + (why && p.state !== "playing" ? "\n" + why : "");
+    if (p.guardian === false) txt += "\nGUARDIAN OFF: raw gesture" + (p.guardian_would ? ` (the guardian would have ${p.guardian_would.ok ? "accepted" : "REFUSED"} it)` : "") +
+      (p.notes && p.notes.length ? " · " + p.notes.join(" ; ") : "");
   }
   $("g-play-why").textContent = txt;
 }
@@ -351,8 +353,10 @@ async function play() {
   if (playBlocker()) { updatePlay(); return; }
   playing = true; $("g-play").disabled = true;
   try {
-    const r = await api("play", {plan_id: lastPlan, start: $("g-start").value, end: $("g-end").value}, {quiet: true});
-    STATUS.play = {state: "playing", plan_id: lastPlan, start: r.start, end: r.end, duration_s: r.duration_s};
+    const r = await api("play", {plan_id: lastPlan, start: $("g-start").value, end: $("g-end").value,
+      guardian: !$("g-noguard").checked}, {quiet: true});
+    STATUS.play = {state: "playing", plan_id: lastPlan, start: r.start, end: r.end, duration_s: r.duration_s,
+      guardian: r.guardian, notes: r.notes, guardian_would: r.guardian ? null : {ok: r.cycle.report.ok}};
     const c = r.cycle, tr = c && lastGen && (lastGen.played || lastGen.generated.trajectory);
     if (tr) {  // cursor over the gesture while the whole cycle plays
       const g = c.segments.find((x) => x[0] === "geste");
@@ -432,6 +436,15 @@ async function init() {
   $("g-go").onclick = generate;
   // no confirmation (operator preference): the permanent warning #g-alert replaces it
   $("g-play").onclick = play;
+  $("g-project").checked = CFG.project_control_points !== false;  // default from robot.yaml
+  // guardian off for a test: never remembered, red frame + permanent warning while ticked
+  $("g-noguard").checked = false;
+  $("g-noguard").onchange = (e) => {
+    const off = e.target.checked;
+    $("g-noguard-alert").classList.toggle("hidden", !off);
+    document.querySelector("fieldset.g-play").classList.toggle("noguard", off);
+    $("g-play").textContent = off ? "2 ▶ Play RAW, guardian off" : "2 ▶ Play on the robot";
+  };
   setInterval(updatePlay, 300);
   // robot
   $("r-connect").onclick = () => api("connect", {});

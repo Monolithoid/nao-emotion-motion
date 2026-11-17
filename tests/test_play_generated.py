@@ -110,3 +110,81 @@ def test_transition_into_a_fast_gesture_does_not_overshoot():
     assert tr.q.min() > -1.6 and tr.q.max() < -0.9, (tr.q.min(), tr.q.max())
     v = np.diff(tr.q[:, 0]) / np.diff(tr.t)
     assert np.abs(v).max() <= 1.5
+
+
+def test_guardian_off_plays_a_refused_gesture_within_factory_limits(gwb, cfg):
+    """Operator's test at their own risk: the guardian verdict is not applied, the RAW gesture is
+    played, and the factory limits stay an absolute ceiling (positions clipped into them)."""
+    out = _generate(gwb, cfg)
+    big = gesture(cfg, amp=1.5)  # refused by the guardian, partly beyond the factory limits
+    gwb.plans[out["plan_id"]]["gen"] = type("G", (), {"combined": big})()
+    gwb.plans[out["plan_id"]]["played"] = big
+    gwb.ctrl.arm(confirm=True)
+    with pytest.raises(GuardianRejection):
+        gwb.execute_plan(out["plan_id"], background=False, start="auto")
+    assert gwb.adapter.command_log == []
+    r = gwb.execute_plan(out["plan_id"], background=False, start="auto", guardian=False)
+    assert r["guardian"] is False and not r["cycle"]["report"]["ok"]  # what the guardian would say
+    assert gwb.play_info["state"] == "done", gwb.play_info
+    assert any("factory" in n for n in r["notes"])
+    sent = np.array([c[2] for c in gwb.adapter.command_log if list(c[1]) == list(big.joints)])
+    lo = np.array([cfg.rest_limits[j][0] for j in big.joints])
+    hi = np.array([cfg.rest_limits[j][1] for j in big.joints])
+    assert sent.size and (sent >= lo - 1e-9).all() and (sent <= hi + 1e-9).all()
+
+
+def test_guardian_off_still_refuses_beyond_factory_limits(gwb, cfg):
+    from nao_motion.control.controller import Plan
+    from nao_motion.guardian import Report
+    g = gesture(cfg)
+    g.q = g.q.copy()
+    g.q[:, g.joints.index("LShoulderPitch")] = 5.0
+    plan = Plan(g, [("geste", 0.0, g.duration)], Report(True, []))
+    gwb.ctrl.arm(confirm=True)
+    with pytest.raises(ControllerError, match="usine"):
+        gwb.ctrl.execute(plan, guardian=False)
+    assert gwb.adapter.command_log == []
+
+
+def test_play_route_guardian_flag(gwb, cfg):
+    api = Api(gwb)
+    out = api.post_generate({"emotion": "joie", "intensity": 0.8, "use_event": False})
+    gwb.plans[out["plan_id"]]["played"] = gesture(cfg)
+    gwb.plans[out["plan_id"]]["gen"] = type("G", (), {"combined": gesture(cfg)})()
+    gwb.ctrl.arm(confirm=True)
+    r = api.post_play({"plan_id": out["plan_id"], "guardian": False})
+    assert r["guardian"] is False
+
+
+def test_project_point_is_the_nearest_point_inside_the_zone():
+    from nao_motion.guardian.project import project_point
+    lo, hi = np.array([-1.0, -1.0]), np.array([1.0, 1.0])
+    half = [(np.array([1.0, 1.0]), 1.0)]  # x + y <= 1
+    np.testing.assert_allclose(project_point(np.array([0.2, 0.3]), lo, hi, half), [0.2, 0.3])  # inside: untouched
+    np.testing.assert_allclose(project_point(np.array([2.0, 0.0]), lo, hi, half), [1.0, 0.0], atol=1e-6)
+    np.testing.assert_allclose(project_point(np.array([1.0, 1.0]), lo, hi, half), [0.5, 0.5], atol=1e-6)
+    np.testing.assert_allclose(project_point(np.array([3.0, 0.5]), lo, hi, half), [1.0, 0.0], atol=1e-6)
+
+
+def test_projected_control_points_keep_the_curve_in_the_zone(gwb, cfg):
+    """Generation with projection: every control point, hence (convex hull) every decoded
+    sample, is inside the calibrated limits minus margin and the coupled zone of its group."""
+    from nao_motion.guardian.project import zone
+    eng = gwb.get_engine()
+    hit = 0
+    for e in cfg.emotions:
+        for i in (0.3, 1.0):
+            raw = eng.generate(e, i, None)
+            gen = eng.generate(e, i, None, project_zone=True)
+            hit += any("moved into the zone" in n for n in gen.notes)
+            for tr in (gen.arms, gen.head):
+                lo, hi, half = zone(cfg, tr.joints)
+                assert (tr.q >= lo - 1e-6).all() and (tr.q <= hi + 1e-6).all()
+                for a, b in half:
+                    assert (tr.q @ a <= b + 1e-6).all()
+            # control points already inside the zone are not moved
+            lo, hi, half = zone(cfg, cfg.arm_joints)
+            inside = [k for k, p in enumerate(raw.arm_ctrl)
+                      if (p >= lo).all() and (p <= hi).all() and all(a @ p <= b for a, b in half)]
+            np.testing.assert_array_equal(gen.arm_ctrl[inside], raw.arm_ctrl[inside])
+    assert gwb.generate("joie", 0.9, use_event=False, project_zone=False)["generated"]["inputs"]["project_zone"] is False
