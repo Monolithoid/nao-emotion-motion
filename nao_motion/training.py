@@ -49,6 +49,11 @@ def _fit(ex: Examples, tr, va, arch, K, J, tcfg, predict_duration: bool, log=Non
     Dl = torch.tensor(ex.log_dur, dtype=torch.float32)
     opt = torch.optim.Adam(model.parameters(), lr=float(tcfg["lr"]), weight_decay=float(tcfg["weight_decay"]))
     sw = float(tcfg.get("smoothness_weight", 0.0))
+    ew = float(tcfg.get("motion_energy_weight", 0.0))
+    # target speeds (per take, per joint) and their overall scale, fixed: the energy term is
+    # dimensionless (about 1 when the prediction does not move at all)
+    tgt_speed = _speed_rms(torch.einsum("nk,bkj->bnj", B, Y))
+    speed_scale = max(float(tgt_speed.mean().item()), 1e-6) if ew else 1.0
     dw = float(tcfg.get("duration_weight", 0.05))
     tr_t, va_t = torch.tensor(tr), torch.tensor(va)
 
@@ -63,6 +68,12 @@ def _fit(ex: Examples, tr, va, arch, K, J, tcfg, predict_duration: bool, log=Non
             loss = loss + dw * ((out[:, -1] - Dl[idx]) ** 2).mean()
         if sw:
             loss = loss + sw * ((C[:, 2:] - 2 * C[:, 1:-1] + C[:, :-2]) ** 2).mean()
+        if ew:
+            # motion energy: each joint must move as much as in its take (RMS speed), whatever
+            # the timing. Pointwise MSE alone rewards the MEAN of takes whose oscillations are
+            # out of phase, which is flat (a wave becomes a still arm); this term does not care
+            # about the phase, only about how much the joint moves.
+            loss = loss + ew * ((_speed_rms(dense) - tgt_speed[idx]) ** 2).mean() / speed_scale ** 2
         return loss
 
     best, best_state, history = float("inf"), None, []
@@ -85,6 +96,29 @@ def _fit(ex: Examples, tr, va, arch, K, J, tcfg, predict_duration: bool, log=Non
         model.load_state_dict(best_state)
     model.eval()
     return model, history
+
+
+def _speed_rms(dense):
+    """RMS speed along the phase, per take and joint: (b, n, j) -> (b, j). Works on tensors."""
+    d = (dense[:, 1:] - dense[:, :-1]) * (dense.shape[1] - 1)
+    return ((d ** 2).mean(1) + 1e-8) ** 0.5
+
+
+def _motion_kept(pred_n, true_n, norm: Norm, K):
+    """How much movement the predictions keep compared with the takes: RMS speed (in phase,
+    rad) of the predicted curves / of the takes, over the joints that move. 1 = as lively as
+    the takes, 0 = still. The pointwise RMSE cannot show this: a flat curve through the middle
+    of an oscillation has a modest RMSE."""
+    J = len(norm.joints)
+    B = bspline_basis(K, np.linspace(0, 1, 100))
+    P = np.einsum("nk,bkj->bnj", B, norm.inv(np.asarray(pred_n).reshape(-1, K, J)))
+    T = np.einsum("nk,bkj->bnj", B, norm.inv(np.asarray(true_n).reshape(-1, K, J)))
+    sp = np.sqrt((np.diff(P, axis=1) ** 2).mean(axis=1)) * 99
+    st = np.sqrt((np.diff(T, axis=1) ** 2).mean(axis=1)) * 99
+    mv = st > 0.2  # joints moving at least ~0.2 rad per gesture length
+    if not mv.any():
+        return None
+    return float(np.sqrt((sp[mv] ** 2).sum() / (st[mv] ** 2).sum()))
 
 
 def _dense_rmse(pred_n, true_n, norm: Norm, K):
@@ -116,7 +150,10 @@ def _evaluate(model, ex, tr, va, norm, K, predict_duration):
     m = {"n_examples": len(ex), "n_train": int(len(tr)), "n_val": int(len(va)),
          "n_train_groups": len({ex.groups[i] for i in tr}), "n_val_groups": len({ex.groups[i] for i in va})}
     m["train_rmse_rad"], m["train_rmse_per_joint"] = _dense_rmse(Yp[tr], ex.Y[tr], norm, K)
+    m["train_motion_kept"] = _motion_kept(Yp[tr], ex.Y[tr], norm, K)
     if len(va):
+        m["val_motion_kept"] = _motion_kept(Yp[va], ex.Y[va], norm, K)
+        m["val_baseline_motion_kept"] = _motion_kept(_baseline(ex, tr, va), ex.Y[va], norm, K)
         m["val_rmse_rad"], m["val_rmse_per_joint"] = _dense_rmse(Yp[va], ex.Y[va], norm, K)
         m["val_baseline_label_mean_rmse_rad"], m["val_baseline_per_joint"] = _dense_rmse(_baseline(ex, tr, va), ex.Y[va], norm, K)
         if predict_duration:
@@ -136,7 +173,7 @@ _NO_TAKES = {"arms": "Aucune prise de bras utilisable (statut 'accepted' requis 
 
 # réglages modifiables pour un entraînement (interface / CLI), sans toucher à model.yaml
 OVERRIDABLE = ("hidden", "dropout", "weight_decay", "lr", "smoothness_weight", "epochs", "mirror", "folds",
-               "n_control_points")
+               "n_control_points", "motion_energy_weight")
 MAX_FOLDS = 20
 
 _TRUE, _FALSE = ("1", "true", "yes", "on"), ("0", "false", "no", "off")
@@ -219,7 +256,8 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
     tcfg = dict(cfg.model["training"])
     if epochs:
         tcfg["epochs"] = epochs
-    tcfg.update({k: ov[k] for k in ("weight_decay", "lr", "smoothness_weight", "epochs") if k in ov})
+    tcfg.update({k: ov[k] for k in ("weight_decay", "lr", "smoothness_weight", "epochs", "motion_energy_weight")
+                 if k in ov})
     use_mirror = bool(ov.get("mirror", tcfg.get("mirror", True)))
     folds_req = int(ov.get("folds", tcfg.get("folds", 1)) or 0)
     splits = grouped_kfold(ex.groups, folds_req, int(tcfg["seed"])) if folds_req >= 2 else []
@@ -254,6 +292,7 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
     metrics["settings"] = {"hidden": arch["hidden"], "dropout": arch["dropout"],
                            "weight_decay": float(tcfg["weight_decay"]), "lr": float(tcfg["lr"]),
                            "smoothness_weight": float(tcfg.get("smoothness_weight", 0.0)),
+                           "motion_energy_weight": float(tcfg.get("motion_energy_weight", 0.0)),
                            "epochs": int(tcfg["epochs"]), "mirror": use_mirror,
                            "folds": len(splits) if splits else 1, "n_control_points": K,
                            "overrides": sorted(ov)}
@@ -353,6 +392,8 @@ def _cross_validate(ex, splits, fit, norm, K, tcfg, log, folds_req):
     # pooled out-of-fold validation: each take predicted by the model that never saw it
     m["val_rmse_rad"], m["val_rmse_per_joint"] = _dense_rmse(oof, ex.Y, norm, K)
     m["val_baseline_label_mean_rmse_rad"], m["val_baseline_per_joint"] = _dense_rmse(oof_base, ex.Y, norm, K)
+    m["val_motion_kept"] = _motion_kept(oof, ex.Y, norm, K)
+    m["val_baseline_motion_kept"] = _motion_kept(oof_base, ex.Y, norm, K)
     m["val_duration_mae_s"] = float(np.abs(np.exp(oof_dur) - np.exp(ex.log_dur)).mean())
     # train error: mean over the folds (comparable with the validation above)
     m["train_rmse_rad"] = float(np.mean([r["train_rmse_rad"] for r in rows]))
@@ -360,6 +401,7 @@ def _cross_validate(ex, splits, fit, norm, K, tcfg, log, folds_req):
     with torch.no_grad():
         out = model(torch.tensor(ex.X, dtype=torch.float32)).numpy().astype(np.float64)
     m["final_train_rmse_rad"], _ = _dense_rmse(out[:, :KJ], ex.Y, norm, K)
+    m["train_motion_kept"] = _motion_kept(out[:, :KJ], ex.Y, norm, K)
     m["train_duration_mae_s"] = float(np.abs(np.exp(out[:, -1]) - np.exp(ex.log_dur)).mean())
     m["best_epoch"] = final_epochs - 1
     vals = [r["val_rmse_rad"] for r in rows]

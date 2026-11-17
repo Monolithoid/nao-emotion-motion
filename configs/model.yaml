@@ -29,6 +29,9 @@ training:
   smoothness_weight: 0.0    # penalty on the curvature of the control points. It flattens quick gestures (with 8
                             # points, 0.01 kept ~20 % of a 2-beat gesture); the curve is already smooth by
                             # construction and the guardian checks speed/acceleration at playback
+  motion_energy_weight: 0.1 # each joint must move as much as in its take (RMS speed), whatever the timing. Without
+                            # it the model learns the MEAN of the takes: waves done at different moments cancel
+                            # out and a wave becomes a still arm. 0 = former behaviour (pointwise error only)
   duration_weight: 0.05     # poids de l erreur sur log(durée)
   mirror: true              # add left/right mirrors of the training takes WITHOUT an event (in memory only;
                             # validation stays on real takes ; unfeasible mirrors are dropped, see data/mirror.py)
