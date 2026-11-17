@@ -399,7 +399,10 @@
     <label><input type="checkbox" id="g-event" checked> utiliser l'événement</label>
     <label title="Control points of the MLP output that fall outside the guardian zone are moved to the nearest point inside (shortest translation). The curve then stays in the zone; speed is still adapted. Also applies with the guardian off."><input type="checkbox" id="g-project" checked> project control points into the zone</label>
     <button id="g-random" title="Tire émotion, intensité, angle et distance au hasard (touche 0)">Tirage aléatoire</button>
-    <button id="g-go" title="Key 1">1 Générer et valider</button>
+    <span class="g-actions">
+      <button id="g-go" title="Key 1">1 Générer et valider</button>
+      <button id="g-play" disabled title="Plays the last generated gesture (key 2); options and warnings below the curves">2 ▶ Play on the robot</button>
+    </span>
   </div>
   <details open><summary>Événement</summary><div id="g-fov"></div></details>
   <div class="plot" id="g-plot"></div>
@@ -417,7 +420,6 @@
         <option value="start">stay in the start pose</option>
       </select></label>
       <label class="g-noguard"><input type="checkbox" id="g-noguard"> Guardian off (test, at my own risk)</label>
-      <button id="g-play" disabled title="Plays the last generated gesture (key 2)">2 ▶ Play on the robot</button>
     </div>
     <div class="alert hidden" id="g-noguard-alert"><b>GUARDIAN OFF.</b> <i>Play</i> sends the <b>raw</b> model
       gesture (no adaptation, no slowing down) and the guardian verdict is <b>ignored</b>: no calibrated zone, no
