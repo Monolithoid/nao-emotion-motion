@@ -132,7 +132,7 @@ async function loadTakes() {
   $("t-export-info").innerHTML = `<b>${nExp}</b> of these ${all.length} takes would be published by <code>export-dataset</code> ` +
     `(accepted, real robot, complete recording). The others never leave this PC; the trash is never exported.`;
   $("t-table").innerHTML = `<tr><th><input type="checkbox" id="t-all" title="Tick every take shown"></th><th>Prise</th><th>Type</th><th>Émotion</th><th>Int.</th><th>Durée</th><th>Événement</th><th>Statut</th><th title="Published by export-dataset">Export</th><th>Notes</th></tr>` +
-    TAKES.map((m) => `<tr class="clickable${takeSel.has(m.take_id) ? " ticked" : ""}" data-id="${m.take_id}"><td class="sel"><input type="checkbox" data-tick="${m.take_id}"${takeSel.has(m.take_id) ? " checked" : ""}></td><td>${m.take_id}${m.synthetic ? " <span class='tag'>synth</span>" : ""}${isIncomplete(m) ? " <span class='tag'>incomplete</span>" : ""}</td><td>${m.kind}</td><td>${label(m.emotion)}</td>` +
+    TAKES.map((m) => `<tr class="clickable${takeSel.has(m.take_id) ? " ticked" : ""}${currentTake && currentTake.meta.take_id === m.take_id ? " open" : ""}" data-id="${m.take_id}"><td class="sel"><input type="checkbox" data-tick="${m.take_id}"${takeSel.has(m.take_id) ? " checked" : ""}></td><td>${m.take_id}${m.synthetic ? " <span class='tag'>synth</span>" : ""}${isIncomplete(m) ? " <span class='tag'>incomplete</span>" : ""}</td><td>${m.kind}</td><td>${label(m.emotion)}</td>` +
       `<td>${fmtInt(m.intensity)}</td><td>${m.duration_s.toFixed(1)} s</td><td>${m.event.present ? `az ${(m.event.azimuth_rad * 180 / Math.PI).toFixed(0)}° el ${(m.event.elevation_rad * 180 / Math.PI).toFixed(0)}°` + (m.event.distance_m != null ? ` ${(+m.event.distance_m).toFixed(2)} m` : "") : "aucun"}</td>` +
       `<td class="${m.status}">${m.status}</td><td class="${m.in_export ? "accepted" : "muted"}">${m.in_export ? "✓" : "—"}</td><td>${(m.annotations.notes || "")}</td></tr>`).join("");
   document.querySelectorAll("#t-table tr.clickable").forEach((tr) => tr.onclick = (e) => { if (!e.target.closest("td.sel")) openTake(tr.dataset.id); });
@@ -208,7 +208,7 @@ function initTakeTrash() {
     if (!ids.length) return;
     const r = await api("trash/takes", {ids});
     takeSel.clear();
-    if (currentTake && ids.includes(currentTake.meta.take_id)) { currentTake = null; $("t-detail").classList.add("hidden"); }
+    if (currentTake && ids.includes(currentTake.meta.take_id)) clearTakeView();
     $("t-trash-box").open = true;
     await loadTakes();
     $("t-sel-info").textContent = `${r.trashed.length} take${r.trashed.length > 1 ? "s" : ""} moved to the trash (${fmtBytes(r.bytes)})`;
@@ -262,22 +262,7 @@ function renderProgress(pr) {
   }).join("");
 }
 
-async function openTake(id) {
-  currentTake = await api("takes/" + id);
-  const m = currentTake.meta;
-  $("t-detail").classList.remove("hidden");
-  $("t-title").textContent = `${m.take_id} — ${label(m.emotion)} ${fmtInt(m.intensity)} (${m.kind})`;
-  $("t-notes").value = m.annotations.notes || "";
-  plot($("t-plot"), currentTake.t, cols(currentTake.q), m.joints, {segment: m.segment});
-  const ev = m.event.present ? `az ${(m.event.azimuth_rad * 180 / Math.PI).toFixed(1)}°, el ${(m.event.elevation_rad * 180 / Math.PI).toFixed(1)}°` +
-    (m.event.distance_m != null ? `, ${(+m.event.distance_m).toFixed(2)} m` : ", distance inconnue") + " (repère torse)" : "aucun événement";
-  $("t-info").textContent = `session ${m.session_id} · ${m.n_samples} échantillons · ${m.sample_rate_hz} Hz · segment ${m.segment.map((x) => x.toFixed(2)).join("–")} s · calibration ${m.calibration_version}\n` +
-    `guidées : ${m.guided_joints.join(", ")} · pilotées : ${m.driven_joints.join(", ") || "—"} · ${ev}` +
-    (m.arm_take_id || m.arm_source ? `\nancienne prise enregistrée sur des bras rejoués${m.arm_take_id ? " : " + m.arm_take_id : " (geste généré)"} — seules les articulations ${m.kind === "head" ? "de la tête" : "des mains"} servent à l'entraînement` : "") +
-    (currentTake.head_takes.length ? `\n${currentTake.head_takes.length} prise(s) de tête sur ce mouvement` : "") +
-    ((currentTake.hand_takes || []).length ? `\n${currentTake.hand_takes.length} prise(s) de mains sur ce mouvement` : "") +
-    (currentTake.replay ? `\nrelecture (guardian) : ${currentTake.replay.guardian.ok ? "acceptée" : "refusée " + JSON.stringify(currentTake.replay.guardian.violations)}` : "");
-}
+// openTake (viewer of the selected take, right of the list): takeview.js
 
 function animate(el, t0, t1) {
   const line = document.getElementById(el.id + "-cursor");
@@ -394,21 +379,7 @@ async function init() {
   $("m-retry").onclick = async () => { await saveDraft("hands", "rejected"); $("m-prepare").onclick(); };
   // prises
   $("t-kind").onchange = loadTakes; $("t-refresh").onclick = loadTakes; initTakeTrash();
-  $("t-play").onclick = () => {
-    if (!currentTake) return;
-    const m = currentTake.meta;
-    if (currentTake.replay) {
-      const r = currentTake.replay, off = r.offset;
-      const t = r.t.map((x) => x + off);
-      plot($("t-plot"), currentTake.t, cols(currentTake.q).concat(cols(r.q)), m.joints.concat(r.joints.map((j) => j + " (relecture)")), {segment: m.segment, dashed: r.joints.map((_, k) => m.joints.length + k)});
-      // la relecture est tracée sur sa propre base de temps ; le curseur parcourt le segment
-    } else plot($("t-plot"), currentTake.t, cols(currentTake.q), m.joints, {segment: m.segment});
-    animate($("t-plot"), m.segment[0], m.segment[1]);
-  };
-  const upd = (body) => api("takes/" + currentTake.meta.take_id, body).then(() => { loadTakes(); openTake(currentTake.meta.take_id); });
-  $("t-accept").onclick = () => upd({status: "accepted"});
-  $("t-reject").onclick = () => upd({status: "rejected"});
-  $("t-save-notes").onclick = () => upd({notes: $("t-notes").value});
+  initTakeView();  // takeview.js
   // entraînement et réseau : mlp.js
   // génération
   $("g-go").onclick = generate;

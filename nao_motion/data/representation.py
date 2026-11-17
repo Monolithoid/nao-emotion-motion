@@ -120,3 +120,25 @@ def suggest_segment(traj: Trajectory, threshold_rad: float = 0.03, pad_s: float 
     if t1 - t0 < 0.2:
         return float(traj.t[0]), float(traj.t[-1])
     return t0, t1
+
+
+def greville(n_ctrl: int) -> np.ndarray:
+    """Phase (in [0, 1]) where each control point acts most: the Greville abscissae,
+    used to draw the control points along the curve they shape."""
+    k = np.array(_knots(n_ctrl))
+    return np.array([k[i + 1:i + DEGREE + 1].mean() for i in range(n_ctrl)])
+
+
+def reconstruct(traj: Trajectory, n_ctrl: int, n_samples: int = 100,
+                segment: Optional[Tuple[float, float]] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """What the model is asked to learn from a take, against the take itself.
+
+    The useful segment is resampled on `n_samples` uniform phase points (as for training),
+    fitted with `n_ctrl` control points per joint, and the fitted B-spline evaluated on the
+    same points. Returns (t (n,) in the take's own absolute time, raw (n, J), fitted (n, J)).
+    The gap between raw and fitted is the smoothing due to the representation alone."""
+    t0, t1 = (float(traj.t[0]), float(traj.t[-1])) if segment is None else (float(segment[0]), float(segment[1]))
+    qu, dur = resample_phase(traj.t, traj.q, n_samples, (t0, t1))
+    ctrl = fit_control_points(qu, n_ctrl)
+    fitted = bspline_basis(n_ctrl, np.linspace(0, 1, n_samples)) @ ctrl
+    return np.linspace(t0, t1, n_samples), qu, fitted
