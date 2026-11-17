@@ -402,10 +402,27 @@
 
   function select(run) { selected = run; renderList(); renderView(); }
 
+  // only the training in progress (and the last one if it failed): finished ones are in Résultats
+  function renderJobs(jobs) {
+    const running = jobs.filter((j) => j.state === "running");
+    const last = jobs[jobs.length - 1];
+    const show = running.length ? running : (last && last.state === "error" ? [last] : []);
+    setHTML($("tr-jobs"), show.map((j) => {
+      const p = j.progress.length ? j.progress[j.progress.length - 1] : null;
+      const tot = p && p.stage && p.stage.startsWith("modèle final") ? null : j.epochs;
+      const frac = p && tot ? Math.min(1, (p.epoch + 1) / tot) : 0;
+      const secs = Math.round(Date.now() / 1000 - j.started);
+      if (j.state === "error") return `<div class="tr-job err"><b>${GROUPS[j.component] || esc(j.component)}</b> · échec de l'entraînement : ${esc(j.error || "")}</div>`;
+      return `<div class="tr-job"><span class="dot" style="background:${GCOL[j.component] || "#888"}"></span><b>En cours : ${GROUPS[j.component] || esc(j.component)}</b>` +
+        (p ? `${p.stage ? " · " + esc(p.stage) : ""} · époque ${p.epoch}${tot ? " / " + tot : ""} · perte ${fr(p.train_loss, 4)}${p.val_loss !== null && p.val_loss !== undefined ? " (val. " + fr(p.val_loss, 4) + ")" : ""}` : " · préparation des données…") +
+        ` · ${secs >= 60 ? Math.floor(secs / 60) + " min " : ""}${secs % 60} s` +
+        (tot ? `<div class="gtrack"><div class="gfill v-good" style="width:${(frac * 100).toFixed(1)}%;background:var(--accent)"></div></div>` : "") + "</div>";
+    }).join(""));
+  }
+
   async function refresh() {
     const d = await api("train");
-    setHTML($("tr-jobs"), d.jobs.map((j) => `<div class="mono">${j.id} · ${j.component} · ${j.state}${j.error ? " · " + j.error : ""}` +
-      (j.progress.length ? `${j.progress[j.progress.length - 1].stage ? " · " + j.progress[j.progress.length - 1].stage : ""} · époque ${j.progress[j.progress.length - 1].epoch}, perte ${j.progress[j.progress.length - 1].train_loss.toFixed(4)}` : "") + "</div>").join(""));
+    renderJobs(d.jobs);
     const sig = d.runs.map((r) => r.run).join("|");
     if (sig === lastSig) return;
     const fresh = lastSig !== "" && d.runs.length > runs.length;

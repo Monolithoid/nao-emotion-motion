@@ -118,3 +118,12 @@ def test_training_runs_chronological_with_history(trained):
         with pytest.raises(ValueError):
             api.get_train_history({"run": bad})
 
+
+
+def test_training_job_carries_planned_epochs(trained):
+    """Training tab shows the training in progress as epoch N / planned epochs."""
+    wb = trained["wb"]
+    job = wb.train("arms", epochs=30, background=False)
+    assert job["state"] == "done" and job["epochs"] == 30
+    job = wb.train("arms", epochs=30, background=False, overrides={"epochs": 20})
+    assert job["epochs"] == 20
