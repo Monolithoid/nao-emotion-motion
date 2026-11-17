@@ -341,7 +341,7 @@ The tests compare the exported library with the project: same gestures as `Motio
 
 ## Connecting the real robot
 
-Identity recorded on Joachim's NAO (in `.env.example`): **naoH25, head/body/arms VERSION_40 (NAO V4), NAOqi 2.1.4.13, Python 2.7.3, name “nao”**. To record or check it on another robot, over SSH (`ssh nao@<IP>`):
+Identity recorded on Monolithoid's NAO (in `.env.example`): **naoH25, head/body/arms VERSION_40 (NAO V4), NAOqi 2.1.4.13, Python 2.7.3, name “nao”**. To record or check it on another robot, over SSH (`ssh nao@<IP>`):
 
 ```bash
 qicli call ALSystem.systemVersion        # NAOqi version
