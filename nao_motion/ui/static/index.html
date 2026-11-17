@@ -258,9 +258,26 @@
   <div id="stats"></div>
   <div class="row">
     <label>Type <select id="t-kind"><option value="">tous</option><option value="arms">bras</option><option value="head">tête</option><option value="hands">mains</option></select></label>
+    <label>Status <select id="t-status"><option value="">all</option><option value="accepted">accepted</option><option value="pending">pending</option><option value="rejected">rejected</option></select></label>
     <button id="t-refresh">Actualiser</button>
   </div>
-  <table id="t-table"></table>
+  <p class="hint" id="t-export-info"></p>
+  <div class="row t-select">
+    <span class="legend">Select:</span>
+    <button data-tsel="rejected" title="Rejected takes shown in the table">rejected</button><button data-tsel="pending" title="Pending takes shown in the table">pending</button><button data-tsel="synthetic" title="Simulated takes shown in the table">simulated</button><button data-tsel="incomplete" title="Interrupted recordings (tag incomplete) shown in the table">incomplete</button><button data-tsel="noexport" title="Every take shown that export-dataset would not publish">not exported</button><button data-tsel="none">none</button>
+    <button id="t-trash" class="bad" disabled title="Moves the selected takes to data/trash/takes/: out of training, progress and export. Restorable until the trash is emptied.">Move to trash</button>
+    <span id="t-sel-info" class="legend"></span>
+  </div>
+  <table id="t-table" class="t-table"></table>
+  <details id="t-trash-box" class="trash-box">
+    <summary id="t-trash-sum">Trash</summary>
+    <div class="row">
+      <button id="t-restore" disabled>Restore selected</button>
+      <button id="t-purge" class="bad" disabled title="Deletes the selected takes for good (asks for confirmation)">Delete selected for good</button>
+      <button id="t-empty" class="bad" title="Deletes every take of the trash for good (asks for confirmation)">Empty the trash</button>
+    </div>
+    <table id="t-trash-table" class="t-table"></table>
+  </details>
   <div id="t-detail" class="draft hidden">
     <h3 id="t-title"></h3>
     <div class="plot" id="t-plot"></div>
@@ -328,7 +345,21 @@
         <span role="group" aria-label="Groupe"><button data-tr-filter="" class="sel">Tous</button><button data-tr-filter="arms">Bras</button><button data-tr-filter="head">Tête</button><button data-tr-filter="hands">Mains</button></span>
         <button id="tr-order" title="Inverser l'ordre">↓ plus ancien en haut</button>
       </div>
+      <div class="row tr-select">
+        <button id="tr-sel-old" title="Ticks every training shown except the active model of each group">all but active</button><button id="tr-sel-none">none</button>
+        <button id="tr-trash" class="bad" disabled title="Moves the ticked trainings to runs/trash/. Restorable until the trash is emptied. Only the active model of each group is published by export-dataset.">Move to trash</button>
+        <span id="tr-sel-info" class="legend"></span>
+      </div>
       <div id="tr-runs" class="tr-runs"></div>
+      <details id="tr-trash-box" class="trash-box">
+        <summary id="tr-trash-sum">Trash</summary>
+        <div class="row">
+          <button id="tr-restore" disabled>Restore selected</button>
+          <button id="tr-purge" class="bad" disabled>Delete selected for good</button>
+          <button id="tr-empty" class="bad">Empty the trash</button>
+        </div>
+        <div id="tr-trash-list"></div>
+      </details>
     </div>
     <div id="tr-view" class="tr-view"><p class="hint">Aucun entraînement pour l'instant.</p></div>
   </div>

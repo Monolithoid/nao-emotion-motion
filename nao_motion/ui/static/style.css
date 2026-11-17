@@ -219,3 +219,12 @@ body[data-tab=arms] .nao-svg,body[data-tab=head] .nao-svg,body[data-tab=hands] .
 @media (max-width:1300px){.tr-grid,.net-grid{grid-template-columns:minmax(0,1fr)}.tr-charts{grid-template-columns:minmax(0,1fr)}}
 .tr-job{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin:0 0 8px;font-size:13px;max-width:900px}
 .tr-job .gtrack{margin-top:4px;height:8px}.tr-job.err{border-color:var(--bad);color:var(--bad)}
+/* selection and trash (takes, trainings) */
+td.muted{color:var(--muted)}
+td.sel,th:has(> #t-all),th:has(> #tr-all),th:has(> #tt-all),th:has(> #trt-all){width:22px;text-align:center}
+tr.ticked td{background:color-mix(in srgb,var(--bad) 10%,transparent)}
+.tag.active{border-color:var(--ok);color:var(--ok)}
+.t-select button,.tr-select button{margin-right:2px}
+.trash-box{margin:10px 0;border:1px dashed var(--line);border-radius:6px;padding:6px 10px}
+.trash-box summary{cursor:pointer;color:var(--muted)}
+.trash-box[open] summary{margin-bottom:6px}

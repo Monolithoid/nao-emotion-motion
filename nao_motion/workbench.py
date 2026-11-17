@@ -522,6 +522,8 @@ class Workbench:
         """Training runs in chronological order (oldest first), whatever the group.
         Run folders are named <group>-<YYYYmmdd-HHMMSS-us>: sorting by name grouped them by group."""
         import json
+        from .data.trash import active_runs
+        active = set(active_runs(self.runs_dir).values())
         out = []
         for p in self.runs_dir.glob("*/metrics.json"):
             try:
@@ -531,7 +533,7 @@ class Workbench:
             name = p.parent.name
             comp, _, stamp = name.partition("-")
             out.append({"run": name, "path": str(p.parent), "component": comp, "stamp": stamp,
-                        "metrics": d.get("metrics", {})})
+                        "active": name in active, "metrics": d.get("metrics", {})})
         out.sort(key=lambda r: (r["stamp"], r["run"]))
         return out
 

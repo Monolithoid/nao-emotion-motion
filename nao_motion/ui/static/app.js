@@ -121,13 +121,23 @@ function updateConsigne() {
 
 // ---- prises ----------------------------------------------------------------------
 let TAKES = [];
+const takeSel = new Set();   // ticked takes (kept across refreshes)
+const fmtBytes = (n) => n >= 1048576 ? `${(n / 1048576).toFixed(1).replace(".", ",")} MB` : `${Math.max(1, Math.round(n / 1024))} kB`;
+const isIncomplete = (m) => ((m.annotations || {}).tags || []).includes("incomplete");
 async function loadTakes() {
-  TAKES = await api("takes" + ($("t-kind").value ? "?kind=" + $("t-kind").value : ""));
-  $("t-table").innerHTML = "<tr><th>Prise</th><th>Type</th><th>Émotion</th><th>Int.</th><th>Durée</th><th>Événement</th><th>Statut</th><th>Notes</th></tr>" +
-    TAKES.map((m) => `<tr class="clickable" data-id="${m.take_id}"><td>${m.take_id}${m.synthetic ? " <span class='tag'>synth</span>" : ""}</td><td>${m.kind}</td><td>${label(m.emotion)}</td>` +
+  const all = await api("takes" + ($("t-kind").value ? "?kind=" + $("t-kind").value : ""));
+  TAKES = $("t-status").value ? all.filter((m) => m.status === $("t-status").value) : all;
+  for (const id of [...takeSel]) if (!TAKES.some((m) => m.take_id === id)) takeSel.delete(id);
+  const nExp = all.filter((m) => m.in_export).length;
+  $("t-export-info").innerHTML = `<b>${nExp}</b> of these ${all.length} takes would be published by <code>export-dataset</code> ` +
+    `(accepted, real robot, complete recording). The others never leave this PC; the trash is never exported.`;
+  $("t-table").innerHTML = `<tr><th><input type="checkbox" id="t-all" title="Tick every take shown"></th><th>Prise</th><th>Type</th><th>Émotion</th><th>Int.</th><th>Durée</th><th>Événement</th><th>Statut</th><th title="Published by export-dataset">Export</th><th>Notes</th></tr>` +
+    TAKES.map((m) => `<tr class="clickable${takeSel.has(m.take_id) ? " ticked" : ""}" data-id="${m.take_id}"><td class="sel"><input type="checkbox" data-tick="${m.take_id}"${takeSel.has(m.take_id) ? " checked" : ""}></td><td>${m.take_id}${m.synthetic ? " <span class='tag'>synth</span>" : ""}${isIncomplete(m) ? " <span class='tag'>incomplete</span>" : ""}</td><td>${m.kind}</td><td>${label(m.emotion)}</td>` +
       `<td>${fmtInt(m.intensity)}</td><td>${m.duration_s.toFixed(1)} s</td><td>${m.event.present ? `az ${(m.event.azimuth_rad * 180 / Math.PI).toFixed(0)}° el ${(m.event.elevation_rad * 180 / Math.PI).toFixed(0)}°` + (m.event.distance_m != null ? ` ${(+m.event.distance_m).toFixed(2)} m` : "") : "aucun"}</td>` +
-      `<td class="${m.status}">${m.status}</td><td>${(m.annotations.notes || "")}</td></tr>`).join("");
-  document.querySelectorAll("#t-table tr.clickable").forEach((tr) => tr.onclick = () => openTake(tr.dataset.id));
+      `<td class="${m.status}">${m.status}</td><td class="${m.in_export ? "accepted" : "muted"}">${m.in_export ? "✓" : "—"}</td><td>${(m.annotations.notes || "")}</td></tr>`).join("");
+  document.querySelectorAll("#t-table tr.clickable").forEach((tr) => tr.onclick = (e) => { if (!e.target.closest("td.sel")) openTake(tr.dataset.id); });
+  takeSelInfo();
+  loadTakeTrash();
   renderProgress(await api("progress", undefined, {quiet: true}).catch((e) => ({error: e.message})));
   const st = await api("stats");
   let h = "";
@@ -140,6 +150,84 @@ async function loadTakes() {
     h += "</table>";
   }
   $("stats").innerHTML = h;
+}
+
+// selection and trash of takes ------------------------------------------------------
+function takeSelInfo() {
+  const n = takeSel.size;
+  $("t-trash").disabled = !n;
+  $("t-trash").textContent = n ? `Move ${n} take${n > 1 ? "s" : ""} to trash` : "Move to trash";
+  $("t-sel-info").textContent = n ? `${n} ticked` : "";
+  const all = $("t-all");
+  if (all) { all.checked = n > 0 && TAKES.every((m) => takeSel.has(m.take_id)); all.indeterminate = n > 0 && !all.checked; }
+  document.querySelectorAll("#t-table tr[data-id]").forEach((tr) => {
+    const on = takeSel.has(tr.dataset.id);
+    tr.classList.toggle("ticked", on);
+    tr.querySelector("input[data-tick]").checked = on;
+  });
+}
+let takeTrash = [];
+const trashSel = new Set();
+async function loadTakeTrash() {
+  const d = await api("trash", undefined, {quiet: true}).catch(() => null);
+  if (!d) return;
+  takeTrash = d.takes;
+  for (const id of [...trashSel]) if (!takeTrash.some((t) => t.take_id === id)) trashSel.delete(id);
+  $("t-trash-sum").innerHTML = `Trash: <b>${takeTrash.length}</b> take${takeTrash.length > 1 ? "s" : ""}` +
+    (takeTrash.length ? ` (${fmtBytes(d.takes_bytes)}, in <code>data/trash/takes/</code>, not exported, restorable)` : " (empty)");
+  $("t-empty").disabled = !takeTrash.length;
+  $("t-trash-table").innerHTML = takeTrash.length ? `<tr><th><input type="checkbox" id="tt-all"></th><th>Prise</th><th>Type</th><th>Émotion</th><th>Int.</th><th>Statut</th><th>Size</th><th>Trashed</th></tr>` +
+    takeTrash.map((t) => `<tr data-tid="${t.take_id}"><td class="sel"><input type="checkbox" data-ttick="${t.take_id}"${trashSel.has(t.take_id) ? " checked" : ""}></td><td>${t.take_id}${t.synthetic ? " <span class='tag'>synth</span>" : ""}${(t.tags || []).includes("incomplete") ? " <span class='tag'>incomplete</span>" : ""}</td><td>${t.kind || "?"}</td>` +
+      `<td>${t.emotion ? label(t.emotion) : "?"}</td><td>${t.intensity != null ? fmtInt(t.intensity) : ""}</td><td class="${t.status}">${t.status || ""}</td><td>${fmtBytes(t.bytes)}</td><td>${(t.trashed_at || "").replace("T", " ")}</td></tr>`).join("") : "";
+  trashSelInfo();
+}
+function trashSelInfo() {
+  const n = trashSel.size;
+  $("t-restore").disabled = $("t-purge").disabled = !n;
+  $("t-restore").textContent = n ? `Restore ${n}` : "Restore selected";
+  $("t-purge").textContent = n ? `Delete ${n} for good` : "Delete selected for good";
+  const all = $("tt-all");
+  if (all) { all.checked = n > 0 && n === takeTrash.length; all.indeterminate = n > 0 && !all.checked; }
+}
+function initTakeTrash() {
+  $("t-status").onchange = loadTakes;
+  $("t-table").addEventListener("change", (e) => {
+    if (e.target.id === "t-all") { TAKES.forEach((m) => e.target.checked ? takeSel.add(m.take_id) : takeSel.delete(m.take_id)); }
+    else if (e.target.dataset.tick) { e.target.checked ? takeSel.add(e.target.dataset.tick) : takeSel.delete(e.target.dataset.tick); }
+    takeSelInfo();
+  });
+  const pick = {rejected: (m) => m.status === "rejected", pending: (m) => m.status === "pending", synthetic: (m) => m.synthetic,
+    incomplete: isIncomplete, noexport: (m) => !m.in_export};
+  document.querySelectorAll("[data-tsel]").forEach((b) => b.onclick = () => {
+    if (b.dataset.tsel === "none") takeSel.clear();
+    else TAKES.filter(pick[b.dataset.tsel]).forEach((m) => takeSel.add(m.take_id));
+    takeSelInfo();
+  });
+  $("t-trash").onclick = async () => {
+    const ids = [...takeSel];
+    if (!ids.length) return;
+    const r = await api("trash/takes", {ids});
+    takeSel.clear();
+    if (currentTake && ids.includes(currentTake.meta.take_id)) { currentTake = null; $("t-detail").classList.add("hidden"); }
+    $("t-trash-box").open = true;
+    await loadTakes();
+    $("t-sel-info").textContent = `${r.trashed.length} take${r.trashed.length > 1 ? "s" : ""} moved to the trash (${fmtBytes(r.bytes)})`;
+  };
+  $("t-trash-table").addEventListener("change", (e) => {
+    if (e.target.id === "tt-all") { takeTrash.forEach((t) => e.target.checked ? trashSel.add(t.take_id) : trashSel.delete(t.take_id)); }
+    else if (e.target.dataset.ttick) { e.target.checked ? trashSel.add(e.target.dataset.ttick) : trashSel.delete(e.target.dataset.ttick); }
+    document.querySelectorAll("#t-trash-table input[data-ttick]").forEach((i) => i.checked = trashSel.has(i.dataset.ttick));
+    trashSelInfo();
+  });
+  $("t-restore").onclick = async () => { await api("trash/restore", {takes: [...trashSel]}); trashSel.clear(); loadTakes(); };
+  const purge = async (items) => {
+    const n = items ? items.length : takeTrash.length;
+    if (!n || !window.confirm(`Delete ${n} take${n > 1 ? "s" : ""} FOR GOOD? This cannot be undone.`)) return;
+    await api("trash/empty", {what: "takes", items, confirm: true});
+    trashSel.clear(); loadTakeTrash();
+  };
+  $("t-purge").onclick = () => purge([...trashSel]);
+  $("t-empty").onclick = () => purge(undefined);
 }
 
 // barre de progression à paliers par groupe (prises acceptées) -------------------
@@ -305,7 +393,7 @@ async function init() {
   $("m-reject").onclick = () => saveDraft("hands", "rejected");
   $("m-retry").onclick = async () => { await saveDraft("hands", "rejected"); $("m-prepare").onclick(); };
   // prises
-  $("t-kind").onchange = loadTakes; $("t-refresh").onclick = loadTakes;
+  $("t-kind").onchange = loadTakes; $("t-refresh").onclick = loadTakes; initTakeTrash();
   $("t-play").onclick = () => {
     if (!currentTake) return;
     const m = currentTake.meta;
