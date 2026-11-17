@@ -256,6 +256,8 @@
   <div id="progress" class="progress-list"></div>
   <h3>Répartition (émotion × intensité, prises acceptées / total)</h3>
   <div id="stats"></div>
+ <div class="takes-grid">
+ <div class="takes-list">
   <div class="row">
     <label>Type <select id="t-kind"><option value="">tous</option><option value="arms">bras</option><option value="head">tête</option><option value="hands">mains</option></select></label>
     <label>Status <select id="t-status"><option value="">all</option><option value="accepted">accepted</option><option value="pending">pending</option><option value="rejected">rejected</option></select></label>
@@ -278,18 +280,31 @@
     </div>
     <table id="t-trash-table" class="t-table"></table>
   </details>
-  <div id="t-detail" class="draft hidden">
-    <h3 id="t-title"></h3>
-    <div class="plot" id="t-plot"></div>
-    <div class="row">
-      <button id="t-play">Rejouer virtuellement</button>
-      <input id="t-notes" placeholder="Annotation">
-      <button class="ok" id="t-accept">Accepter</button>
-      <button class="bad" id="t-reject">Rejeter</button>
-      <button id="t-save-notes">Enregistrer l'annotation</button>
-    </div>
-    <div id="t-info" class="mono"></div>
   </div>
+  <aside class="take-view" aria-label="Selected take">
+    <p id="t-pick" class="hint">Click a take in the list to see its curves here.</p>
+    <div id="t-detail" class="hidden">
+      <h3 id="t-title"></h3>
+      <div id="t-chips" class="tv-chips"></div>
+      <div class="row tv-ctl">
+        <label title="Number of B-spline control points per joint used to fit this take. The default (marked *) is the one of the active model of the group, else configs/model.yaml. Changing it here only changes this view.">Control points <select id="t-n"></select></label>
+        <label title="The curve the model is actually trained on: the take resampled on the useful segment and fitted with the control points"><input type="checkbox" id="t-show-fit" checked> fit</label>
+        <label title="Control points drawn where each one acts most (Greville abscissae)"><input type="checkbox" id="t-show-ctrl" checked> points</label>
+        <label title="What the active model of this group generates for the same emotion, intensity and event (its own learnt duration, from the start of the segment)"><input type="checkbox" id="t-show-model"> active model</label>
+        <button id="t-play" title="Moves a cursor along the curves (no movement of the robot)">Replay virtually</button>
+      </div>
+      <div id="t-fitsum" class="tv-sum"></div>
+      <div id="t-plots" class="tv-plots"></div>
+      <div class="row">
+        <input id="t-notes" placeholder="Annotation">
+        <button class="ok" id="t-accept">Accept</button>
+        <button class="bad" id="t-reject">Reject</button>
+        <button id="t-save-notes">Save annotation</button>
+      </div>
+      <div id="t-info" class="mono"></div>
+    </div>
+  </aside>
+ </div>
 </section>
 
 <section id="tab-net" class="tab">
@@ -383,12 +398,32 @@
     <label>Variation <input type="number" id="g-var" value="0" step="0.02" min="0" class="num"></label>
     <label><input type="checkbox" id="g-event" checked> utiliser l'événement</label>
     <button id="g-random" title="Tire émotion, intensité, angle et distance au hasard (touche 0)">Tirage aléatoire</button>
-    <button id="g-go">Générer et valider</button>
+    <button id="g-go" title="Key 1">1 Générer et valider</button>
   </div>
   <details open><summary>Événement</summary><div id="g-fov"></div></details>
   <div class="plot" id="g-plot"></div>
   <div id="g-report" class="mono"></div>
-  <div class="row"><button id="g-exec" disabled>Exécuter le cycle (repos → départ → geste → départ → repos)</button></div>
+  <fieldset class="g-play">
+    <legend>Play on the robot</legend>
+    <div class="row">
+      <label>Start <select id="g-start">
+        <option value="auto" selected>auto: rest if measured there, else current posture</option>
+        <option value="rest">rest only</option>
+        <option value="current">current posture</option>
+      </select></label>
+      <label>End <select id="g-end">
+        <option value="rest" selected>back to rest</option>
+        <option value="start">stay in the start pose</option>
+      </select></label>
+      <button id="g-play" disabled title="Plays the last generated gesture (key 2)">2 ▶ Play on the robot</button>
+    </div>
+    <div id="g-play-why" class="mono"></div>
+    <div class="alert" id="g-alert"><b>Warning:</b> <kbd>2</kbd> / <i>Play</i> sends the gesture to the robot
+      <b>without confirmation</b> as soon as motors are armed: the cycle (posture → start → gesture → start → rest)
+      is planned from the measured posture, made playable, then checked whole by the guardian (factory limits =
+      absolute ceiling); if refused, nothing is sent. Keep the area clear. <b>Stop</b> (top of the page) halts and
+      holds the posture.</div>
+  </fieldset>
 </section>
 
 <section id="tab-calib" class="tab">
@@ -514,6 +549,7 @@
 </aside>
 </div>
 <script src="app.js"></script>
+<script src="takeview.js"></script>
 <script src="fov.js"></script>
 <script src="calib.js"></script>
 <script src="nao-figure.js"></script>
