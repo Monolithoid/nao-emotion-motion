@@ -377,6 +377,7 @@
     if (!r) { el.innerHTML = `<p class="hint">Aucun entraînement pour l'instant.</p>`; return; }
     const m = r.metrics || {}, a = assess(m);
     el.innerHTML = `<div class="tr-head"><span class="dot" style="background:${GCOL[r.component]}"></span><b>${GROUPS[r.component] || esc(r.component)}</b> · ${fmtStamp(r.stamp)} · <span class="mono">${esc(r.run)}</span>
+        <button id="tr-reuse" title="Remet les réglages de cet entraînement (réseau, dropout, weight decay, lr, lissage, miroir, parts, époques) dans l'onglet Réseau pour un nouvel entraînement"${r.metrics && r.metrics.settings ? "" : " disabled"}>Reprendre les réglages</button>
         <button id="tr-copy" title="Copie toutes les métriques (JSON) dans le presse-papiers">Copier</button></div>
       <div class="tr-trend">${trendChart()}</div>
       <div class="tr-charts">
@@ -390,6 +391,7 @@
           <details><summary>Détails</summary><div class="mono">${esc(details(m))}</div></details>
         </figure>
       </div>`;
+    $("tr-reuse").onclick = (e) => reuse(r, e.target);
     $("tr-copy").onclick = (e) => copyText(JSON.stringify({run: r.run, path: r.path, metrics: r.metrics}, null, 2), e.target);
     if (!hist[r.run]) {
       const want = r.run;
@@ -400,12 +402,44 @@
     }
   }
 
+  // put the settings of a past run back in the Réseau tab (and the epochs field) for a new training
+  function reuse(r, btn) {
+    const s = (r.metrics || {}).settings;
+    if (!s) return;
+    setFields({hidden: (s.hidden || []).join(","), dropout: s.dropout, weight_decay: s.weight_decay, lr: s.lr,
+               smoothness_weight: s.smoothness_weight, folds: (r.metrics.cv && r.metrics.cv.requested) || s.folds || 1});  // runs before cross-validation: single split
+    $("tr-mirror").checked = s.mirror === true;  // runs before the mirror option: no mirror
+    if (s.epochs) $("tr-epochs").value = s.epochs;
+    const b = document.querySelector(`[data-net-group="${r.component}"]`);
+    if (b) b.click();
+    changed();
+    const old = btn.textContent; btn.textContent = "Réglages repris ✓";
+    setTimeout(() => { btn.textContent = old; }, 1500);
+  }
+
   function select(run) { selected = run; renderList(); renderView(); }
+
+  // only the training in progress (and the last one if it failed): finished ones are in Résultats
+  function renderJobs(jobs) {
+    const running = jobs.filter((j) => j.state === "running");
+    const last = jobs[jobs.length - 1];
+    const show = running.length ? running : (last && last.state === "error" ? [last] : []);
+    setHTML($("tr-jobs"), show.map((j) => {
+      const p = j.progress.length ? j.progress[j.progress.length - 1] : null;
+      const tot = p && p.stage && p.stage.startsWith("modèle final") ? null : j.epochs;
+      const frac = p && tot ? Math.min(1, (p.epoch + 1) / tot) : 0;
+      const secs = Math.round(Date.now() / 1000 - j.started);
+      if (j.state === "error") return `<div class="tr-job err"><b>${GROUPS[j.component] || esc(j.component)}</b> · échec de l'entraînement : ${esc(j.error || "")}</div>`;
+      return `<div class="tr-job"><span class="dot" style="background:${GCOL[j.component] || "#888"}"></span><b>En cours : ${GROUPS[j.component] || esc(j.component)}</b>` +
+        (p ? `${p.stage ? " · " + esc(p.stage) : ""} · époque ${p.epoch}${tot ? " / " + tot : ""} · perte ${fr(p.train_loss, 4)}${p.val_loss !== null && p.val_loss !== undefined ? " (val. " + fr(p.val_loss, 4) + ")" : ""}` : " · préparation des données…") +
+        ` · ${secs >= 60 ? Math.floor(secs / 60) + " min " : ""}${secs % 60} s` +
+        (tot ? `<div class="gtrack"><div class="gfill v-good" style="width:${(frac * 100).toFixed(1)}%;background:var(--accent)"></div></div>` : "") + "</div>";
+    }).join(""));
+  }
 
   async function refresh() {
     const d = await api("train");
-    setHTML($("tr-jobs"), d.jobs.map((j) => `<div class="mono">${j.id} · ${j.component} · ${j.state}${j.error ? " · " + j.error : ""}` +
-      (j.progress.length ? `${j.progress[j.progress.length - 1].stage ? " · " + j.progress[j.progress.length - 1].stage : ""} · époque ${j.progress[j.progress.length - 1].epoch}, perte ${j.progress[j.progress.length - 1].train_loss.toFixed(4)}` : "") + "</div>").join(""));
+    renderJobs(d.jobs);
     const sig = d.runs.map((r) => r.run).join("|");
     if (sig === lastSig) return;
     const fresh = lastSig !== "" && d.runs.length > runs.length;

@@ -196,7 +196,7 @@ body[data-tab=arms] .nao-svg,body[data-tab=head] .nao-svg,body[data-tab=hands] .
 .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:0}
 .vdot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-left:4px}.vdot.v-good{background:var(--ok)}.vdot.v-warn{background:var(--v-warn)}.vdot.v-bad{background:var(--bad)}
 .tr-view{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-width:0}
-.tr-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.tr-head button{margin-left:auto}
+.tr-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.tr-head #tr-reuse{margin-left:auto}
 .tr-charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px}
 .tr-charts figure{margin:0;min-width:0}.tr-charts figcaption{font-size:13px;font-weight:600;margin:2px 0}
 .chart{width:100%;height:auto;display:block}.chart text{font-family:system-ui,sans-serif;fill:var(--fg)}
@@ -217,3 +217,5 @@ body[data-tab=arms] .nao-svg,body[data-tab=head] .nao-svg,body[data-tab=hands] .
 .gmark{position:absolute;top:0;bottom:0;width:2px;background:var(--fg)}
 .tr-view details{margin-top:6px;font-size:13px}
 @media (max-width:1300px){.tr-grid,.net-grid{grid-template-columns:minmax(0,1fr)}.tr-charts{grid-template-columns:minmax(0,1fr)}}
+.tr-job{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin:0 0 8px;font-size:13px;max-width:900px}
+.tr-job .gtrack{margin-top:4px;height:8px}.tr-job.err{border-color:var(--bad);color:var(--bad)}

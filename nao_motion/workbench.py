@@ -491,7 +491,9 @@ class Workbench:
         statuses = ("accepted", "pending") if include_pending else ("accepted",)
         job_id = new_id(f"train-{component}")
         job = {"id": job_id, "component": component, "state": "running", "progress": [], "run": None,
-               "error": None, "started": time.time(), "overrides": overrides}
+               "error": None, "started": time.time(), "overrides": overrides,
+               # planned epochs per stage (shown with the training in progress)
+               "epochs": int(overrides.get("epochs") or epochs or self.cfg.model["training"]["epochs"])}
         self.jobs[job_id] = job
 
         def log(ep, l, lv, stage=None):
