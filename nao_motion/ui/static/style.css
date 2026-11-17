@@ -206,6 +206,7 @@ body[data-tab=arms] .nao-svg,body[data-tab=head] .nao-svg,body[data-tab=hands] .
 .z-good{fill:var(--z-good)}.z-warn{fill:var(--z-warn)}.z-bad{fill:var(--z-bad)}
 .l-train{fill:none;stroke:var(--c-train);stroke-width:2}.l-val{fill:none;stroke:var(--c-val);stroke-width:2}
 .tick-ref{stroke:var(--fg);stroke-width:2}
+.b-val{fill:var(--c-val);fill-opacity:.16;stroke:none}.whisk{stroke:var(--fg);stroke-width:1.5}.c-mean{fill:var(--c-val);stroke:var(--fg);stroke-width:1.5}
 .trend .trend-l{fill:none;stroke-width:1.5;stroke-opacity:.6}.trend .trend-p{cursor:pointer;stroke:var(--card);stroke-width:1.5}.trend .trend-p.on{stroke:var(--fg);stroke-width:2.5}
 .tr-trend{margin:6px 0 2px}
 .key{display:inline-block;width:12px;height:8px;border-radius:2px;margin:0 3px 0 10px;vertical-align:0}.k-train{background:var(--c-train)}.k-val{background:var(--c-val)}.k-ref{background:var(--fg);width:3px}.dotk{width:8px;border-radius:50%}.k-over{background:color-mix(in srgb,var(--c-val) 55%,var(--bad))}

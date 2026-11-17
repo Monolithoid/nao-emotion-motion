@@ -6,7 +6,7 @@
 (function () {
   const GROUPS = {arms: "Bras", head: "Tête", hands: "Mains"};
   const GCOL = {arms: "#2f62d8", head: "#e07a12", hands: "#1d8a4b"};
-  const FIELDS = {hidden: "tr-hidden", dropout: "tr-dropout", weight_decay: "tr-wd", lr: "tr-lr", smoothness_weight: "tr-smooth"};
+  const FIELDS = {hidden: "tr-hidden", dropout: "tr-dropout", weight_decay: "tr-wd", lr: "tr-lr", smoothness_weight: "tr-smooth", folds: "tr-folds"};
   const STORE = "nao-net-settings";
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
@@ -23,11 +23,13 @@
     return o;
   }
   const mirrorDefault = () => (M().training || {}).mirror ?? true;
+  const foldsSetting = () => { const v = $("tr-folds").value.trim(); return parseInt(v !== "" ? v : ((M().training || {}).folds ?? 1)) || 0; };
   function setFields(v) { for (const [k, id] of Object.entries(FIELDS)) $(id).value = v[k] ?? ""; changed(); }
   function placeholders() {
     const A = groupModel(netGroup), T = M().training || {};
     $("tr-hidden").placeholder = (A.hidden || []).join(","); $("tr-dropout").placeholder = A.dropout ?? "";
     $("tr-wd").placeholder = T.weight_decay ?? ""; $("tr-lr").placeholder = T.lr ?? ""; $("tr-smooth").placeholder = T.smoothness_weight ?? "";
+    $("tr-folds").placeholder = T.folds ?? 1;
   }
   // effective settings for a group: field if filled, else model.yaml
   function effective(g) {
@@ -48,9 +50,11 @@
   function summary() {
     const s = effective("arms"), o = overrides();
     $("tr-net-sum").textContent = Object.keys(o).length
-      ? `Réglages de l'onglet Réseau : ${Object.entries(o).map(([k, v]) => `${{hidden: "couches", dropout: "dropout", weight_decay: "weight decay", lr: "lr", smoothness_weight: "lissage"}[k]} ${v}`).join(" · ")}`
+      ? `Réglages de l'onglet Réseau : ${Object.entries(o).map(([k, v]) => `${{hidden: "couches", dropout: "dropout", weight_decay: "weight decay", lr: "lr", smoothness_weight: "lissage", folds: "parts de validation croisée"}[k]} ${v}`).join(" · ")}`
       : "Réglages : ceux de model.yaml (modifiables dans l'onglet Réseau)";
     $("tr-net-sum").textContent += $("tr-mirror").checked ? " · miroir activé" : " · miroir désactivé";
+    const k = foldsSetting();
+    $("tr-net-sum").textContent += k >= 2 ? ` · validation croisée ${k} parts (≈ ${k + 1} entraînements)` : " · découpage unique 75/25";
     return s;
   }
 
@@ -159,6 +163,7 @@
   // what to expect: returns [{k, cls, text}] for a run's metrics
   function assess(m) {
     const out = [], v = m.val_rmse_rad, b = m.val_baseline_label_mean_rmse_rad, t = m.train_rmse_rad;
+    const cv = m.cv;
     if (v === undefined) { out.push({k: "val", cls: "v-bad", text: "pas de validation (moins de deux groupes de prises)"}); }
     else {
       const gain = 1 - v / b;
@@ -170,6 +175,12 @@
         : gap <= 2.5 ? {k: "gap", cls: "v-warn", text: `écart validation / entraînement ×${fr(gap, 1)} : début de surapprentissage`}
         : {k: "gap", cls: "v-bad", text: `écart validation / entraînement ×${fr(gap, 1)} : surapprentissage (colle aux prises d'entraînement)`});
     }
+    if (cv && cv.ratio_mean !== null && cv.ratio_mean !== undefined) {
+      const sd = cv.ratio_std, cls = sd <= 0.1 ? "v-good" : sd <= 0.2 ? "v-warn" : "v-bad";
+      out.push({k: "cv", cls, text: `validation croisée ${cv.folds} parts : ${pct(1 - cv.ratio_mean)} ± ${Math.round(sd * 100)} % vs geste moyen selon la part` +
+        (cls === "v-good" ? " : résultat stable" : cls === "v-warn" ? " : résultat assez variable d'une part à l'autre" : " : résultat très variable, il manque des prises")});
+      out.push({k: "kept", cls: "v-good", text: `modèle gardé : réentraîné sur les ${m.n_examples} prises pendant ${cv.final_epochs} époques (meilleure époque moyenne des parts, ${Math.round(cv.best_epoch_mean)} ± ${Math.round(cv.best_epoch_std)})`});
+    }
     const st = m.settings || {};
     if (m.best_epoch !== undefined && st.epochs) {
       const r = m.best_epoch / st.epochs;
@@ -177,7 +188,8 @@
       else if (r <= 0.05) out.push({k: "ep", cls: "v-warn", text: `meilleure validation très tôt (époque ${m.best_epoch}) : réseau trop gros ou lr trop fort`});
       else out.push({k: "ep", cls: "v-good", text: `meilleure validation à l'époque ${m.best_epoch} / ${st.epochs}`});
     }
-    if (m.n_val !== undefined && m.n_val < 8) out.push({k: "nval", cls: "v-warn", text: `validation sur ${m.n_val} prises seulement : chiffres bruités`});
+    if (cv) { const small = Math.min(...cv.per_fold.map((f) => f.n_val)); if (small < 5) out.push({k: "nval", cls: "v-warn", text: `parts de ${small} prises seulement : moins de parts donnerait des notes moins bruitées`}); }
+    else if (m.n_val !== undefined && m.n_val < 8) out.push({k: "nval", cls: "v-warn", text: `validation sur ${m.n_val} prises seulement : chiffres bruités`});
     if (m.guardian && m.guardian.total) {
       const r = m.guardian.accepted / m.guardian.total;
       out.push({k: "gd", cls: r >= 0.9 ? "v-good" : r >= 0.5 ? "v-warn" : "v-bad", text: `guardian : ${m.guardian.accepted}/${m.guardian.total} gestes générés jouables (au jeu)`});
@@ -197,7 +209,7 @@
         const gain = v !== undefined && b ? 1 - v / b : null, a = assess(m);
         return `<tr class="clickable${r.run === selected ? " on" : ""}" data-run="${esc(r.run)}" title="${esc(r.run)}">` +
           `<td>${i + 1}</td><td>${fmtStamp(r.stamp)}</td><td><span class="dot" style="background:${GCOL[r.component] || "#888"}"></span>${GROUPS[r.component] || esc(r.component)}</td>` +
-          `<td>${s.hidden ? s.hidden.join("-") + (s.dropout ? ` · d${fr(s.dropout, 2)}` : "") + (s.mirror ? " · ⇆" : "") : "—"}</td>` +
+          `<td>${s.hidden ? s.hidden.join("-") + (s.dropout ? ` · d${fr(s.dropout, 2)}` : "") + (s.mirror ? " · ⇆" : "") + (s.folds > 1 ? ` · ×${s.folds}` : "") : "—"}</td>` +
           `<td class="num">${fr(v)}</td><td class="num">${fr(b)}</td>` +
           `<td class="num"><span class="verdict ${gain === null ? "" : gain >= 0.1 ? "v-good" : gain >= 0 ? "v-warn" : "v-bad"}">${gain === null ? "—" : pct(gain)}</span></td>` +
           `<td class="num">${m.guardian ? m.guardian.accepted + "/" + m.guardian.total : "—"} <span class="vdot ${worst(a)}" title="${esc(a.map((x) => x.text).join("\n"))}"></span></td></tr>`;
@@ -209,7 +221,7 @@
   // ---- charts ----------------------------------------------------------------------------
   function barsChart(m) {
     const W = 560, H = 210, L = 150, R = 20, rows = [
-      ["Entraînement", m.train_rmse_rad, "c-train"], ["Validation", m.val_rmse_rad, "c-val"], ["Geste moyen (réf.)", m.val_baseline_label_mean_rmse_rad, "c-ref"]];
+      ["Entraînement", m.train_rmse_rad, "c-train"], [m.cv ? "Validation (parts)" : "Validation", m.val_rmse_rad, "c-val"], ["Geste moyen (réf.)", m.val_baseline_label_mean_rmse_rad, "c-ref"]];
     const b = m.val_baseline_label_mean_rmse_rad;
     const mx = Math.max(...rows.map((r) => r[1] || 0), b ? b * 1.15 : 0, 1e-6) * 1.08;
     const X = (v) => L + v / mx * (W - L - R);
@@ -236,7 +248,7 @@
   function curveChart(h, best) {
     const W = 560, H = 210, L = 48, R = 14, T = 14, B = 36;
     if (!h || !h.length) return `<p class="hint">Courbe en cours de chargement…</p>`;
-    const vals = h.flatMap((p) => [p.train_loss, p.val_loss]).filter((v) => isFinite(v) && v > 0);
+    const vals = h.flatMap((p) => [p.train_loss, p.val_loss, p.val_loss_min, p.val_loss_max]).filter((v) => isFinite(v) && v > 0);
     let lo = Math.log10(Math.min(...vals)), hi = Math.log10(Math.max(...vals));
     if (hi - lo < 0.2) { hi += 0.1; lo -= 0.1; }
     const e1 = h[h.length - 1].epoch || 1;
@@ -249,6 +261,9 @@
       o.push(`<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" class="grid"/><text x="${L - 4}" y="${Y(v) + 4}" class="ax" text-anchor="end">${String(+v.toPrecision(2)).replace(".", ",")}</text>`);
     }
     if (best !== undefined) o.push(`<line x1="${X(best)}" x2="${X(best)}" y1="${T}" y2="${H - B}" class="goal"/><text x="${X(best) + 4}" y="${T + 10}" class="ax">modèle gardé (${best})</text>`);
+    // cross-validation: spread of the val loss over the parts (min..max)
+    const band = h.filter((p) => isFinite(p.val_loss_min) && p.val_loss_min > 0 && isFinite(p.val_loss_max) && p.val_loss_max > 0);
+    if (band.length > 1) o.push(`<path d="${band.map((p, i) => `${i ? "L" : "M"}${X(p.epoch).toFixed(1)} ${Y(p.val_loss_max).toFixed(1)}`).join("")}${band.slice().reverse().map((p) => `L${X(p.epoch).toFixed(1)} ${Y(p.val_loss_min).toFixed(1)}`).join("")}Z" class="b-val"/>`);
     o.push(`<path d="${path("train_loss")}" class="l-train"/><path d="${path("val_loss")}" class="l-val"/>`);
     const step = [10, 20, 50, 100, 200, 250, 500, 1000, 2000, 5000].find((x) => x >= e1 / 5) || 10000;
     for (let e = 0; e <= e1; e += step) o.push(`<text x="${X(e)}" y="${H - B + 16}" class="ax" text-anchor="middle">${e}</text>`);
@@ -273,6 +288,31 @@
       if (b[n] !== undefined) o.push(`<line x1="${X(b[n])}" x2="${X(b[n])}" y1="${y}" y2="${y + rowH - 2}" class="tick-ref"/>`);
     });
     o.push(`<text x="${(L + W) / 2}" y="${H - 6}" class="ax" text-anchor="middle">RMSE (rad) par articulation</text></svg>`);
+    return o.join("");
+  }
+
+  function foldsChart(cv) {
+    // one row per part: validation bar, mean gesture tick; last row: mean ± spread
+    const f = cv.per_fold, W = 560, rowH = Math.max(18, Math.min(28, 170 / (f.length + 1))), L = 110, R = 60, H = (f.length + 1) * rowH + 40;
+    const mx = Math.max(...f.flatMap((r) => [r.val_rmse_rad, r.val_baseline_rmse_rad]), cv.val_rmse_mean + cv.val_rmse_std, 1e-6) * 1.08;
+    const X = (x) => L + x / mx * (W - L - R);
+    const o = [`<svg viewBox="0 0 ${W} ${H}" class="chart">`];
+    f.forEach((r, i) => {
+      const y = 6 + i * rowH, good = r.val_rmse_rad <= 0.9 * r.val_baseline_rmse_rad;
+      o.push(`<text x="${L - 6}" y="${y + rowH * 0.62}" class="lab" text-anchor="end">part ${r.fold} · ${r.n_val} pr.</text>`,
+        `<rect x="${L}" y="${y + 2}" width="${Math.max(1, X(r.val_rmse_rad) - L)}" height="${rowH - 6}" rx="2" class="c-val${good ? "" : " over"}"/>`,
+        `<line x1="${X(r.val_baseline_rmse_rad)}" x2="${X(r.val_baseline_rmse_rad)}" y1="${y}" y2="${y + rowH - 2}" class="tick-ref"/>`,
+        `<text x="${W - 4}" y="${y + rowH * 0.62}" class="val" text-anchor="end">${r.ratio ? "×" + fr(r.ratio, 2) : ""}</text>`);
+    });
+    const y = 10 + f.length * rowH, c = y + rowH / 2 - 2, m = cv.val_rmse_mean, s = cv.val_rmse_std;
+    o.push(`<text x="${L - 6}" y="${y + rowH * 0.62}" class="lab" text-anchor="end"><tspan font-weight="600">moyenne ± écart</tspan></text>`,
+      `<line x1="${X(Math.max(0, m - s))}" x2="${X(m + s)}" y1="${c}" y2="${c}" class="whisk"/>`,
+      `<line x1="${X(Math.max(0, m - s))}" x2="${X(Math.max(0, m - s))}" y1="${c - 5}" y2="${c + 5}" class="whisk"/><line x1="${X(m + s)}" x2="${X(m + s)}" y1="${c - 5}" y2="${c + 5}" class="whisk"/>`,
+      `<circle cx="${X(m)}" cy="${c}" r="5" class="c-mean"/>`,
+      `<line x1="${X(cv.baseline_mean)}" x2="${X(cv.baseline_mean)}" y1="${y}" y2="${y + rowH - 2}" class="tick-ref"/>`,
+      `<text x="${W - 4}" y="${y + rowH * 0.62}" class="val" text-anchor="end">${cv.ratio_mean ? "×" + fr(cv.ratio_mean, 2) : ""}</text>`);
+    for (let i = 0; i <= 4; i++) { const v = mx * i / 4; o.push(`<text x="${X(v)}" y="${H - 18}" class="ax" text-anchor="middle">${fr(v, 2)}</text>`); }
+    o.push(`<text x="${(L + W - R) / 2}" y="${H - 3}" class="ax" text-anchor="middle">RMSE de validation (rad) · ×ratio = validation ÷ geste moyen (sous 0,9 = bon)</text></svg>`);
     return o.join("");
   }
 
@@ -314,6 +354,10 @@
       (gt ? `guardian sur les prises : ${gt.raw_accepted}/${gt.total} telles quelles, ${gt.accepted_playable}/${gt.total} une fois rendues jouables` +
         (gt.median_excess_rad !== undefined && gt.median_excess_rad !== null ? ` (dépassement médian ${gt.median_excess_rad} rad, max ${gt.max_excess_rad} rad)` : "") +
         (gt.calibration ? ` · calibration ${gt.calibration}` : "") + "\n" : "") +
+      (m.cv ? `validation croisée : ${m.cv.folds} parts (seed ${m.cv.seed}) ; validation = chaque prise prédite par le modèle qui ne l'a pas vue\n` +
+        m.cv.per_fold.map((f) => `  part ${f.fold} : ${f.n_val} prises de validation, ${f.n_train} d'entraînement (+${f.n_mirrored} miroirs) · val ${fr(f.val_rmse_rad)} · réf ${fr(f.val_baseline_rmse_rad)} · entr ${fr(f.train_rmse_rad)} · meilleure époque ${f.best_epoch}`).join("\n") + "\n" +
+        `modèle gardé : toutes les prises, ${m.cv.final_epochs} époques, erreur sur ses propres prises ${fr(m.final_train_rmse_rad)}\n` +
+        (m.cv.warning ? "⚠ " + m.cv.warning + "\n" : "") : "") +
       (m.warning ? "⚠ " + m.warning : "");
   }
 
@@ -337,7 +381,8 @@
       <div class="tr-trend">${trendChart()}</div>
       <div class="tr-charts">
         <figure><figcaption>Erreur sur les trajectoires</figcaption>${barsChart(m)}</figure>
-        <figure><figcaption>Courbe d'apprentissage <span class="key k-train"></span>entraînement <span class="key k-val"></span>validation</figcaption><div id="tr-curve">${curveChart(hist[r.run], m.best_epoch)}</div></figure>
+        ${m.cv ? `<figure><figcaption>Validation croisée : chaque part <span class="key k-val"></span>validation <span class="key k-ref"></span>geste moyen</figcaption>${foldsChart(m.cv)}</figure>` : ""}
+        <figure><figcaption>Courbe d'apprentissage <span class="key k-train"></span>entraînement <span class="key k-val"></span>validation${m.cv ? " (moyenne des parts, zone = écart min–max)" : ""}</figcaption><div id="tr-curve">${curveChart(hist[r.run], m.best_epoch)}</div></figure>
         <figure><figcaption>Validation par articulation <span class="key k-val"></span>validation <span class="key k-train dotk"></span>entraînement <span class="key k-ref"></span>geste moyen <span class="key k-over"></span>≥ 0,9 × réf.</figcaption>${jointsChart(m)}</figure>
         <figure><figcaption>Ce qu'on attend · verdict</figcaption>
           <ul class="checks">${a.map((x) => `<li class="${x.cls}">${esc(x.text)}</li>`).join("")}</ul>
@@ -360,7 +405,7 @@
   async function refresh() {
     const d = await api("train");
     setHTML($("tr-jobs"), d.jobs.map((j) => `<div class="mono">${j.id} · ${j.component} · ${j.state}${j.error ? " · " + j.error : ""}` +
-      (j.progress.length ? ` · époque ${j.progress[j.progress.length - 1].epoch}, perte ${j.progress[j.progress.length - 1].train_loss.toFixed(4)}` : "") + "</div>").join(""));
+      (j.progress.length ? `${j.progress[j.progress.length - 1].stage ? " · " + j.progress[j.progress.length - 1].stage : ""} · époque ${j.progress[j.progress.length - 1].epoch}, perte ${j.progress[j.progress.length - 1].train_loss.toFixed(4)}` : "") + "</div>").join(""));
     const sig = d.runs.map((r) => r.run).join("|");
     if (sig === lastSig) return;
     const fresh = lastSig !== "" && d.runs.length > runs.length;

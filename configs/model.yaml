@@ -19,7 +19,10 @@ training:
   epochs: 800
   lr: 0.01
   weight_decay: 0.0001
-  val_fraction: 0.25
+  val_fraction: 0.25        # used only when folds is 0 or 1 (single split, the former behaviour)
+  folds: 5                  # cross-validation: takes dealt into 5 parts by group, 5 models trained, each validated
+                            # on the part it never saw (every take validated once); the KEPT model is then
+                            # trained on ALL the takes for the mean best epoch of the parts. 0 or 1 = single split
   seed: 0
   smoothness_weight: 0.01
   duration_weight: 0.05     # poids de l erreur sur log(durée)

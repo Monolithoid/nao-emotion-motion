@@ -494,8 +494,9 @@ class Workbench:
                "error": None, "started": time.time(), "overrides": overrides}
         self.jobs[job_id] = job
 
-        def log(ep, l, lv):
-            job["progress"].append({"epoch": ep, "train_loss": l, "val_loss": None if np.isnan(lv) else lv})
+        def log(ep, l, lv, stage=None):
+            job["progress"].append({"epoch": ep, "train_loss": l, "val_loss": None if np.isnan(lv) else lv,
+                                    "stage": stage})
             del job["progress"][:-100]
 
         def work():
@@ -532,14 +533,18 @@ class Workbench:
         out.sort(key=lambda r: (r["stamp"], r["run"]))
         return out
 
-    def run_history(self, run: str):
-        """Loss curve (train/val every 10 epochs) of one run, read from its metrics.json."""
+    def run_history(self, run: str, full: bool = False):
+        """Loss curve (train/val every 10 epochs) of one run, read from its metrics.json.
+        `full`: dict with also the curves of each cross-validation fold and of the final model."""
         import json
         p = (self.runs_dir / run / "metrics.json")
         if "/" in run or "\\" in run or run.startswith(".") or not p.resolve().is_relative_to(self.runs_dir.resolve()) \
                 or not p.exists():
             raise ValueError(f"Unknown run: {run}")
-        return json.loads(p.read_text()).get("history", [])
+        d = json.loads(p.read_text())
+        if not full:
+            return d.get("history", [])
+        return {k: d.get(k, [] if k != "final_history" else None) for k in ("history", "fold_histories", "final_history")}
 
     # -- génération ---------------------------------------------------------------
     def get_engine(self) -> MotionEngine:

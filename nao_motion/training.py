@@ -21,7 +21,8 @@ from .data.representation import bspline_basis, decode
 from .data.store import TakeStore
 from .events import EVENT_FEATURES, EventContext
 from .guardian import Guardian
-from .models.datasets import Examples, concat_examples, group_examples, group_joints, grouped_split, mirrored_examples
+from .models.datasets import (Examples, concat_examples, group_examples, group_joints, grouped_kfold, grouped_split,
+                              mirrored_examples)
 from .models.features import Norm, motion_input_dim
 from .models.nets import LoadedModel, build, save_checkpoint
 
@@ -36,7 +37,10 @@ def _run_dir(root, component):
     return d
 
 
-def _fit(ex: Examples, tr, va, arch, K, J, tcfg, predict_duration: bool, log=None):
+def _fit(ex: Examples, tr, va, arch, K, J, tcfg, predict_duration: bool, log=None, keep_last=False):
+    """Full-batch training. Keeps the state of the best validation epoch (checked every 10
+    epochs), or the last state when `keep_last` (final model of a cross-validation, trained
+    on every take for a number of epochs chosen by the folds)."""
     torch.manual_seed(int(tcfg.get("seed", 0)))
     model = build(arch)
     B = torch.tensor(bspline_basis(K, np.linspace(0, 1, 50)), dtype=torch.float32)
@@ -73,11 +77,12 @@ def _fit(ex: Examples, tr, va, arch, K, J, tcfg, predict_duration: bool, log=Non
                 lv = float(loss_on(va_t, False)) if len(va) else float("nan")
             history.append({"epoch": ep, "train_loss": l.item(), "val_loss": lv})
             crit = lv if len(va) else float(l)
-            if crit < best:
+            if crit < best and not keep_last:
                 best, best_state = crit, {k: v.clone() for k, v in model.state_dict().items()}
             if log:
                 log(ep, l.item(), lv)
-    model.load_state_dict(best_state)
+    if not keep_last:
+        model.load_state_dict(best_state)
     model.eval()
     return model, history
 
@@ -130,7 +135,8 @@ _NO_TAKES = {"arms": "Aucune prise de bras utilisable (statut 'accepted' requis 
 
 
 # réglages modifiables pour un entraînement (interface / CLI), sans toucher à model.yaml
-OVERRIDABLE = ("hidden", "dropout", "weight_decay", "lr", "smoothness_weight", "epochs", "mirror")
+OVERRIDABLE = ("hidden", "dropout", "weight_decay", "lr", "smoothness_weight", "epochs", "mirror", "folds")
+MAX_FOLDS = 20
 
 _TRUE, _FALSE = ("1", "true", "yes", "on"), ("0", "false", "no", "off")
 
@@ -154,6 +160,10 @@ def check_overrides(o: Optional[dict]) -> dict:
             elif k == "epochs":
                 v = int(v)
                 ok = 1 <= v <= 100000
+            elif k == "folds":
+                f = float(v)
+                v = int(f)
+                ok = f == v and 0 <= v <= MAX_FOLDS
             else:
                 v = float(v)
                 ok = np.isfinite(v) and v >= 0 and (k != "dropout" or v < 1) and (k != "lr" or v > 0)
@@ -172,11 +182,18 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
     Entrée : [émotion, intensité, événement] ; sortie : points de contrôle du groupe
     et log de sa durée. Aucun autre modèle n'est requis ni chargé.
     `overrides` : réglages propres à cet entraînement (taille du réseau, dropout,
-    weight_decay, lr, lissage, époques, miroir) ; model.yaml n'est pas modifié.
+    weight_decay, lr, lissage, époques, miroir, validation croisée) ; model.yaml n'est pas modifié.
 
     Mirror (training.mirror, default on): left/right mirrors of the TRAINING takes without
     an event are added in memory (data/mirror.py). Validation, the baseline and the
-    reported train/val RMSE use the real takes only, so the metrics stay comparable."""
+    reported train/val RMSE use the real takes only, so the metrics stay comparable.
+
+    Cross-validation (training.folds = k >= 2): the takes are dealt into k parts by group;
+    k models are trained, each validated on the part it never saw, so every take is validated
+    exactly once. The reported validation is pooled over the k parts (plus mean and spread
+    per part, in metrics["cv"]). The KEPT model is then trained on ALL the takes for the mean
+    best epoch of the k parts (no take is held out any more). folds 0 or 1 = the former single
+    split (val_fraction)."""
     ov = check_overrides(overrides)
     if component not in COMPONENTS:
         raise ValueError(component)
@@ -197,34 +214,54 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
     if epochs:
         tcfg["epochs"] = epochs
     tcfg.update({k: ov[k] for k in ("weight_decay", "lr", "smoothness_weight", "epochs") if k in ov})
-    tr, va, _ = grouped_split(ex.groups, float(tcfg["val_fraction"]), int(tcfg["seed"]))
     use_mirror = bool(ov.get("mirror", tcfg.get("mirror", True)))
-    fit_ex, fit_tr = ex, tr
-    mirror_rep = {"enabled": use_mirror}
-    if use_mirror:
-        # mirrors of TRAINING takes only: a validation take never leaks into training
-        mex, r = mirrored_examples(store, cfg, component, [ex.take_ids[i] for i in tr], target)
-        mirror_rep.update(r)
-        fit_ex = concat_examples(ex, mex)
-        fit_tr = np.concatenate([tr, np.arange(len(ex), len(ex) + len(mex))]).astype(int)
+    folds_req = int(ov.get("folds", tcfg.get("folds", 1)) or 0)
+    splits = grouped_kfold(ex.groups, folds_req, int(tcfg["seed"])) if folds_req >= 2 else []
     in_dim = motion_input_dim(len(cfg.emotions))
     assert ex.X.shape[1] == in_dim
     arch = {"in_dim": in_dim, "out_dim": K * J + 1, "hidden": list(mc["hidden"]),
             "dropout": float(mc.get("dropout", 0)), "latent_dim": 0}
-    model, hist = _fit(fit_ex, fit_tr, va, arch, K, J, tcfg, True, log)
     norm = Norm.from_config(cfg, joints)
-    metrics = _evaluate(model, ex, tr, va, norm, K, True)
-    # réglages effectivement utilisés, et époque du modèle retenu (meilleure validation)
+
+    def fit(tr, va, tc, flog, keep_last=False):
+        fit_ex, fit_tr, rep = ex, tr, {"enabled": use_mirror}
+        if use_mirror:
+            # mirrors of TRAINING takes only: a validation take never leaks into training
+            mex, r = mirrored_examples(store, cfg, component, [ex.take_ids[i] for i in tr], target)
+            rep.update(r)
+            fit_ex = concat_examples(ex, mex)
+            fit_tr = np.concatenate([tr, np.arange(len(ex), len(ex) + len(mex))]).astype(int)
+        model, hist = _fit(fit_ex, fit_tr, va, arch, K, J, tc, True, flog, keep_last)
+        return model, hist, rep, list(fit_ex.take_ids[len(ex):])
+
+    cv = None
+    if splits:
+        model, hist, metrics, mirror_rep, mirrored, tr, va, cv = _cross_validate(
+            ex, splits, fit, norm, K, tcfg, log, folds_req)
+    else:
+        tr, va, _ = grouped_split(ex.groups, float(tcfg["val_fraction"]), int(tcfg["seed"]))
+        model, hist, mirror_rep, mirrored = fit(tr, va, tcfg, log)
+        metrics = _evaluate(model, ex, tr, va, norm, K, True)
+        if len(va) and hist:
+            metrics["best_epoch"] = min(hist, key=lambda h: h["val_loss"])["epoch"]
+    # réglages effectivement utilisés, et époque du modèle retenu
     metrics["settings"] = {"hidden": arch["hidden"], "dropout": arch["dropout"],
                            "weight_decay": float(tcfg["weight_decay"]), "lr": float(tcfg["lr"]),
                            "smoothness_weight": float(tcfg.get("smoothness_weight", 0.0)),
-                           "epochs": int(tcfg["epochs"]), "mirror": use_mirror, "overrides": sorted(ov)}
+                           "epochs": int(tcfg["epochs"]), "mirror": use_mirror,
+                           "folds": len(splits) if splits else 1, "overrides": sorted(ov)}
     metrics["mirror"] = mirror_rep
-    if len(va) and hist:
-        metrics["best_epoch"] = min(hist, key=lambda h: h["val_loss"])["epoch"]
+    curves = {}
+    if cv:
+        # loss curves of the folds and of the final model: in metrics.json, outside the metrics
+        curves = {"fold_histories": cv.pop("fold_histories"), "final_history": cv.pop("final_history")}
+        metrics["cv"] = cv
     run = _run_dir(runs_dir, component)
     meta = _meta(cfg, component, joints, norm, K, ex, tr, va, tcfg)
-    meta["mirrored_take_ids"] = [t for t in fit_ex.take_ids[len(ex):]]
+    meta["mirrored_take_ids"] = mirrored
+    if cv:
+        meta["split"] = f"validation croisée par groupe, {len(splits)} parts ; modèle final sur toutes les prises"
+        meta["cv_val_take_ids"] = [f["val_take_ids"] for f in cv["per_fold"]]
     meta["synthetic_data"] = any(store.load_meta(t).synthetic for t in ex.take_ids)
     meta.update({"event_features": EVENT_FEATURES, "independent": True,
                  "inputs": ["emotion", "intensity", "event[present,sin_az,cos_az,elev,dist_known,proximity]"],
@@ -239,9 +276,95 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
     # never enters the loss and never picks the epoch
     metrics["guardian"] = _guardian_sweep(cfg, **{_ENGINE_ARG[component]: loaded})
     metrics["guardian_takes"] = _guardian_on_takes(cfg, store, component, sorted(set(ex.take_ids)))
-    _write_report(run, metrics, hist, meta)
+    _write_report(run, metrics, hist, meta, curves)
     (Path(runs_dir) / f"latest_{component}.txt").write_text(run.name)
     return run
+
+
+def _mean_history(hists):
+    """Mean loss curve of the folds (same epochs in every fold), with the spread of the val loss."""
+    out = []
+    for rows in zip(*hists):
+        tl = [r["train_loss"] for r in rows]
+        vl = [r["val_loss"] for r in rows if np.isfinite(r["val_loss"])]
+        out.append({"epoch": rows[0]["epoch"], "train_loss": float(np.mean(tl)),
+                    "val_loss": float(np.mean(vl)) if vl else float("nan"),
+                    "val_loss_min": float(np.min(vl)) if vl else float("nan"),
+                    "val_loss_max": float(np.max(vl)) if vl else float("nan")})
+    return out
+
+
+def _cross_validate(ex, splits, fit, norm, K, tcfg, log, folds_req):
+    """k-fold cross-validation, then the kept model trained on every take (see train_component)."""
+    k = len(splits)
+    KJ = ex.Y.shape[1]
+    oof = np.zeros_like(ex.Y)
+    oof_base = np.zeros_like(ex.Y)
+    oof_dur = np.zeros(len(ex))
+    rows, hists, train_pj = [], [], []
+
+    def stage_log(label):
+        if not log:
+            return None
+        return lambda ep, l, lv: log(ep, l, lv, stage=label)
+
+    for f, (tr, va) in enumerate(splits):
+        model, hist, rep, _ = fit(tr, va, tcfg, stage_log(f"part {f + 1}/{k}"))
+        with torch.no_grad():
+            out = model(torch.tensor(ex.X, dtype=torch.float32)).numpy().astype(np.float64)
+        oof[va] = out[va, :KJ]
+        oof_dur[va] = out[va, -1]
+        base = _baseline(ex, tr, va)
+        oof_base[va] = base
+        v, _ = _dense_rmse(out[va, :KJ], ex.Y[va], norm, K)
+        b, _ = _dense_rmse(base, ex.Y[va], norm, K)
+        t, tpj = _dense_rmse(out[tr, :KJ], ex.Y[tr], norm, K)
+        train_pj.append(tpj)
+        rows.append({"fold": f + 1, "n_train": int(len(tr)), "n_val": int(len(va)),
+                     "n_mirrored": int(rep.get("added", 0) or 0),
+                     "val_rmse_rad": v, "val_baseline_rmse_rad": b, "train_rmse_rad": t,
+                     "ratio": v / b if b else None,
+                     "best_epoch": min(hist, key=lambda h: h["val_loss"])["epoch"],
+                     "val_take_ids": [ex.take_ids[i] for i in va]})
+        hists.append(hist)
+    best = [r["best_epoch"] for r in rows]
+    final_epochs = int(round(float(np.mean(best)))) + 1  # best_epoch e = state after e+1 steps
+    # kept model: every take, no validation, stopped at the mean best epoch of the folds
+    model, final_hist, mirror_rep, mirrored = fit(np.arange(len(ex)), np.array([], dtype=int),
+                                                  dict(tcfg, epochs=final_epochs), stage_log("modèle final"),
+                                                  keep_last=True)
+    alli = np.arange(len(ex))
+    m = {"n_examples": len(ex), "n_train": len(ex), "n_val": len(ex),
+         "n_train_groups": len(set(ex.groups)), "n_val_groups": len(set(ex.groups))}
+    # pooled out-of-fold validation: each take predicted by the model that never saw it
+    m["val_rmse_rad"], m["val_rmse_per_joint"] = _dense_rmse(oof, ex.Y, norm, K)
+    m["val_baseline_label_mean_rmse_rad"], m["val_baseline_per_joint"] = _dense_rmse(oof_base, ex.Y, norm, K)
+    m["val_duration_mae_s"] = float(np.abs(np.exp(oof_dur) - np.exp(ex.log_dur)).mean())
+    # train error: mean over the folds (comparable with the validation above)
+    m["train_rmse_rad"] = float(np.mean([r["train_rmse_rad"] for r in rows]))
+    m["train_rmse_per_joint"] = {j: round(float(np.mean([p[j] for p in train_pj])), 4) for j in norm.joints}
+    with torch.no_grad():
+        out = model(torch.tensor(ex.X, dtype=torch.float32)).numpy().astype(np.float64)
+    m["final_train_rmse_rad"], _ = _dense_rmse(out[:, :KJ], ex.Y, norm, K)
+    m["train_duration_mae_s"] = float(np.abs(np.exp(out[:, -1]) - np.exp(ex.log_dur)).mean())
+    m["best_epoch"] = final_epochs - 1
+    vals = [r["val_rmse_rad"] for r in rows]
+    bases = [r["val_baseline_rmse_rad"] for r in rows]
+    ratios = [r["ratio"] for r in rows if r["ratio"] is not None]
+    cv = {"folds": k, "requested": int(folds_req), "seed": int(tcfg["seed"]),
+          "val_rmse_mean": float(np.mean(vals)), "val_rmse_std": float(np.std(vals)),
+          "baseline_mean": float(np.mean(bases)), "baseline_std": float(np.std(bases)),
+          "ratio_mean": float(np.mean(ratios)) if ratios else None,
+          "ratio_std": float(np.std(ratios)) if ratios else None,
+          "best_epoch_mean": float(np.mean(best)), "best_epoch_std": float(np.std(best)),
+          "final_epochs": final_epochs,
+          # no validation for the final model: train loss only (NaN is not valid JSON for the browser)
+          "final_history": [{"epoch": h["epoch"], "train_loss": h["train_loss"]} for h in final_hist], "fold_histories": hists,
+          "kept": "final model trained on all the takes for the mean best epoch of the folds",
+          "per_fold": rows}
+    if k < folds_req:
+        cv["warning"] = f"{folds_req} parts demandées, {k} possibles (une part par groupe de prises au plus)"
+    return model, _mean_history(hists), m, mirror_rep, mirrored, alli, np.array([], dtype=int), cv
 
 
 _ENGINE_ARG = {"arms": "arm_model", "head": "head_model", "hands": "hands_model"}
@@ -346,10 +469,14 @@ def _guardian_on_takes(cfg, store, component, take_ids):
             "max_excess_rad": round(float(np.max(excess)), 3) if excess else None}
 
 
-def _write_report(run, metrics, hist, meta):
-    (run / "metrics.json").write_text(json.dumps({"metrics": metrics, "history": hist}, indent=2, ensure_ascii=False))
-    (run / "split.json").write_text(json.dumps({"train": meta["train_take_ids"], "val": meta["val_take_ids"],
-                                                "train_mirrored": meta.get("mirrored_take_ids", [])}, indent=2))
+def _write_report(run, metrics, hist, meta, curves=None):
+    (run / "metrics.json").write_text(json.dumps({"metrics": metrics, "history": hist, **(curves or {})},
+                                                 indent=2, ensure_ascii=False))
+    split = {"train": meta["train_take_ids"], "val": meta["val_take_ids"],
+             "train_mirrored": meta.get("mirrored_take_ids", [])}
+    if meta.get("cv_val_take_ids"):
+        split["cv_val"] = meta["cv_val_take_ids"]  # validation takes of each fold
+    (run / "split.json").write_text(json.dumps(split, indent=2))
 
 
 def latest(runs_dir, component) -> Optional[Path]:

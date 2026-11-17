@@ -283,8 +283,9 @@
         <button data-net-group="arms" class="sel">Bras</button><button data-net-group="head">Tête</button><button data-net-group="hands">Mains</button>
       </div>
       <p class="hint">Réglages des prochains entraînements lancés depuis l'interface (bras, tête ou mains), sans modifier
-      <code>configs/model.yaml</code>. Champ vide = valeur de <code>model.yaml</code> (affichée en grisé). Le modèle gardé est
-      toujours celui de la meilleure validation.</p>
+      <code>configs/model.yaml</code>. Champ vide = valeur de <code>model.yaml</code> (affichée en grisé). En découpage unique, le modèle
+      gardé est celui de la meilleure validation ; en validation croisée, il est réentraîné sur toutes les prises pendant la
+      meilleure époque moyenne des parts.</p>
       <div class="net-fields">
         <label title="Neurones par couche cachée, séparés par des virgules (ex. 32,32 ou 16) ; 1 à 4 couches">Couches cachées
           <span><input id="tr-hidden" class="num" style="width:8em"> <button id="net-add-layer" title="Ajouter une couche (même taille que la dernière)">+</button><button id="net-del-layer" title="Retirer la dernière couche">−</button></span></label>
@@ -292,6 +293,8 @@
         <label title="Pénalité sur la taille des poids : plus grand = modèle plus simple">Weight decay <input type="number" id="tr-wd" step="0.0001" min="0" class="num"></label>
         <label title="Pas d'apprentissage">lr <input type="number" id="tr-lr" step="0.001" min="0" class="num"></label>
         <label title="Pénalité sur les à-coups des trajectoires">Lissage <input type="number" id="tr-smooth" step="0.01" min="0" class="num"></label>
+        <label title="Validation croisée : les prises sont réparties en N parts (par prise) ; N modèles sont entraînés, chacun validé sur la part qu'il n'a jamais vue, donc chaque prise sert une fois de validation. Le modèle gardé est ensuite réentraîné sur TOUTES les prises, pendant le nombre moyen d'époques trouvé par les parts. Entraînement environ N + 1 fois plus long. 0 ou 1 = ancien découpage unique 75/25.">Validation croisée
+          <span><input type="number" id="tr-folds" step="1" min="0" max="20" class="num"> parts (0 ou 1 = découpage unique 75/25)</span></label>
         <label title="Adds, in memory only, the left/right mirror of every training take WITHOUT an event (takes with an event are never mirrored). Mirrors that leave the factory limits or go beyond the calibrated zone more than the original are dropped. Validation uses real takes only.">Miroir <span><input type="checkbox" id="tr-mirror"> gauche/droite des prises sans événement</span></label>
       </div>
       <div class="row">

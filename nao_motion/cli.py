@@ -119,7 +119,7 @@ def cmd_takes(a):
 def cmd_train(a):
     wb = _wb(a, adapter="sim")
     ov = {"hidden": a.hidden, "dropout": a.dropout, "weight_decay": a.weight_decay, "lr": a.lr,
-          "smoothness_weight": a.smoothness, "mirror": a.mirror}
+          "smoothness_weight": a.smoothness, "mirror": a.mirror, "folds": a.folds}
     job = wb.train(a.component, epochs=a.epochs, include_pending=a.include_pending, background=False,
                    overrides={k: v for k, v in ov.items() if v is not None})
     if job["state"] != "done":
@@ -391,6 +391,8 @@ def main(argv=None):
     s.add_argument("--lr", type=float); s.add_argument("--smoothness", type=float, help="poids du lissage")
     s.add_argument("--mirror", action=argparse.BooleanOptionalAction, default=None,
                    help="add left/right mirrors of the training takes without an event (default: model.yaml)")
+    s.add_argument("--folds", type=int, help="cross-validation parts (e.g. 5); 0 or 1 = single split "
+                   "val_fraction (default: model.yaml training.folds)")
     s.set_defaults(fn=cmd_train)
     s = sub.add_parser("generate", help="générer et valider (simulation uniquement)")
     s.add_argument("--emotion", default="joie"); s.add_argument("--mix", help='mélange JSON ex. {"joie":0.5,"surprise":0.5}')
