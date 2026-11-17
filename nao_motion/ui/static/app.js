@@ -338,7 +338,8 @@ function playBlocker() {
   if (!STATUS.connected) return "Robot not connected (Robot tab).";
   if (!STATUS.armed) return "Motors not armed: tick « moteurs armés » at the top of the page.";
   if (STATUS.controller === "executing" || playing) return "A motion is already being played.";
-  if (STATUS.controller === "fault") return "Controller in fault: check the robot, then reconnect.";
+  if (STATUS.controller === "fault") return `Controller in FAULT: ${STATUS.last_error || "see the log (Robot tab)"}\n` +
+    "Check the robot, then « Acknowledge » (no motion) and re-arm.";
   if (STATUS.recording && ["countdown", "recording"].includes(STATUS.recording.state)) return "Recording in progress.";
   return "";
 }
@@ -358,6 +359,7 @@ function updatePlay() {
       (p.notes && p.notes.length ? " · " + p.notes.join(" ; ") : "");
   }
   $("g-play-why").textContent = txt;
+  $("g-ack").classList.toggle("hidden", !(STATUS && STATUS.controller === "fault"));
 }
 async function play() {
   if (playBlocker()) { updatePlay(); return; }
@@ -446,6 +448,7 @@ async function init() {
   $("g-go").onclick = generate;
   // no confirmation (operator preference): the permanent warning #g-alert replaces it
   $("g-play").onclick = play;
+  $("g-ack").onclick = () => api("acknowledge", {}).then(refreshStatus);
   $("g-project").checked = CFG.project_control_points !== false;  // default from robot.yaml
   // guardian off for a test: never remembered, red frame + permanent warning while ticked
   $("g-noguard").checked = false;

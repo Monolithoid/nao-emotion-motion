@@ -237,3 +237,18 @@ def test_refusal_names_the_cycle_segment(gwb, cfg):
     assert not plan.report.ok
     assert {v.segment for v in plan.report.violations} >= {"geste"}
     assert all(v.segment for v in plan.report.violations if v.time_s is not None)
+
+
+def test_refusal_before_sending_does_not_leave_a_fault(gwb, cfg):
+    """A play refused before the first command (robot moved since planning) sends nothing:
+    the controller stays IDLE instead of FAULT, so the next Play works without acknowledging."""
+    from nao_motion.control.controller import NothingSent, Plan, State
+    from nao_motion.guardian import Report
+    g = gesture(cfg)
+    g.q = g.q + 0.3  # first point far from the measured posture
+    plan = Plan(g, [("geste", 0.0, g.duration)], Report(True, []))
+    gwb.ctrl.arm(confirm=True)
+    with pytest.raises(NothingSent):
+        gwb.ctrl.execute(plan, guardian=False)
+    assert gwb.ctrl.state == State.IDLE and gwb.ctrl.armed
+    assert gwb.adapter.command_log == []

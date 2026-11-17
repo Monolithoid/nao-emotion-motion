@@ -42,6 +42,11 @@ class ControllerError(RuntimeError):
     pass
 
 
+class NothingSent(ControllerError):
+    """Refusal before the first command: nothing was sent, so the controller stays IDLE
+    (a fault would block every later play until it is acknowledged)."""
+
+
 @dataclass
 class Plan:
     traj: Trajectory
@@ -323,7 +328,8 @@ class Controller:
                     raise GuardianRejection(Report(False, [
                         Violation("start_mismatch", "Premier point éloigné de l'état mesuré", joint=j, value=d,
                                   limit=tol, segment="départ") for j, d in far.items()]))
-                raise ControllerError(f"Le robot a bougé depuis la planification ({list(far)}) : rejouer")
+                raise NothingSent(f"Le robot a bougé depuis la planification ({list(far)}) : rejouer. "
+                                  "Rien n'a été envoyé.")
             self.adapter.set_roles(driven=joints)
             result = self._stream(plan.traj, on_tick)
         except ConnectionLost as e:
@@ -332,7 +338,7 @@ class Controller:
             self.last_error = f"Connexion perdue : {e}. Le pont arrête et maintient côté robot."
             self._log(self.last_error)
             raise
-        except GuardianRejection as e:
+        except (GuardianRejection, NothingSent) as e:
             self.state = State.IDLE
             self.last_error = str(e)
             raise
