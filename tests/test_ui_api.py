@@ -95,3 +95,26 @@ def test_random_draw_shortcut():
     for btn in ("a-random", "h-random", "m-random", "g-random"):
         assert f'id="{btn}"' in html and f'"{btn}"' in js
     assert "Digit0" in js and "Numpad0" in js
+
+
+def test_training_runs_chronological_with_history(trained):
+    """Training tab: runs come oldest first whatever the group (folder names start with the
+    group, so a name sort grouped them), and each run's loss curve is served on demand."""
+    api = Api(trained["wb"])
+    runs = api.get_train({})["runs"]
+    assert len(runs) >= 2
+    stamps = [r["stamp"] for r in runs]
+    assert stamps == sorted(stamps)
+    assert {r["component"] for r in runs} >= {"arms", "head"}
+    m = runs[-1]["metrics"]
+    assert "val_baseline_per_joint" in m and set(m["val_baseline_per_joint"]) == set(m["val_rmse_per_joint"])
+    h = api.get_train_history({"run": runs[0]["run"]})["history"]
+    assert h and {"epoch", "train_loss", "val_loss"} <= set(h[0])
+    # network tab: the config gives each group's joints, the event features and K
+    c = api.get_config({})
+    assert c["net"]["joints"]["arms"] == trained["wb"].cfg.arm_joints and len(c["net"]["event_features"]) == 6
+    assert c["model"]["representation"]["n_control_points"] >= 4
+    for bad in ("../x", "..", "nope"):
+        with pytest.raises(ValueError):
+            api.get_train_history({"run": bad})
+

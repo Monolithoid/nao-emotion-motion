@@ -212,7 +212,6 @@ function setHTML(el, html) {
   el.innerHTML = html;
 }
 
-let RUNS = [];
 async function copyText(text, btn) {
   try { await navigator.clipboard.writeText(text); }
   catch (e) {  // repli sans API presse-papiers
@@ -223,34 +222,8 @@ async function copyText(text, btn) {
   const old = btn.textContent; btn.textContent = "Copié ✓";
   setTimeout(() => { btn.textContent = old; }, 1500);
 }
-
-async function refreshTrain() {
-  const d = await api("train");
-  setHTML($("tr-jobs"), d.jobs.map((j) => `<div class="mono">${j.id} · ${j.component} · ${j.state}${j.error ? " · " + j.error : ""}` +
-    (j.progress.length ? ` · époque ${j.progress[j.progress.length - 1].epoch}, perte ${j.progress[j.progress.length - 1].train_loss.toFixed(4)}` : "") + "</div>").join(""));
-  RUNS = d.runs;
-  setHTML($("tr-runs"), d.runs.map((r, i) => {
-    const m = r.metrics;
-    return `<div class="draft"><b>${r.run}</b> <button data-copy-run="${i}" title="Copie toutes les métriques (JSON) dans le presse-papiers">Copier</button>` +
-      `<div class="mono">exemples ${m.n_examples} (entraînement ${m.n_train} / validation ${m.n_val}, groupes ${m.n_train_groups}/${m.n_val_groups})\n` +
-      `RMSE entraînement ${m.train_rmse_rad.toFixed(4)} rad · validation ${m.val_rmse_rad !== undefined ? m.val_rmse_rad.toFixed(4) : "—"} rad · référence (moyenne par étiquette) ${m.val_baseline_label_mean_rmse_rad !== undefined ? m.val_baseline_label_mean_rmse_rad.toFixed(4) : "—"} rad\n` +
-      (m.val_duration_mae_s !== undefined ? `erreur de durée (val.) ${m.val_duration_mae_s.toFixed(3)} s\n` : "") +
-      (m.settings ? `réglages : réseau ${m.settings.hidden.join("-")} · dropout ${m.settings.dropout} · weight decay ${m.settings.weight_decay} · lr ${m.settings.lr} · lissage ${m.settings.smoothness_weight} · ${m.settings.epochs} époques` +
-        (m.best_epoch !== undefined ? ` (modèle gardé : époque ${m.best_epoch})` : "") + "\n" : "") +
-      (m.mirror ? (m.mirror.enabled ? (m.mirror.unavailable ? `left/right mirror: unavailable (${m.mirror.unavailable})\n` :
-        `left/right mirror: +${m.mirror.added} mirrored takes added to training (${m.mirror.eligible} training takes without an event, ${m.mirror.dropped} mirrors dropped as not feasible, ${m.mirror.skipped_with_event} takes with an event not mirrored)` +
-        (m.mirror.dropped_takes && m.mirror.dropped_takes.length ? "\n  dropped: " + m.mirror.dropped_takes.map((d) => `${d.take_id}: ${d.reason}`).join("\n  dropped: ") : "") + "\n") :
-        "left/right mirror: off\n") : "") +
-      `guardian (playback safety, information only: never used by training) : ${m.guardian ? m.guardian.accepted + "/" + m.guardian.total + " generated gestures playable" +
-        (m.guardian.raw_accepted !== undefined ? ` (raw ${m.guardian.raw_accepted}/${m.guardian.total}, median slow-down x${m.guardian.median_slow_down})` : "") +
-        " " + JSON.stringify(m.guardian.violations_by_code) : "—"}` +
-      (m.guardian_takes ? `\nguardian on your recorded takes: ${m.guardian_takes.raw_accepted}/${m.guardian_takes.total} accepted as recorded, ${m.guardian_takes.accepted_playable}/${m.guardian_takes.total} once made playable` +
-        (m.guardian_takes.median_excess_rad !== undefined && m.guardian_takes.median_excess_rad !== null ? ` (as recorded, takes go beyond the zone by ${m.guardian_takes.median_excess_rad} rad in median, max ${m.guardian_takes.max_excess_rad} rad: the zone keeps a margin inside the measured extremes, so takes that defined it touch its edge)` : "") +
-        (m.guardian_takes.total && (m.guardian_takes.accepted_playable < m.guardian_takes.total / 2 || m.guardian_takes.median_excess_rad > 0.15) ? ` ⚠ the guardian is much stricter than your own gestures: check the calibration (${m.guardian_takes.calibration}) and speed limits` +
-          (Object.keys(m.guardian_takes.takes_outside_limits_by_joint).length ? `, outside limits: ${JSON.stringify(m.guardian_takes.takes_outside_limits_by_joint)}` : "") : "") : "") +
-      (m.warning ? "\n⚠ " + m.warning : "") + "</div></div>";
-  }).join(""));
-}
+// training tab and network tab: mlp.js (window.MLP)
+const refreshTrain = () => window.MLP && window.MLP.refresh();
 
 // ---- génération -----------------------------------------------------------------
 async function generate() {
@@ -348,25 +321,7 @@ async function init() {
   $("t-accept").onclick = () => upd({status: "accepted"});
   $("t-reject").onclick = () => upd({status: "rejected"});
   $("t-save-notes").onclick = () => upd({notes: $("t-notes").value});
-  // entraînement
-  // réglages de l'entraînement (vides = model.yaml) ; placeholders = valeurs de model.yaml
-  const M = CFG.model || {}, T = M.training || {}, A = M.arm_model || {};
-  $("tr-hidden").placeholder = (A.hidden || []).join(","); $("tr-dropout").placeholder = A.dropout ?? "";
-  $("tr-wd").placeholder = T.weight_decay ?? ""; $("tr-lr").placeholder = T.lr ?? ""; $("tr-smooth").placeholder = T.smoothness_weight ?? "";
-  const TR_FIELDS = {hidden: "tr-hidden", dropout: "tr-dropout", weight_decay: "tr-wd", lr: "tr-lr", smoothness_weight: "tr-smooth"};
-  const setTr = (v) => { for (const [k, id] of Object.entries(TR_FIELDS)) $(id).value = v[k] ?? ""; };
-  $("tr-preset-small").onclick = () => setTr({hidden: "32", dropout: 0.1, weight_decay: 0.01, smoothness_weight: 0.05});
-  $("tr-preset-reset").onclick = () => { setTr({}); $("tr-mirror").checked = T.mirror ?? true; };
-  $("tr-mirror").checked = T.mirror ?? true;
-  const overrides = () => { const o = {}; for (const [k, id] of Object.entries(TR_FIELDS)) if ($(id).value.trim() !== "") o[k] = $(id).value.trim(); return o; };
-  const train = (c) => api("train", {component: c, epochs: parseInt($("tr-epochs").value), include_pending: $("tr-pending").checked, overrides: {...overrides(), mirror: $("tr-mirror").checked}}).then(refreshTrain);
-  $("tr-arms").onclick = () => train("arms"); $("tr-head").onclick = () => train("head"); $("tr-hands").onclick = () => train("hands");
-  setInterval(() => { if ($("tab-train").classList.contains("active")) refreshTrain(); }, 2000);
-  $("tr-runs").addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-copy-run]");
-    const r = b && RUNS[+b.dataset.copyRun];
-    if (r) copyText(JSON.stringify({run: r.run, path: r.path, metrics: r.metrics}, null, 2), b);
-  });
+  // entraînement et réseau : mlp.js
   // génération
   $("g-go").onclick = generate;
   $("g-exec").onclick = () => lastPlan && window.confirm(real() ? "Exécuter sur le ROBOT RÉEL ?" : "Exécuter sur le robot simulé ?") && api("execute", {plan_id: lastPlan, confirm: true});

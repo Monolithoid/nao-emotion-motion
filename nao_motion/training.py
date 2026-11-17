@@ -113,7 +113,7 @@ def _evaluate(model, ex, tr, va, norm, K, predict_duration):
     m["train_rmse_rad"], m["train_rmse_per_joint"] = _dense_rmse(Yp[tr], ex.Y[tr], norm, K)
     if len(va):
         m["val_rmse_rad"], m["val_rmse_per_joint"] = _dense_rmse(Yp[va], ex.Y[va], norm, K)
-        m["val_baseline_label_mean_rmse_rad"], _ = _dense_rmse(_baseline(ex, tr, va), ex.Y[va], norm, K)
+        m["val_baseline_label_mean_rmse_rad"], m["val_baseline_per_joint"] = _dense_rmse(_baseline(ex, tr, va), ex.Y[va], norm, K)
         if predict_duration:
             m["val_duration_mae_s"] = float(np.abs(np.exp(out[va, -1]) - np.exp(ex.log_dur[va])).mean())
     else:

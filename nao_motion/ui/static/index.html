@@ -21,6 +21,7 @@
   <button data-tab="head">2 · Tête</button>
   <button data-tab="hands">3 · Mains</button>
   <button data-tab="takes">Prises</button>
+  <button data-tab="net">Réseau</button>
   <button data-tab="train">Entraînement</button>
   <button data-tab="gen">Génération</button>
   <button data-tab="calib">Calibration</button>
@@ -274,41 +275,63 @@
   </div>
 </section>
 
+<section id="tab-net" class="tab">
+  <div class="net-grid">
+    <div class="net-panel">
+      <div class="row net-groups" role="group" aria-label="Groupe">
+        <span class="legend">Groupe affiché :</span>
+        <button data-net-group="arms" class="sel">Bras</button><button data-net-group="head">Tête</button><button data-net-group="hands">Mains</button>
+      </div>
+      <p class="hint">Réglages des prochains entraînements lancés depuis l'interface (bras, tête ou mains), sans modifier
+      <code>configs/model.yaml</code>. Champ vide = valeur de <code>model.yaml</code> (affichée en grisé). Le modèle gardé est
+      toujours celui de la meilleure validation.</p>
+      <div class="net-fields">
+        <label title="Neurones par couche cachée, séparés par des virgules (ex. 32,32 ou 16) ; 1 à 4 couches">Couches cachées
+          <span><input id="tr-hidden" class="num" style="width:8em"> <button id="net-add-layer" title="Ajouter une couche (même taille que la dernière)">+</button><button id="net-del-layer" title="Retirer la dernière couche">−</button></span></label>
+        <label title="Fraction de neurones désactivés au hasard pendant l'entraînement (0 à 0,9)">Dropout <input type="number" id="tr-dropout" step="0.05" min="0" max="0.9" class="num"></label>
+        <label title="Pénalité sur la taille des poids : plus grand = modèle plus simple">Weight decay <input type="number" id="tr-wd" step="0.0001" min="0" class="num"></label>
+        <label title="Pas d'apprentissage">lr <input type="number" id="tr-lr" step="0.001" min="0" class="num"></label>
+        <label title="Pénalité sur les à-coups des trajectoires">Lissage <input type="number" id="tr-smooth" step="0.01" min="0" class="num"></label>
+        <label title="Adds, in memory only, the left/right mirror of every training take WITHOUT an event (takes with an event are never mirrored). Mirrors that leave the factory limits or go beyond the calibrated zone more than the original are dropped. Validation uses real takes only.">Miroir <span><input type="checkbox" id="tr-mirror"> gauche/droite des prises sans événement</span></label>
+      </div>
+      <div class="row">
+        <button id="tr-preset-small" title="Réseau 32 (une couche), dropout 0,1, weight decay 0,01, lissage 0,05">Préréglage « peu de données »</button>
+        <button id="tr-preset-reset">Valeurs de model.yaml</button>
+      </div>
+      <div id="net-stats" class="net-stats"></div>
+      <div class="row">
+        <button data-train="arms">Entraîner les bras</button><button data-train="head">Entraîner la tête</button><button data-train="hands">Entraîner les mains</button>
+      </div>
+      <p class="hint">Les entraînements et leurs résultats sont dans l'onglet Entraînement (époques et prises en attente y sont réglées).</p>
+    </div>
+    <div class="net-draw"><svg id="net-svg" viewBox="0 0 1200 660" role="img" aria-label="Schéma du réseau"></svg></div>
+  </div>
+</section>
+
 <section id="tab-train" class="tab">
-  <p class="hint">L'entraînement n'entraîne aucun mouvement. Par défaut, seules les prises acceptées sont utilisées ;
-  bras, tête et mains s'entraînent <b>indépendamment</b>, dans n'importe quel ordre ; la génération combine ensuite
-  les modèles disponibles (un groupe sans modèle reste en position de départ).</p>
   <div class="row">
     <label>Époques <input type="number" id="tr-epochs" value="800" class="num"></label>
     <label><input type="checkbox" id="tr-pending"> inclure les prises en attente</label>
-    <button id="tr-arms">Entraîner les bras</button>
-    <button id="tr-head">Entraîner la tête</button>
-    <button id="tr-hands">Entraîner les mains</button>
+    <button data-train="arms">Entraîner les bras</button>
+    <button data-train="head">Entraîner la tête</button>
+    <button data-train="hands">Entraîner les mains</button>
+    <span id="tr-net-sum" class="legend"></span>
   </div>
-  <details id="tr-settings">
-    <summary>Réglages de l'entraînement</summary>
-    <p class="hint">S'appliquent aux prochains entraînements lancés d'ici (bras, tête ou mains), sans modifier
-    <code>configs/model.yaml</code>. Champ vide = valeur de <code>model.yaml</code> (affichée en grisé). Avec peu de prises,
-    un réseau plus petit et plus régularisé colle moins aux prises et généralise mieux. Le modèle gardé est toujours celui
-    de la meilleure validation, quel que soit le nombre d'époques.</p>
-    <div class="row">
-      <label title="Neurones par couche cachée, séparés par des virgules (ex. 32,32 ou 16)">Couches cachées <input id="tr-hidden" class="num" style="width:7em"></label>
-      <label title="Fraction de neurones désactivés au hasard pendant l'entraînement (0 à 0,9)">Dropout <input type="number" id="tr-dropout" step="0.05" min="0" max="0.9" class="num"></label>
-      <label title="Pénalité sur la taille des poids : plus grand = modèle plus simple">Weight decay <input type="number" id="tr-wd" step="0.0001" min="0" class="num"></label>
-      <label title="Pas d'apprentissage">lr <input type="number" id="tr-lr" step="0.001" min="0" class="num"></label>
-      <label title="Pénalité sur les à-coups des trajectoires">Lissage <input type="number" id="tr-smooth" step="0.01" min="0" class="num"></label>
-    </div>
-    <div class="row">
-      <label title="Adds, in memory only, the left/right mirror of every training take WITHOUT an event (takes with an event are never mirrored). Mirrors that leave the factory limits or go beyond the calibrated zone more than the original are dropped. Validation uses real takes only."><input type="checkbox" id="tr-mirror"> Left/right mirror of takes without an event</label>
-    </div>
-    <div class="row">
-      <button id="tr-preset-small" title="Réseau 32 (une couche), dropout 0,1, weight decay 0,01, lissage 0,05">Préréglage « peu de données »</button>
-      <button id="tr-preset-reset">Valeurs de model.yaml</button>
-    </div>
-  </details>
   <div id="tr-jobs"></div>
-  <h3>Résultats</h3>
-  <div id="tr-runs"></div>
+  <div class="tr-grid">
+    <div class="tr-left">
+      <div class="row tr-filter">
+        <b>Résultats</b>
+        <span role="group" aria-label="Groupe"><button data-tr-filter="" class="sel">Tous</button><button data-tr-filter="arms">Bras</button><button data-tr-filter="head">Tête</button><button data-tr-filter="hands">Mains</button></span>
+        <button id="tr-order" title="Inverser l'ordre">↓ plus ancien en haut</button>
+      </div>
+      <div id="tr-runs" class="tr-runs"></div>
+    </div>
+    <div id="tr-view" class="tr-view"><p class="hint">Aucun entraînement pour l'instant.</p></div>
+  </div>
+  <p class="hint">L'entraînement n'entraîne aucun mouvement. Par défaut, seules les prises acceptées sont utilisées ;
+  bras, tête et mains s'entraînent <b>indépendamment</b>, dans n'importe quel ordre ; la génération combine ensuite
+  les modèles disponibles (un groupe sans modèle reste en position de départ).</p>
 </section>
 
 <section id="tab-gen" class="tab">
@@ -457,5 +480,6 @@
 <script src="hands.js"></script>
 <script src="shortcuts.js"></script>
 <script src="coverage.js"></script>
+<script src="mlp.js"></script>
 </body>
 </html>
