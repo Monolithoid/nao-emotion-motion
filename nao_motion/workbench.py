@@ -634,7 +634,7 @@ class Workbench:
         a = make_playable(self.cfg, traj)
         return a.traj, a
 
-    def execute_plan(self, plan_id, background=True, start=None, end="rest"):
+    def execute_plan(self, plan_id, background=True, start=None, end="rest", guardian=True):
         """Plays a generated gesture on the robot (simulated or real). With start=None the plan
         prepared at generation time is played as is (old behaviour); otherwise the cycle is
         planned again now from the measured posture (see plan_generated). The whole cycle must
@@ -651,6 +651,20 @@ class Workbench:
             raise ControllerError("Contrôleur désarmé : cocher « moteurs armés » ; aucun mouvement envoyé")
         if self.ctrl.state == State.HOLDING:
             self.ctrl.acknowledge()  # posture held after a stop: the operator asks to move again
+        notes = []
+        if not guardian:
+            # operator's test, at their own risk: the RAW model gesture (no adaptation), the
+            # guardian verdict is reported but not applied; factory limits stay the ceiling
+            raw = entry["gen"].combined if entry.get("gen") is not None else entry["played"]
+            plan, used = self.plan_generated(raw, start or "auto", end)
+            plan.traj, clipped = self.ctrl.factory_ceiling(plan.traj)
+            if clipped:
+                notes.append(f"clipped to the factory limits: {clipped}")
+            would = plan.report.to_dict()
+            info = {"state": "playing", "plan_id": plan_id, "start": used, "end": end, "guardian": False,
+                    "guardian_would": {"ok": would["ok"], "violations": len(would["violations"])},
+                    "notes": notes, "duration_s": plan.traj.duration, "segments": plan.segments, "at": time.time()}
+            return self._run_play(plan, info, background, guardian=False)
         if start is None:
             plan, used = entry["plan"], "rest"
             if plan is None:
@@ -662,13 +676,16 @@ class Workbench:
             self.play_info = {"state": "refused", "plan_id": plan_id, "start": used, "end": end,
                               "error": "Guardian : cycle refusé, rien n'a été envoyé", "at": time.time()}
             raise GuardianRejection(plan.report)
-        info = {"state": "playing", "plan_id": plan_id, "start": used, "end": end,
+        info = {"state": "playing", "plan_id": plan_id, "start": used, "end": end, "guardian": True,
                 "duration_s": plan.traj.duration, "segments": plan.segments, "at": time.time()}
+        return self._run_play(plan, info, background)
+
+    def _run_play(self, plan, info, background, guardian=True):
         self.play_info = info
 
         def work():
             try:
-                info["result"] = self.ctrl.execute(plan)
+                info["result"] = self.ctrl.execute(plan, guardian=guardian)
                 info["state"] = "stopped" if info["result"] == "stopped" else "done"
             except Exception as e:
                 self.ctrl.last_error = str(e)
@@ -682,8 +699,8 @@ class Workbench:
             threading.Thread(target=work, daemon=True).start()
         else:
             work()
-        return {"started": True, "duration_s": plan.traj.duration, "start": used, "end": end,
-                "cycle": plan.to_dict()}
+        return {"started": True, "duration_s": plan.traj.duration, "start": info["start"], "end": info["end"],
+                "guardian": guardian, "notes": info.get("notes", []), "cycle": plan.to_dict()}
 
     def stop(self):
         """Arrêt explicite global : enregistrement, relecture et exécution."""

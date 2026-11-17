@@ -415,8 +415,13 @@
         <option value="rest" selected>back to rest</option>
         <option value="start">stay in the start pose</option>
       </select></label>
+      <label class="g-noguard"><input type="checkbox" id="g-noguard"> Guardian off (test, at my own risk)</label>
       <button id="g-play" disabled title="Plays the last generated gesture (key 2)">2 ▶ Play on the robot</button>
     </div>
+    <div class="alert hidden" id="g-noguard-alert"><b>GUARDIAN OFF.</b> <i>Play</i> sends the <b>raw</b> model
+      gesture (no adaptation, no slowing down) and the guardian verdict is <b>ignored</b>: no calibrated zone, no
+      velocity / acceleration / coupled-joint checks. Only kept: <b>factory limits as an absolute ceiling</b>
+      (positions clipped into them), the stop on tracking error, and <b>Stop</b>. Unticked at every page load.</div>
     <div id="g-play-why" class="mono"></div>
     <div class="alert" id="g-alert"><b>Warning:</b> <kbd>2</kbd> / <i>Play</i> sends the gesture to the robot
       <b>without confirmation</b> as soon as motors are armed: the cycle (posture → start → gesture → start → rest)

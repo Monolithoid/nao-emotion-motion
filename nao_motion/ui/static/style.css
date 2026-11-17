@@ -267,3 +267,6 @@ table.fid tr.on td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 #t-table tr.open td{background:color-mix(in srgb,var(--accent) 12%,transparent)}
 @media (max-width:1500px){.takes-grid{grid-template-columns:minmax(0,1fr)}.take-view{position:static;max-height:none}}
 #t-table{font-size:13px}#t-table td{white-space:nowrap}#t-table td:last-child{white-space:normal;max-width:180px;overflow:hidden;text-overflow:ellipsis}
+.g-noguard{color:var(--bad);font-weight:600}
+.g-play.noguard{border-color:var(--bad);border-width:3px}
+#g-noguard-alert{font-size:15px;max-width:none}
