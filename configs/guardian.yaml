@@ -22,9 +22,10 @@ factory_velocity_rad_s:
   ElbowYaw: 8.29                # 150.27
   ElbowRoll: 7.19               # 173.22
   WristYaw: 24.62               # 50.61
-# À vide : en charge, le moteur va moins vite. La moitié laisse de la marge (bras : 3,6 à
-# 4,1 rad/s, poignet : 12,3 rad/s), au-dessus des pics d'un geste humain ample (~3 à 5 rad/s).
-velocity_fraction_of_factory: 0.5
+# Fraction de la vitesse d'usine prise comme limite (1 = limites d'usine, choix de
+# l'opérateur 2026-11-18). Ce sont des vitesses À VIDE : en charge, le moteur va un peu
+# moins vite, le suivi (robot.yaml, tracking_*) arrête le geste si le robot décroche.
+velocity_fraction_of_factory: 1.0
 # Accélération : pas de valeur d'usine. 30 rad/s² permet d'atteindre 4 rad/s en ~0,13 s
 # (pic d'un geste humain de 1 rad en 0,4 s : ~36 rad/s² ; l'ancienne valeur, 8, ralentissait
 # un tel geste x2 à elle seule). Tête : plus prudent, voir per_joint_acceleration.

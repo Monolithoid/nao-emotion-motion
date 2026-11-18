@@ -32,10 +32,10 @@ execution:
   # the measured posture stiff.
   tracking_stop_action: relax
   # setAngles (streaming) : vitesse max laissée au moteur, en fraction de sa vitesse d'usine.
-  # Elle doit dépasser la limite du guardian (guardian.yaml velocity_fraction_of_factory,
-  # 0.5), sinon le robot ne suit pas le geste validé et prend du retard (arrêt de suivi).
-  # Elle plafonne aussi les limites du guardian (voir guardian.yaml).
-  max_fraction_speed: 0.6
+  # Elle doit être au moins égale à la limite du guardian (guardian.yaml
+  # velocity_fraction_of_factory), sinon le robot ne suit pas le geste validé et prend du
+  # retard (arrêt de suivi). Elle plafonne aussi les limites du guardian (voir guardian.yaml).
+  max_fraction_speed: 1.0
   hand_tracking_error: 0.5  # mains (fraction d'ouverture) : le moteur de la main suit plus lentement
   # The measured angle is compared with the command over the last tracking_lag_s (latency of
   # the bridge and of setAngles), so a joint that is only late does not stop the play.

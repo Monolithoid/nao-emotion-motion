@@ -113,7 +113,7 @@ def test_rest_to_start_cycle_accepted(calibrated):
     # grand déplacement trop rapide : refus pour vitesse
     lo, hi = g.allowed_range("HeadYaw")
     a, b = dict(start, HeadYaw=lo), dict(start, HeadYaw=hi)
-    fast = g.check_move(a, b, 0.5)
+    fast = g.check_move(a, b, 0.2)  # well above the factory speed of HeadYaw
     assert "velocity" in {v.code for v in fast.violations}
     assert g.check_move(a, b, g.min_duration(a, b) + 0.5).ok
 
