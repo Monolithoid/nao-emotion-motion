@@ -1,21 +1,13 @@
 """Guardian : validation indépendante des trajectoires avant toute exécution.
 
-Le guardian protège le robot, pas le style du geste. Il vérifie :
-  - les butées des moteurs (limites d'usine, petite marge), la vitesse et
-    l'accélération ;
-  - l'auto-collision : bras contre torse, bassin, jambes, tête et autre bras,
-    sur un modèle géométrique du NAO (collision.py) ;
-  - les contraintes couplées que l'opérateur a choisies (aucune par défaut).
-Il ne borne plus le geste à la zone explorée pendant la calibration (sauf
-guardian.yaml calibrated_zone: true, ancien comportement).
-
 Le guardian ne modifie jamais une trajectoire : il l'accepte ou la refuse en
 listant les violations. Il vérifie le TRAJET COMPLET (échantillonné finement),
 pas seulement ses extrémités.
 
 Ce qu'il ne garantit pas :
-  - l'absence de collision au-delà de la précision du modèle géométrique
-    (capsules réglables dans guardian.yaml, self_collision) ;
+  - l'absence de collision au-delà des contraintes configurées (des limites
+    min/max indépendantes et quelques contraintes linéaires couplées ne
+    décrivent pas toute la géométrie du robot) ;
   - la stabilité électrique ou logicielle du robot : il ne corrige pas des
     redémarrages dont la cause n'est pas établie.
 """
@@ -29,7 +21,6 @@ import numpy as np
 from ..adapters.base import LEG_PREFIXES
 from ..config import Config
 from ..trajectory import Trajectory, TrajectoryError
-from . import collision
 
 
 @dataclass
@@ -73,19 +64,6 @@ class Guardian:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.g = cfg.guardian
-        self.body = collision.for_config(cfg)
-
-    def _collisions(self, joints, tt, qq, ctx, v: List[Violation], time_offset: float = 0.0, ignore=(),
-                    threshold: Optional[float] = None):
-        if not self.body.enabled:
-            return
-        lim = self.body.clearance if threshold is None else threshold
-        for x in self.body.violations(joints, qq, ctx, ignore=ignore, threshold=lim):
-            a, b = x["pair"]
-            v.append(Violation("collision", f"Auto-collision {a} / {b} sur {x['count']} points "
-                                            f"(distance min {x['min_distance'] * 1000:.0f} mm)",
-                               joint=f"{a}/{b}", time_s=float(tt[x["first"]]) + time_offset,
-                               value=x["min_distance"], limit=lim))
 
     def validate_raw(self, data: dict, **kw) -> Report:
         """Valide une trajectoire reçue sous forme de dictionnaire (ex. réseau)."""
@@ -117,7 +95,7 @@ class Guardian:
         for j in traj.joints:
             if j.startswith(LEG_PREFIXES):
                 v.append(Violation("legs", "Les jambes sont hors périmètre", joint=j))
-            elif j not in self.cfg.guardian_limits:
+            elif j not in self.cfg.limits:
                 v.append(Violation("unknown_joint", "Articulation non configurée", joint=j))
         if expected_joints is not None and set(expected_joints) != set(traj.joints):
             v.append(Violation("incompatible", f"Articulations attendues {sorted(expected_joints)}, "
@@ -135,9 +113,7 @@ class Guardian:
         tt = np.union1d(traj.t, np.linspace(traj.t[0], traj.t[-1], n))
         qq = traj.sample(tt)
         for k, j in enumerate(traj.joints):
-            lo, hi = self.cfg.guardian_limits[j]
-            m = self.g.margin(j)  # mains : plage d'usine entière par défaut
-            lo, hi = lo + m, hi - m
+            lo, hi = self.cfg.guardian_bounds[j]  # marges comprises (config._guardian_bounds)
             bad = np.nonzero((qq[:, k] < lo) | (qq[:, k] > hi))[0]
             if bad.size:
                 i = bad[0]
@@ -188,9 +164,6 @@ class Guardian:
                 v.append(Violation("coupled", f"Contrainte couplée « {c.name} » violée sur {bad.size} points",
                                    time_s=float(tt[i]), value=float(total[i]), limit=c.bound))
 
-        # auto-collision sur tout le trajet (bras <-> corps, jambes, tête, autre bras)
-        self._collisions(traj.joints, tt, qq, ctx, v)
-
         if start_state is not None:
             for k, j in enumerate(traj.joints):
                 if j in start_state:
@@ -211,16 +184,15 @@ class Guardian:
         return Report(not v, v, stats)
 
     def validate_rest_transition(self, traj: Trajectory, start_state: Optional[dict] = None,
-                                 time_offset: float = 0.0, context_pose: Optional[dict] = None) -> Report:
+                                 time_offset: float = 0.0) -> Report:
         """Segment repos <-> départ.
 
         Le repos peut être hors de la zone de mouvement calibrée (ex. bras posés sur les
         genoux : contact). Ces segments sont les SEULS autorisés à la quitter. Ils sont
-        vérifiés sur les limites d'usine, à vitesse réduite et en accélération, sans marge
-        ni contraintes couplées, et en auto-collision : les contacts présents dans la pose
-        de repos (mains sur les genoux) ou au premier point (posture mesurée) y sont
-        tolérés, puisque le segment part de là ou y arrive, et seule l'interpénétration est
-        refusée (pas de distance de sécurité près d'une posture de contact)."""
+        vérifiés sur les limites d'usine, à vitesse réduite et en accélération ; ni marge
+        ni contraintes couplées. Le guardian ne garantit pas l'absence de collision le
+        long de ce trajet : que le départ soit accessible sans heurt depuis le repos est
+        à la charge de l'opérateur qui calibre."""
         v: List[Violation] = []
         try:
             from ..trajectory import check_samples
@@ -264,13 +236,6 @@ class Guardian:
                     v.append(Violation("start_mismatch", "Premier point éloigné de l'état mesuré", joint=j,
                                        value=abs(float(traj.q[0, k]) - float(start_state[j])),
                                        limit=self.g.start_tolerance_rad))
-        if self.body.enabled:
-            first = dict(context_pose or {})
-            first.update(zip(traj.joints, qq[0].tolist()))
-            ignore = set(self.body.rest_contacts) | {p for p, d in self.body.pose_distances(first).items()
-                                                     if d < self.body.clearance}
-            # interpenetration only: these segments go to or from a contact posture
-            self._collisions(traj.joints, tt, qq, context_pose, v, time_offset, ignore, threshold=0.0)
         return Report(not v, v, {"duration_s": traj.duration, "rest_transition": True})
 
     def require(self, traj: Trajectory, **kw) -> Report:

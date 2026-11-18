@@ -47,16 +47,14 @@ def test_make_playable_brings_the_gesture_back_inside_the_limits(cfg):
     k = cfg.arm_joints.index(j)
     raw = _fast_arm_gesture(cfg, amp=0.0, dur=3.0)
     q = raw.q.copy()
-    lo, hi = cfg.guardian_limits[j]  # motor (factory) limits
+    lo, hi = cfg.limits[j]
     bump = np.sin(np.pi * raw.t / raw.duration) ** 2
-    q[:, k] = q[0, k] + (lo - 0.2 - q[0, k]) * bump  # arm raised 0.2 rad beyond the limit
+    q[:, k] = q[0, k] + (hi + 0.2 - q[0, k]) * bump  # goes 0.2 rad beyond the limit
     raw = Trajectory(raw.joints, raw.t, q)
     assert "limit" in {v.code for v in g.validate(raw).violations}
     a = make_playable(cfg, raw)
     assert g.validate(a.traj).ok, g.validate(a.traj).summary()
-    assert j in a.joints_changed and a.traj.q[:, k].min() >= lo + cfg.guardian.margin(j) - 1e-9
-    # only the joint that went past its limit is changed
-    assert a.joints_changed == [j]
+    assert j in a.joints_changed and a.traj.q[:, k].max() <= hi - cfg.guardian.margin(j) + 1e-9
 
 
 def _human_like_gesture(cfg, seed=1, dur=3.9):
@@ -222,3 +220,39 @@ def test_training_report_guardian_is_information_only(trained):
                               set(json.loads((Path(trained["arm_run"]) / "split.json").read_text())["val"]))
     assert m["n_examples"] >= gt["total"]  # every take is trained on, whatever the guardian says
     assert gt["median_excess_rad"] is not None and gt["max_excess_rad"] >= gt["median_excess_rad"]
+
+
+def test_zone_keeps_one_margin_inside_what_the_calibration_reached(cfg):
+    """Calibration of the real robot (2026-11-04): the zone is the explored extremes minus
+    zone_margin_rad, not minus the calibration margin AND limit_margin_rad (0.08 rad per side),
+    and limit_margin_rad only keeps away from the factory stops. Pair envelopes widened alike."""
+    path = cfg.root / "calibration" / "nao-20261104-183718.yaml"
+    c = load_config(calibration_file=path)
+    cal = Calibration.load(path)
+    zm, m = c.guardian.zone_margin_rad, c.guardian.limit_margin_rad
+    assert zm == pytest.approx(0.02)
+    for j in c.all_joints:
+        meas = cal.measured[j]
+        f = meas["factory"]
+        lo = max(meas["min"] + zm, f[0] + m)
+        hi = min(meas["max"] - zm, f[1] - m)
+        assert c.guardian_bounds[j] == pytest.approx((lo, hi), abs=1e-6)
+    old = {x["name"]: x["bound"] for x in cal.coupled}
+    for k in c.guardian.coupled_constraints:
+        assert k.bound == pytest.approx(old[k.name] + cal.margin_rad - zm)
+
+
+def test_make_playable_leaves_joints_inside_the_zone_untouched(cfg):
+    """Only the joint that goes past its bound is changed, not its neighbours near an edge."""
+    j = "LShoulderPitch"
+    k = cfg.arm_joints.index(j)
+    raw = _fast_arm_gesture(cfg, amp=0.0, dur=3.0)
+    q = raw.q.copy()
+    lo, hi = cfg.guardian_bounds[j]
+    bump = np.sin(np.pi * raw.t / raw.duration) ** 2
+    q[:, k] = q[0, k] + (hi + 0.2 - q[0, k]) * bump
+    r = cfg.arm_joints.index("RShoulderPitch")
+    rhi = cfg.guardian_bounds["RShoulderPitch"][1]
+    q[:, r] = q[0, r] + (rhi - 0.01 - q[0, r]) * bump  # close to its edge, but inside
+    a = make_playable(cfg, Trajectory(raw.joints, raw.t, q))
+    assert a.joints_changed == [j]

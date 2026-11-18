@@ -115,7 +115,7 @@ def test_hands_pass_dataset_training_generation(trained, cfg, tmp_path):
     gen = eng.generate("joie", 0.9, EventContext.none())
     assert gen.hands is not None and gen.combined.joints == cfg.all_joints + cfg.hand_joints
     assert set(gen.durations) == {"arms", "head", "hands"}  # trois modèles indépendants combinés
-    # the guardian judges the gesture as played (slowed down where a motor limit requires it)
+    # the guardian judges the gesture as played (slowed down where a limit requires it)
     played, _ = wb.playable(gen.combined)
     assert Guardian(cfg).validate(played).ok
     wb.ctrl.disarm()

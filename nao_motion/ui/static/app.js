@@ -478,17 +478,7 @@ async function init() {
       "\n\nRefused on the RAW gesture (gestures per check):\n" + tbl(d.refusals.raw) +
       "\nStill refused after making it playable:\n" + tbl(d.refusals.playable) +
       (d.connected ? "\nWhole cycle:\n" + tbl(d.refusals.cycle) : "") +
-      (() => {  // recorded takes are collision-free by nature: any flag = collision model too big
-        const tc = d.takes_collisions || {};
-        if (tc.error) return `\n\nCollision model vs recorded takes: ✗ ${tc.error}`;
-        if (!tc.checked) return "\n\nCollision model vs recorded takes: no recorded arm take";
-        const rows = Object.entries(tc.pairs || {}).sort((a, b) => b[1].takes - a[1].takes)
-          .map(([k, p]) => `  ${String(p.takes).padStart(3)} × ${k} (min ${p.min_distance_mm} mm, e.g. ${p.example})`);
-        return `\n\nCollision model vs recorded takes: ${tc.flagged}/${tc.checked} flagged` +
-          (rows.length ? " (model too big there)\n" + rows.join("\n") : " ✓");
-      })() +
-      `\n\nLimits in force (calibration ${L.calibration}${L.calibrated ? "" : ", NOT calibrated"}` +
-      `${L.calibrated_zone ? ", calibrated zone" : ", motor limits"}):\n` +
+      `\n\nLimits in force (calibration ${L.calibration}${L.calibrated ? "" : ", NOT calibrated"}):\n` +
       L.joints.map((r) => `  ${r.joint.padEnd(15)} zone [${r.zone[0]}, ${r.zone[1]}] · v ${r.velocity} (${r.velocity_source}) · a ${r.acceleration} (${r.acceleration_source})`).join("\n") +
       "\nCoupled constraints:\n" + (L.coupled.map((c) => `  ${c.name} (${c.source}) : ` +
         Object.entries(c.terms).map(([j, k]) => `${k}·${j}`).join(" + ") + ` ≤ ${c.bound}`).join("\n") || "  none");

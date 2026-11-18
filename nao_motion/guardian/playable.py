@@ -6,11 +6,10 @@ propose gestures that are faster than the configured limits or that brush the
 edge of the calibrated zone. Instead of refusing those gestures outright, the
 playback path adapts them first:
 
-1. shape, only where the robot needs it: a joint that goes past its motor limit
-   (margin included) is brought back with a smooth saturation (a joint that
-   stays inside is not touched), and where two links would collide the path is
-   deviated as little as possible around that moment (repair_collisions); the
-   rest of the gesture is left exactly as the model made it;
+1. shape: a joint that goes past its limit (margin included) is brought back
+   with a smooth saturation (no kink, so no artificial acceleration spike), and a
+   violated coupled constraint the same way along its normal direction; joints and
+   constraints that stay inside are not touched at all;
 2. timing: the gesture is slowed down just enough for the velocity and
    acceleration limits (never sped up), within the duration bounds. By default
    only the moments that exceed a limit are slowed down (`local`: a smooth time
@@ -31,7 +30,6 @@ import numpy as np
 
 from ..config import Config
 from ..trajectory import Trajectory
-from . import collision
 
 # width (rad) of the band, inside the allowed range, where saturation starts
 SOFT_BAND_RAD = 0.06
@@ -72,104 +70,31 @@ def _soft_box(x: np.ndarray, lo: float, hi: float, band: float) -> np.ndarray:
     return -_soft_upper(-_soft_upper(x, hi, band), -lo, band)
 
 
-def _bump_spread(D: np.ndarray, mask: np.ndarray, sigma_samples: float) -> np.ndarray:
-    """Spread corrections D (N, J), non-zero where mask, over the neighbouring samples with a
-    Gaussian bump: the correction reaches its full value on the corrected samples and fades out
-    smoothly around them (no kink, so no velocity or acceleration jump)."""
-    r = max(1, int(np.ceil(3 * sigma_samples)))
-    k = np.exp(-0.5 * (np.arange(-r, r + 1) / sigma_samples) ** 2)
-    dens = np.convolve(mask.astype(float), k, mode="same")
-    out = np.stack([np.convolve(D[:, j], k, mode="same") for j in range(D.shape[1])], axis=1)
-    return out / np.maximum(1.0, dens)[:, None]
-
-
-# how far (s) a collision correction spreads around the colliding moments
-REPAIR_SIGMA_S = 0.12
-# extra distance (m) above the clearance aimed at by the correction
-REPAIR_MARGIN_M = 0.004
-
-
-def repair_collisions(cfg: Config, joints, t: np.ndarray, q: np.ndarray, context_pose: Dict[str, float],
-                      rounds: int = 40) -> np.ndarray:
-    """Smallest smooth change of the path that keeps every link at the clearance distance.
-
-    Only the moments where two links come too close are changed: at each of them the joints
-    of the links involved move along the gradient of their distance (least-norm step), and
-    the change is spread over ~REPAIR_SIGMA_S around it. Elsewhere the gesture is untouched,
-    and its timing never changes."""
-    body = collision.for_config(cfg)
-    if not body.enabled or len(t) < 2:
-        return q
-    q = q.copy()
-    sigma = REPAIR_SIGMA_S / float(np.median(np.diff(t)))
-    target = body.clearance + REPAIR_MARGIN_M
-    eps = 1e-3
-    for _ in range(rounds):
-        dist = body.distances(joints, q, context_pose)
-        bad_any = np.zeros(len(t), bool)
-        for d in dist.values():
-            bad_any |= d < body.clearance
-        if not bad_any.any():
-            break
-        D = np.zeros_like(q)
-        mask = np.zeros(len(t), bool)
-        for pair, d in dist.items():
-            idx = np.nonzero(d < target)[0]
-            if idx.size == 0:
-                continue
-            grad = np.zeros((idx.size, len(joints)))
-            for k in range(len(joints)):
-                qp = q[idx].copy()
-                qp[:, k] += eps
-                grad[:, k] = (body.distances(joints, qp, context_pose)[pair] - d[idx]) / eps
-            n2 = (grad ** 2).sum(axis=1)
-            ok = n2 > 1e-9
-            step = np.zeros_like(grad)
-            step[ok] = ((target - d[idx[ok]]) / n2[ok])[:, None] * grad[ok]
-            D[idx] += step
-            mask[idx] = True
-        q = q + _bump_spread(D, mask, sigma)
-    return q
-
-
 def _shape(cfg: Config, traj: Trajectory, context_pose: Dict[str, float], rounds: int = 6) -> np.ndarray:
-    """Path changes that the robot needs, and only those: a joint that goes past its limit
-    (margin included) is brought back smoothly (only that joint, nothing changes when it stays
-    inside), the coupled constraints chosen by the operator likewise, then collisions are
-    removed with the least change (repair_collisions)."""
     g = cfg.guardian
     q = traj.q.copy()
-    bounds = []
-    for j in traj.joints:
-        lo, hi = cfg.guardian_limits[j]
-        m = g.margin(j)
-        bounds.append((lo + m, hi - m))
-    def limits(q):
-        for _ in range(rounds):
-            for c in g.coupled_constraints:
-                idx = [(traj.joints.index(j), coef) for j, coef in c.terms.items() if j in traj.joints]
-                if not idx or any(j not in traj.joints and j not in context_pose for j in c.terms):
-                    continue  # the guardian skips it too (unknown joint)
-                fixed = sum(coef * float(context_pose[j]) for j, coef in c.terms.items() if j not in traj.joints)
-                cvec = np.array([coef for _, coef in idx])
-                cols = [k for k, _ in idx]
-                s = q[:, cols] @ cvec + fixed
-                if not np.any(s > c.bound - 1e-3):
-                    continue
-                s_new = _soft_upper(s, c.bound - 1e-3, SOFT_BAND_RAD)
-                delta = s_new - s
-                if np.any(delta):
-                    q[:, cols] += np.outer(delta, cvec / float(cvec @ cvec))
-            for k, (lo, hi) in enumerate(bounds):
-                if np.any(q[:, k] < lo) or np.any(q[:, k] > hi):
-                    q[:, k] = _soft_box(q[:, k], lo, hi, SOFT_BAND_RAD)
-        return q
-
-    # the collision repair can push a joint past its limit, and the limit saturation can bring
-    # two links together again: a few alternations, ending with the limits (never exceeded)
-    for _ in range(3):
-        q = repair_collisions(cfg, traj.joints, traj.t, limits(q), context_pose)
-    return limits(q)
+    # only what goes past a bound is changed: a joint (or a coupled constraint) that stays
+    # inside is left exactly as the model made it, even close to the edge
+    bounds = [cfg.guardian_bounds[j] for j in traj.joints]
+    for _ in range(rounds):
+        for c in g.coupled_constraints:
+            idx = [(traj.joints.index(j), coef) for j, coef in c.terms.items() if j in traj.joints]
+            if not idx or any(j not in traj.joints and j not in context_pose for j in c.terms):
+                continue  # the guardian skips it too (unknown joint)
+            fixed = sum(coef * float(context_pose[j]) for j, coef in c.terms.items() if j not in traj.joints)
+            cvec = np.array([coef for _, coef in idx])
+            cols = [k for k, _ in idx]
+            s = q[:, cols] @ cvec + fixed
+            if not np.any(s > c.bound - 1e-3):
+                continue
+            s_new = _soft_upper(s, c.bound - 1e-3, SOFT_BAND_RAD)
+            delta = s_new - s
+            if np.any(delta):
+                q[:, cols] += np.outer(delta, cvec / float(cvec @ cvec))
+        for k, (lo, hi) in enumerate(bounds):
+            if np.any(q[:, k] < lo) or np.any(q[:, k] > hi):
+                q[:, k] = _soft_box(q[:, k], lo, hi, SOFT_BAND_RAD)
+    return q
 
 
 def _time_scale(cfg: Config, t: np.ndarray, q: np.ndarray, joints) -> float:
@@ -288,14 +213,14 @@ def make_playable(cfg: Config, traj: Trajectory, context_pose: Optional[Dict[str
             break
         s, slowed = s_new, _stretch(base, s_new, resample_hz)
     if changed:
-        notes.append(f"path changed for the motor limits / self-collision: {changed} (max {diff.max():.3f} rad)")
+        notes.append(f"brought back inside limits / coupled zone: {changed} (max {diff.max():.3f} rad)")
     if local > 1.0 + 1e-9:
         notes.append(f"fast moments slowed down locally: duration x{local:.2f}")
     if s > 1.0 + 1e-9:
         notes.append(f"slowed down uniformly x{s:.2f} for velocity / acceleration limits")
-    # the cubic resampling of the time warp can overshoot a saturated joint by a few 1e-5 rad
-    lo = np.array([cfg.guardian_limits[j][0] + g.margin(j) for j in slowed.joints])
-    hi = np.array([cfg.guardian_limits[j][1] - g.margin(j) for j in slowed.joints])
+    # the cubic resampling of the time warp can overshoot a saturated joint by ~1e-5 rad
+    lo = np.array([cfg.guardian_bounds[j][0] for j in slowed.joints])
+    hi = np.array([cfg.guardian_bounds[j][1] for j in slowed.joints])
     slowed = Trajectory(slowed.joints, slowed.t, np.clip(slowed.q, lo, hi))
     total = slowed.duration / dur
     return Adaptation(slowed, total if total > 1.0 + 1e-9 else 1.0,

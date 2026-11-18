@@ -8,12 +8,9 @@ Il lit un fichier `guardian.json` exporté par nao-emotion-motion
 guardian du projet :
 
   - articulations connues uniquement, jambes toujours refusées ;
-  - limites min/max des moteurs (limites d'usine lues à la calibration), moins
-    une marge ;
-  - contraintes couplées linéaires sum(coef * q) <= bound, seulement celles
-    que l'opérateur a choisies (aucune par défaut) ;
-  - auto-collision : bras contre corps, jambes, tête et autre bras (modèle
-    géométrique du NAO, capsules, sur tout le trajet) ;
+  - limites min/max (mesurées par la calibration), moins une marge ;
+  - contraintes couplées linéaires sum(coef * q) <= bound (zones mesurées par
+    la calibration + contraintes manuelles, par ex. bras <-> tête) ;
   - vitesse et accélération maximales, durée minimale et maximale ;
   - premier point proche de l'état mesuré (optionnel).
 
@@ -26,9 +23,8 @@ seulement ses extrémités. Le guardian NE MODIFIE JAMAIS un mouvement : il
 l'accepte ou le refuse en listant les violations. Il ne commande rien et ne
 dépend pas de NAOqi.
 
-Ce qu'il ne garantit pas : l'absence de collision au-delà de la précision du
-modèle géométrique (capsules réglables dans guardian.yaml), ni la stabilité
-électrique ou logicielle du robot.
+Ce qu'il ne garantit pas : l'absence de collision au-delà des contraintes
+configurées, ni la stabilité électrique ou logicielle du robot.
 
 Utilisation en bibliothèque :
 
@@ -133,153 +129,6 @@ def _sample(ts, cols, tt):
     return [[_interp(x, ts, c) for c in cols] for x in tt]
 
 
-# -- auto-collision (même modèle que nao_motion/guardian/collision.py) -------------------
-_NECK_Z = 0.1265
-_SHOULDER_Y, _SHOULDER_Z = 0.098, 0.100
-_UPPER_ARM, _ELBOW_Y = 0.105, 0.015
-_LOWER_ARM, _HAND_Z = 0.05595, 0.01231
-_ARM_JOINTS = {"L": ["LShoulderPitch", "LShoulderRoll", "LElbowYaw", "LElbowRoll", "LWristYaw"],
-               "R": ["RShoulderPitch", "RShoulderRoll", "RElbowYaw", "RElbowRoll", "RWristYaw"]}
-_HEAD_JOINTS = ["HeadYaw", "HeadPitch"]
-
-
-def _mrot(axis, a):
-    c, s = math.cos(a), math.sin(a)
-    if axis == "x":
-        return [[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]]
-    if axis == "y":
-        return [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]]
-    return [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
-
-
-def _mm(A, B):
-    return [[sum(A[i][k] * B[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
-
-
-def _mv(A, v):
-    return [A[0][0] * v[0] + A[0][1] * v[1] + A[0][2] * v[2],
-            A[1][0] * v[0] + A[1][1] * v[1] + A[1][2] * v[2],
-            A[2][0] * v[0] + A[2][1] * v[1] + A[2][2] * v[2]]
-
-
-def _add(a, b, k=1.0):
-    return [a[0] + k * b[0], a[1] + k * b[1], a[2] + k * b[2]]
-
-
-def _dot(a, b):
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-
-
-def _clamp01(x):
-    return 0.0 if x < 0.0 else (1.0 if x > 1.0 else x)
-
-
-def _segment_distance(p1, q1, p2, q2):
-    """Distance entre deux segments (Ericson 5.1.9), segments dégénérés acceptés."""
-    eps = 1e-12
-    d1, d2, r = _add(q1, p1, -1.0), _add(q2, p2, -1.0), _add(p1, p2, -1.0)
-    a, e, f = _dot(d1, d1), _dot(d2, d2), _dot(d2, r)
-    c, b = _dot(d1, r), _dot(d1, d2)
-    denom = a * e - b * b
-    s = _clamp01((b * f - c * e) / denom) if denom > eps else 0.0
-    if a <= eps:
-        s = 0.0
-    t = (b * s + f) / e if e > eps else 0.0
-    if t < 0.0:
-        s = _clamp01(-c / a) if a > eps else 0.0
-    elif t > 1.0:
-        s = _clamp01((b - c) / a) if a > eps else 0.0
-    t = _clamp01(t)
-    c1, c2 = _add(p1, d1, s), _add(p2, d2, t)
-    w = _add(c1, c2, -1.0)
-    return math.sqrt(_dot(w, w))
-
-
-class BodyModel(object):
-    """Capsules du NAO (repère du torse, mètres) : bras par cinématique directe, tête, corps et
-    jambes fixes (déjà résolues à l'export). Distance de surface < clearance_m = collision."""
-
-    def __init__(self, d):
-        self.enabled = bool(d.get("enabled", True))
-        self.clearance = float(d["clearance_m"])
-        self.radius = dict((k, float(v)) for k, v in d["radius_m"].items())
-        self.upper_start = float(d["upper_arm_start_m"])
-        self.hand_length = float(d["hand_length_m"])
-        self.head_center = [float(x) for x in d["head_center_m"]]
-        self.body = [(c["name"], [float(x) for x in c["a"]], [float(x) for x in c.get("b", c["a"])],
-                      float(c["radius"])) for c in d.get("body") or []]
-        self.rest_contacts = set(tuple(p) for p in d.get("rest_contacts") or [])
-
-    def _arm(self, side, q):
-        sy = 1.0 if side == "L" else -1.0
-        p_sh = [0.0, sy * _SHOULDER_Y, _SHOULDER_Z]
-        R = _mm(_mrot("y", q[0]), _mrot("z", q[1]))
-        ex = [R[0][0], R[1][0], R[2][0]]
-        p_el = _add(p_sh, _mv(R, [_UPPER_ARM, sy * _ELBOW_Y, 0.0]))
-        R = _mm(_mm(R, _mrot("x", q[2])), _mrot("z", q[3]))
-        p_wr = _add(p_el, [R[0][0], R[1][0], R[2][0]], _LOWER_ARM)
-        R = _mm(R, _mrot("x", q[4]))
-        p_hand = _add(p_wr, _mv(R, [self.hand_length, 0.0, -_HAND_Z]))
-        return [("upper_arm", _add(p_sh, ex, self.upper_start), p_el), ("forearm", p_el, p_wr),
-                ("hand", p_wr, p_hand)]
-
-    def links(self, pose):
-        out = {}
-        for side in ("L", "R"):
-            if all(j in pose for j in _ARM_JOINTS[side]):
-                for name, a, b in self._arm(side, [pose[j] for j in _ARM_JOINTS[side]]):
-                    out[side + "_" + name] = (a, b, self.radius[name])
-        if all(j in pose for j in _HEAD_JOINTS):
-            R = _mm(_mrot("z", pose["HeadYaw"]), _mrot("y", pose["HeadPitch"]))
-            c = _add([0.0, 0.0, _NECK_Z], _mv(R, self.head_center))
-            out["tete"] = (c, c, self.radius["head"])
-        return out
-
-    def distances(self, pose):
-        """{(lien, lien): distance de surface (m)} pour une posture {articulation: rad}."""
-        lk = self.links(pose)
-        allc = dict(lk)
-        for name, a, b, r in self.body:
-            allc[name] = (a, b, r)
-        arm = [x for x in lk if x[:2] in ("L_", "R_")]
-        arm.sort(key=lambda x: (x[0] != "L", ["upper_arm", "forearm", "hand"].index(x[2:])))
-        pairs = []
-        for x in arm:
-            pairs += [(x, c[0]) for c in self.body]
-            if "tete" in lk:
-                pairs.append((x, "tete"))
-        pairs += [(x, y) for x in arm if x.startswith("L_") for y in arm if y.startswith("R_")]
-        out = {}
-        for x, y in pairs:
-            a1, b1, r1 = allc[x]
-            a2, b2, r2 = allc[y]
-            out[(x, y)] = _segment_distance(a1, b1, a2, b2) - r1 - r2
-        return out
-
-    def check_rows(self, joints, rows, tt, context, v, time_offset=0.0, ignore=(), threshold=None):
-        """Ajoute une violation « collision » par paire plus proche que `threshold` (par défaut
-        clearance_m) sur les lignes `rows`."""
-        if not self.enabled:
-            return
-        lim = self.clearance if threshold is None else threshold
-        ctx = dict(context or {})
-        found = {}
-        for i, row in enumerate(rows):
-            pose = dict(ctx)
-            pose.update(zip(joints, row))
-            for pair, d in self.distances(pose).items():
-                if d < lim and pair not in ignore:
-                    f = found.setdefault(pair, [i, 0, d])
-                    f[1] += 1
-                    f[2] = min(f[2], d)
-        for pair in sorted(found):
-            first, count, dmin = found[pair]
-            v.append(Violation("collision", "Auto-collision %s / %s sur %d points (distance min %.0f mm)"
-                               % (pair[0], pair[1], count, dmin * 1000), joint="%s/%s" % pair,
-                               time_s=None if tt is None else float(tt[first]) + time_offset,
-                               value=float(dmin), limit=lim))
-
-
 # -- guardian ----------------------------------------------------------------------------
 class Guardian(object):
     def __init__(self, data, allow_uncalibrated=False):
@@ -331,9 +180,6 @@ class Guardian(object):
                                 for j, lh in (data.get("rest_limits") or data["limits"]).items())
         self.rest_velocity = float(data.get("rest_velocity_rad_s", self.max_velocity))
         self.transition_velocity = float(data.get("transition_velocity_rad_s", self.max_velocity))
-        # auto-collision (bras <-> corps, tête, autre bras) ; absent des exports antérieurs
-        sc = data.get("self_collision")
-        self.body = BodyModel(sc) if sc and sc.get("enabled", True) else None
 
     @classmethod
     def load(cls, path, allow_uncalibrated=False):
@@ -419,8 +265,6 @@ class Guardian(object):
             if x < lo or x > hi:
                 v.append(Violation("limit", "Hors limites (marge incluse)", joint=j, value=x, limit=lo if x < lo else hi))
         self._coupled(joints, [row], None, context, v)
-        if self.body is not None:
-            self.body.check_rows(joints, [row], None, context, v)
         return Report(not v, v)
 
     def check_move(self, start, target, duration_s, context=None, check_duration=True):
@@ -511,9 +355,6 @@ class Guardian(object):
 
         # contraintes couplées sur tout le trajet (y compris tête <-> bras via `context`)
         self._coupled(joints, rows, tt, context, v)
-        # auto-collision sur tout le trajet (bras <-> corps, tête, autre bras)
-        if self.body is not None:
-            self.body.check_rows(joints, rows, tt, context, v)
 
         if start_state is not None:
             for k, j in enumerate(joints):
@@ -533,7 +374,7 @@ class Guardian(object):
             stats["suggested_time_scale"] = round(float(max(sv, sa, 1.0)), 3)
         return Report(not v, v, stats)
 
-    def check_rest_transition(self, times, joints, positions, start_state=None, time_offset=0.0, context=None):
+    def check_rest_transition(self, times, joints, positions, start_state=None, time_offset=0.0):
         """Rest <-> start segment, the ONLY one allowed to leave the movement zone (rest in
         contact, arms on the knees...): factory limits, reduced velocity (rest_velocity_rad_s)
         and acceleration; no margin, no coupled constraints. That this path is free of
@@ -587,15 +428,6 @@ class Guardian(object):
                 if j in start_state and abs(qs[0][k] - float(start_state[j])) > self.start_tolerance:
                     v.append(Violation("start_mismatch", "First point far from the measured state", joint=j,
                                        value=abs(qs[0][k] - float(start_state[j])), limit=self.start_tolerance))
-        if self.body is not None:
-            # contacts of the rest pose (hands on the knees) and of the first point (measured
-            # posture) are tolerated on these segments: they are where they start or end
-            first = dict(context or {})
-            first.update(zip(joints, rows[0]))
-            ignore = set(self.body.rest_contacts) | set(
-                p for p, d in self.body.distances(first).items() if d < self.body.clearance)
-            # interpenetration only: these segments go to or from a contact posture
-            self.body.check_rows(joints, rows, tt, context, v, time_offset, ignore, threshold=0.0)
         return Report(not v, v, {"duration_s": dur, "rest_transition": True})
 
     def check_trajectory_dict(self, d, **kw):

@@ -26,8 +26,8 @@ def zone(cfg: Config, joints: Sequence[str]) -> Tuple[np.ndarray, np.ndarray, Li
     """(lo, hi, half-spaces [(a, b)]) of the zone for these joints, margins included."""
     g = cfg.guardian
     js = list(joints)
-    lo = np.array([cfg.guardian_limits[j][0] + g.margin(j) for j in js])
-    hi = np.array([cfg.guardian_limits[j][1] - g.margin(j) for j in js])
+    lo = np.array([cfg.guardian_bounds[j][0] for j in js])
+    hi = np.array([cfg.guardian_bounds[j][1] for j in js])
     half = []
     for c in g.coupled_constraints:
         if all(j in js for j in c.terms):
