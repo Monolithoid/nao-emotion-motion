@@ -105,6 +105,23 @@ def bundle_dict(cfg: Config, models: Dict[str, Optional[Path]], allow_uncalibrat
     }
 
 
+def _same_bundle(path: Path, data: dict) -> bool:
+    """True if `path` already holds this bundle, export timestamps aside."""
+    if not path.exists():
+        return False
+    try:
+        old = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return False
+
+    def strip(d):
+        d = dict(d, exported_at=None)
+        if isinstance(d.get("guardian"), dict):
+            d["guardian"] = dict(d["guardian"], exported_at=None)
+        return d
+    return strip(old) == strip(json.loads(json.dumps(data)))
+
+
 def export_generator(cfg: Config, out_dir, runs_dir="runs", models: Optional[Dict[str, Optional[Path]]] = None,
                      allow_uncalibrated: bool = False) -> dict:
     """Writes nao_gesture.py and nao_gesture.json into `out_dir`. `models`: {group: .npz path}
@@ -113,8 +130,11 @@ def export_generator(cfg: Config, out_dir, runs_dir="runs", models: Optional[Dic
     data = bundle_dict(cfg, models, allow_uncalibrated)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    (out / DATA_NAME).write_text(json.dumps(data, ensure_ascii=False) + "\n", encoding="utf-8")
-    (out / LIB_NAME).write_text(build_library_source(), encoding="utf-8")
+    if not _same_bundle(out / DATA_NAME, data):  # unchanged models: keep the file (no diff in a Git repo)
+        (out / DATA_NAME).write_text(json.dumps(data, ensure_ascii=False) + "\n", encoding="utf-8")
+    lib = build_library_source()
+    if not (out / LIB_NAME).exists() or (out / LIB_NAME).read_text(encoding="utf-8") != lib:
+        (out / LIB_NAME).write_text(lib, encoding="utf-8")
     return {"library": str(out / LIB_NAME), "data": str(out / DATA_NAME),
             "models": {c: e["source"]["run"] for c, e in data["models"].items()},
             "missing": [c for c in COMPONENTS if c not in data["models"]],
