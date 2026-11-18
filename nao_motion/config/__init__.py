@@ -44,6 +44,8 @@ class GuardianConfig:
     rest_velocity_rad_s: float = 0.3  # segments repos <-> départ (repos hors zone de mouvement)
     per_joint_margin: Dict[str, float] = field(default_factory=dict)
     per_joint_acceleration: Dict[str, float] = field(default_factory=dict)
+    # where each per-joint velocity limit comes from (guardian.yaml, factory speed, takes, ceiling)
+    velocity_sources: Dict[str, str] = field(default_factory=dict)
 
     def velocity_limit(self, joint: str) -> float:
         return float(self.per_joint_velocity_rad_s.get(joint, self.max_velocity_rad_s))
@@ -264,16 +266,7 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
         per_joint_margin={k: float(v) for k, v in (guard.get("per_joint_margin") or {}).items()},
         per_joint_acceleration={k: float(v) for k, v in (guard.get("per_joint_acceleration") or {}).items()},
     )
-    kin = getattr(calibration, "kinematics", None) if calibration is not None else None
-    if kin:
-        # speed limits stored in the active calibration (measured on the takes) override
-        # guardian.yaml for those joints only
-        for key, target in (("velocity_rad_s", gcfg.per_joint_velocity_rad_s),
-                            ("acceleration_rad_s2", gcfg.per_joint_acceleration)):
-            for j, v in (kin.get(key) or {}).items():
-                if j not in limits:
-                    raise ConfigError(f"Calibration {calibration.version} : kinematics, articulation inconnue {j}")
-                target[j] = float(v)
+    _factory_velocity_limits(gcfg, guard, robot, list(limits), calibration)
     return Config(
         root=root, groups=groups, limits=limits,
         calibration_version=calibration.version if calibration else str(joints["calibration"]["version"]),
@@ -287,3 +280,56 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
         rest_limits=rest_limits,
         hand_joints=hand_joints,
     )
+
+
+def factory_velocity(guard: dict, joint: str) -> Optional[float]:
+    """No-load factory speed of a joint (rad/s), from guardian.yaml `factory_velocity_rad_s`.
+    Keys are given without the L/R side prefix (ShoulderPitch covers LShoulderPitch and
+    RShoulderPitch); a full joint name also works."""
+    table = guard.get("factory_velocity_rad_s") or {}
+    for key in (joint, joint[1:] if joint[:1] in ("L", "R") else None):
+        if key and key in table:
+            return float(table[key])
+    return None
+
+
+def _factory_velocity_limits(g: GuardianConfig, guard: dict, robot: dict, joints: List[str], calibration) -> None:
+    """Per-joint velocity limits, in order of precedence:
+
+    1. `per_joint_velocity_rad_s` in guardian.yaml (explicit choice);
+    2. else `velocity_fraction_of_factory` x factory speed, for joints whose factory speed is known;
+    3. else `max_velocity_rad_s`;
+    then the speeds measured on the takes (`kinematics` of the active calibration) replace them.
+    Ceiling: max_fraction_speed (robot.yaml) x factory speed, i.e. what setAngles lets the motor
+    reach while streaming; above it the robot could not follow the command."""
+    frac = guard.get("velocity_fraction_of_factory")
+    if frac is not None and not 0 < float(frac) <= 1:
+        raise ConfigError("guardian.yaml : velocity_fraction_of_factory doit être dans ]0, 1]")
+    explicit = set(g.per_joint_velocity_rad_s)
+    for j in joints:
+        g.velocity_sources[j] = "guardian.yaml"
+        f = factory_velocity(guard, j)
+        if j not in explicit and f is not None and frac is not None:
+            g.per_joint_velocity_rad_s[j] = round(float(frac) * f, 3)
+            g.velocity_sources[j] = f"factory x {float(frac):g}"
+    kin = getattr(calibration, "kinematics", None) if calibration is not None else None
+    if kin:
+        # speed limits stored in the active calibration (measured on the takes) override
+        # guardian.yaml for those joints only
+        for key, target in (("velocity_rad_s", g.per_joint_velocity_rad_s),
+                            ("acceleration_rad_s2", g.per_joint_acceleration)):
+            for j, v in (kin.get(key) or {}).items():
+                if j not in joints:
+                    raise ConfigError(f"Calibration {calibration.version} : kinematics, articulation inconnue {j}")
+                target[j] = float(v)
+                if key == "velocity_rad_s":
+                    g.velocity_sources[j] = "takes"
+    speed = float(((robot or {}).get("execution") or {}).get("max_fraction_speed", 0.3))
+    for j in joints:
+        f = factory_velocity(guard, j)
+        if f is None:
+            continue
+        ceiling = round(speed * f, 3)
+        if g.velocity_limit(j) > ceiling:
+            g.per_joint_velocity_rad_s[j] = ceiling
+            g.velocity_sources[j] = f"setAngles ceiling ({speed:g} x factory)"

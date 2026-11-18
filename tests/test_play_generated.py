@@ -346,6 +346,8 @@ def test_guardian_diagnosis(gwb, cfg):
     d = Api(gwb).post_guardian_diagnose({})
     assert d["n"] == 3 * len(cfg.emotions) and d["connected"]
     assert set(d["refusals"]) == {"raw", "playable", "cycle"} and d["hints"]
-    assert {r["velocity_source"] for r in d["limits"]["joints"]} == {"guardian.yaml"}
+    # no calibration with speeds: guardian.yaml values or factory speed x fraction, never the takes
+    src = {r["joint"]: r["velocity_source"] for r in d["limits"]["joints"]}
+    assert src["LHand"] == "guardian.yaml" and src["LShoulderPitch"].startswith("factory")
     assert len(gwb.adapter.command_log) == n0  # nothing sent
     assert diagnose(gwb, intensities=(0.5,))["n"] == len(cfg.emotions)
