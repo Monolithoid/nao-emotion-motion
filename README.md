@@ -13,6 +13,8 @@ The motion component is not an LLM. It is a small supervised neural model (PyTor
 
 > **Status: first foundation, validated in simulation only.** The synthetic data is there to check the technical pipeline. It says nothing about expressiveness. Nothing has been tested on a real robot yet.
 
+> **LLM or coding agent integrating the gesture generator into another project?** Read [docs/generator-integration.md](docs/generator-integration.md) first: the two exported files (`nao_gesture.py`, `nao_gesture.json`), the API, emotions and event encoding, motor stiffness at the start and end of a gesture, rest and start poses, guardian refusals and failure handling.
+
 > **Note on language:** the web interface and the emotion/intention identifiers are in French. Labels from the interface are quoted as they appear, with an English gloss. Emotion IDs: `joie` (joy), `tristesse` (sadness), `colere` (anger), `peur` (fear), `surprise` (surprise), `calme` (calm).
 
 ---
