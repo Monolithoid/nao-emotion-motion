@@ -86,6 +86,9 @@ def _model_entry(cfg: Config, comp: str, path: Path) -> dict:
 
 
 def bundle_dict(cfg: Config, models: Dict[str, Optional[Path]], allow_uncalibrated: bool = False) -> dict:
+    ex = {"project_control_points": True, "adapt_generated": True, "slow_down": "local",
+          **{k: v for k, v in (cfg.robot.get("execution") or {}).items()
+             if k in ("project_control_points", "adapt_generated", "slow_down")}}
     entries = {c: _model_entry(cfg, c, Path(p)) for c, p in models.items()
                if p is not None and (c != "hands" or cfg.hand_joints)}
     if not entries:
@@ -102,6 +105,8 @@ def bundle_dict(cfg: Config, models: Dict[str, Optional[Path]], allow_uncalibrat
         "groups": {"arms": list(cfg.arm_joints), "head": list(cfg.head_joints), "hands": list(cfg.hand_joints)},
         "models": entries,
         "guardian": guardian_dict(cfg, allow_uncalibrated),
+        # playback adaptation applied by the library before the guardian check (robot.yaml execution)
+        "playback": {k: ex[k] for k in ("project_control_points", "adapt_generated", "slow_down") if k in ex},
     }
 
 

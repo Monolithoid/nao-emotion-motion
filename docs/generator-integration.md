@@ -128,7 +128,7 @@ What the models actually receive (for reference, `event_features()`):
 `[present, sin(az), cos(az), elevation_rad, distance_known, 1/(1+distance_m)]`, appended to
 `[emotion one-hot or mix..., intensity]`.
 
-### `gen.generate(emotion, intensity, event=None, current_pose=None, from_rest=False, return_to="start", variation=0.0, seed=None)`
+### `gen.generate(emotion, intensity, event=None, current_pose=None, from_rest=False, return_to="start", variation=0.0, seed=None, adapt=None)`
 
 Returns a `Gesture`. Raises `GestureError` for invalid inputs (unknown emotion, intensity out of
 range, bad event, incomplete `current_pose`, bad `return_to`).
@@ -139,6 +139,7 @@ range, bad event, incomplete `current_pose`, bad `return_to`).
 | `from_rest` | `True` when the robot is at its calibrated rest pose. The first segment is then checked with the rest rules (section 5). If the measured posture is farther than `2 × start_tolerance` (0.1 rad by default) from rest on any arm or head joint, the gesture is refused with a `not_at_rest` violation. |
 | `return_to` | `"start"`: the movement ends in the calibrated start pose. `"rest"`: it continues from start to rest. Ignored without `current_pose`. |
 | `variation`, `seed` | small random variation of the control points (0 = the learned gesture). Same seed = same variant (but not the same variant as the project's numpy generator). |
+| `adapt` | `None` (default): follow the `playback` settings exported with the JSON (the project's `execution` section), i.e. make the gesture playable as the project UI does (section 6). `False`: check the raw learned gesture only. |
 
 The movement returned with `current_pose` is made of named segments (`g.segments`, list of
 `(name, start_s, end_s)`):
@@ -164,6 +165,8 @@ the robot to the start pose (and validate that move itself). A note in `g.notes`
 | `g.duration` | total duration in s |
 | `g.notes` | human-readable notes (missing model, eased transitions...) |
 | `g.group_durations_s` | learned duration of each group's gesture |
+| `g.adaptation` | what was done to make the gesture playable: `changed`, `time_scale`, `max_shape_change_rad`, `joints_changed`, `notes` (`None` when `adapt=False`) |
+| `g.raw_report` | guardian report on the raw learned gesture, before adaptation (diagnostic) |
 | `g.to_dict()` | everything, JSON-serialisable (good for logs) |
 | `g.angle_interpolation(rate_hz=None)` | `(names, angles, times)` for `ALMotion.angleInterpolation(names, angles, times, True)`. Drops the t = 0 point (NAOqi starts from the current posture). `rate_hz=10` thins the ~50 Hz samples. **Raises `GuardianError` if the movement was refused.** |
 
@@ -295,13 +298,19 @@ Violation codes you may see in `g.report.violations` (each has `code`, `message`
 | `not_at_rest` | `from_rest=True` but the robot is not measured at rest |
 | `legs`, `unknown_joint`, `incompatible`, `format` | wrong input |
 
-**Important difference with the project UI.** Before checking, the project UI makes a generated
-gesture playable: control points projected into the zone (`execution.project_control_points`)
-and a local slow-down where a velocity or acceleration limit is exceeded
-(`execution.adapt_generated`, `nao_motion/guardian/playable.py`). The exported library does
-**not** do this yet: it checks the raw learned gesture. It can therefore refuse gestures that the
-UI plays. The UI's "Guardian off" test mode does not exist in the library either, and must not be
-reimplemented by bypassing `g.ok`.
+**Making a gesture playable (same as the project UI).** Before checking, the library does what
+the project UI does (`nao_motion/guardian/playable.py`), following the `playback` section of the
+JSON (exported from `configs/robot.yaml` → `execution`):
+
+- control points projected into the zone (`project_control_points`), with a soft saturation
+  near the limits;
+- a local slow-down where a velocity or acceleration limit is exceeded (`adapt_generated`,
+  `slow_down: local`), or a uniform one (`uniform`).
+
+The guardian then checks the **adapted** movement; `g.raw_report` keeps the verdict on the raw
+gesture and `g.adaptation` says what changed. A gesture can therefore last longer than learned.
+`generate(..., adapt=False)` checks the raw gesture only. The UI's "Guardian off" test mode does
+not exist in the library, and must not be reimplemented by bypassing `g.ok`.
 
 What the guardian does not guarantee: absence of collision beyond the configured constraints,
 electrical or software stability of the robot.
@@ -312,7 +321,7 @@ electrical or software stability of the robot.
 |---|---|---|
 | Unknown emotion, intensity outside [0, 1], invalid event, incomplete `current_pose` | `GestureError` raised by `generate()` | fix the input (map LLM labels to `gen.emotions`, clamp intensity); log |
 | Guardian refusal | `g.ok` is `False`, nothing to send; `angle_interpolation()` raises `GuardianError` | send **nothing**; log `g.report.summary()`. Optionally retry once with a lower intensity, without the event, or with a small `variation` and a new `seed`; otherwise skip the gesture (the dialogue goes on without it) |
-| Mostly `velocity` / `acceleration` refusals | raw gesture faster than the calibrated limits (no slow-down in the library, see section 6) | report it to the dataset owner (calibration velocities, retraining) rather than raising limits in the JSON |
+| Mostly `velocity` / `acceleration` refusals | gesture still too fast after the slow-down (section 6), or `adapt=False` | report it to the dataset owner (calibration velocities, retraining) rather than raising limits in the JSON |
 | `not_at_rest` | `from_rest=True` while the robot is elsewhere | call again with `from_rest=False` (or use `is_at_rest()` above) |
 | `start_mismatch` | the robot moved since the measurement | measure again and regenerate |
 | Uncalibrated file | `GuardianError` at load | export again from a calibrated project |

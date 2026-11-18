@@ -295,10 +295,295 @@ def _concat(parts):
     return _traj(ts, qs)
 
 
+# -- playback adaptation (same as nao_motion/guardian/project.py and playable.py) -------------
+# Before the guardian checks a generated gesture, the project makes it playable: control points
+# outside the zone are moved to the nearest point inside, then the decoded gesture is brought
+# back inside the limits with a smooth saturation and slowed down just enough (locally by
+# default) for the velocity and acceleration limits. The guardian stays the only judge.
+SOFT_BAND_RAD = 0.06
+TIME_SAFETY = 1.05
+WARP_WINDOW_S = 0.2
+SLOW_DOWN_MODES = ("local", "uniform")
+
+
+def _dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
+
+
+def _zone(guardian, joints):
+    """(lo, hi, half-spaces [(a, b)]) of the guardian zone for one group, margins included."""
+    lo = [guardian.allowed_range(j)[0] for j in joints]
+    hi = [guardian.allowed_range(j)[1] for j in joints]
+    half = []
+    for c in guardian.constraints:
+        if all(j in joints for j in c["terms"]):
+            a = [0.0] * len(joints)
+            for j, coef in c["terms"].items():
+                a[joints.index(j)] = float(coef)
+            half.append((a, float(c["bound"]) - 1e-3))
+    return lo, hi, half
+
+
+def _inside(x, lo, hi, half, tol=1e-9):
+    return (all(v >= l - tol for v, l in zip(x, lo)) and all(v <= h + tol for v, h in zip(x, hi))
+            and all(_dot(a, x) <= b + tol for a, b in half))
+
+
+def _clip_box(x, lo, hi):
+    return [min(h, max(l, v)) for v, l, h in zip(x, lo, hi)]
+
+
+def _project_point(x, lo, hi, half, iters=200):
+    """Nearest point of {lo <= y <= hi, a.y <= b} to x (Dykstra's alternating projections)."""
+    x = [float(v) for v in x]
+    if _inside(x, lo, hi, half):
+        return list(x)
+    sets = [None] + list(half)
+    y = list(x)
+    inc = [[0.0] * len(x) for _ in sets]
+    for _ in range(iters):
+        prev = list(y)
+        for k, h in enumerate(sets):
+            z = [a + b for a, b in zip(y, inc[k])]
+            if h is None:
+                p = _clip_box(z, lo, hi)
+            else:
+                a, b = h
+                s = _dot(a, z) - b
+                p = [zi - (s / _dot(a, a)) * ai for zi, ai in zip(z, a)] if s > 0 else list(z)
+            inc[k] = [zi - pi for zi, pi in zip(z, p)]
+            y = p
+        if max(abs(a - b) for a, b in zip(y, prev)) < 1e-10:
+            break
+    return _clip_box(y, lo, hi)  # the box is never left, even if the half-spaces could not all be met
+
+
+def _project_control_points(guardian, ctrl, joints):
+    """(projected control points, max translation in rad, number of points moved)."""
+    lo, hi, half = _zone(guardian, joints)
+    out, moved, n = [], 0.0, 0
+    for p in ctrl:
+        q = _project_point(p, lo, hi, half)
+        d = math.sqrt(sum((a - b) ** 2 for a, b in zip(p, q)))
+        moved, n = max(moved, d), n + (d > 1e-9)
+        out.append(q)
+    return out, moved, n
+
+
+def _soft_upper(xs, hi, band):
+    """Identity below hi - band; above, compressed smoothly (C1) so that it never exceeds hi."""
+    knee = hi - band
+    return [knee + band * math.tanh((x - knee) / band) if x > knee else x for x in xs]
+
+
+def _soft_box(xs, lo, hi, band):
+    band = max(1e-4, min(band, (hi - lo) / 4))
+    return [-v for v in _soft_upper([-v for v in _soft_upper(xs, hi, band)], -lo, band)]
+
+
+def _gradient(t, q):
+    """Like numpy.gradient(q, t, axis=0): second order inside, first order at the ends."""
+    n, J = len(t), len(q[0])
+    g = [[0.0] * J for _ in range(n)]
+    if n < 2:
+        return g
+    for j in range(J):
+        g[0][j] = (q[1][j] - q[0][j]) / (t[1] - t[0])
+        g[-1][j] = (q[-1][j] - q[-2][j]) / (t[-1] - t[-2])
+    for i in range(1, n - 1):
+        hs, hd = t[i] - t[i - 1], t[i + 1] - t[i]
+        den = hs * hd * (hd + hs)
+        for j in range(J):
+            g[i][j] = (hs * hs * q[i + 1][j] + (hd * hd - hs * hs) * q[i][j] - hd * hd * q[i - 1][j]) / den
+    return g
+
+
+def _cubic_resample(t, q, tt):
+    """Cubic Hermite interpolation (tangents from _gradient): no kinks, so no artificial
+    acceleration peaks (linear interpolation would add some)."""
+    m = _gradient(t, q)
+    n, out = len(t), []
+    for x in tt:
+        i = min(max(bisect.bisect_right(t, x) - 1, 0), n - 2)
+        h = t[i + 1] - t[i]
+        u = (x - t[i]) / h
+        h00, h10 = 2 * u ** 3 - 3 * u ** 2 + 1, u ** 3 - 2 * u ** 2 + u
+        h01, h11 = -2 * u ** 3 + 3 * u ** 2, u ** 3 - u ** 2
+        out.append([h00 * a + h10 * h * ma + h01 * b + h11 * h * mb
+                    for a, b, ma, mb in zip(q[i], q[i + 1], m[i], m[i + 1])])
+    return out
+
+
+def _grid(duration, rate_hz):
+    return _linspace(0.0, duration, max(2, int(math.ceil(duration * rate_hz)) + 1))
+
+
+def _velocities(t, q):
+    return [[(b - a) / (t[i + 1] - t[i]) for a, b in zip(q[i], q[i + 1])] for i in range(len(t) - 1)]
+
+
+def _accelerations(t, vel):
+    return [[(b - a) / ((t[i + 2] - t[i]) / 2) for a, b in zip(vel[i], vel[i + 1])] for i in range(len(vel) - 1)]
+
+
+def _time_scale(guardian, t, q, joints):
+    if len(t) < 2:
+        return 1.0
+    vel = _velocities(t, q)
+    s = 1.0
+    for k, j in enumerate(joints):
+        s = max(s, max(abs(v[k]) for v in vel) / guardian.velocity_limit(j))
+    if len(vel) >= 2:
+        acc = _accelerations(t, vel)
+        for k, j in enumerate(joints):
+            s = max(s, math.sqrt(max(abs(a[k]) for a in acc) / guardian.acceleration_limit(j)))
+    return s
+
+
+def _local_need(guardian, t, q, joints):
+    """Slow-down needed on each interval: velocity ratio, and the square root of the
+    acceleration ratio at both ends."""
+    vel = _velocities(t, q)
+    vlim = [guardian.velocity_limit(j) for j in joints]
+    need = [max(abs(v) / l for v, l in zip(row, vlim)) for row in vel]
+    if len(vel) >= 2:
+        alim = [guardian.acceleration_limit(j) for j in joints]
+        for i, row in enumerate(_accelerations(t, vel)):
+            ra = math.sqrt(max(abs(a) / l for a, l in zip(row, alim)))
+            need[i] = max(need[i], ra)
+            need[i + 1] = max(need[i + 1], ra)
+    return need
+
+
+def _warp_rate(need, window):
+    """Smooth local slow-down factor >= need (and >= 1): running max, then running mean."""
+    r = [1.0 if x <= 1.0 else max(x * TIME_SAFETY, 1.0) for x in need]
+    n = len(r)
+    w = max(1, min(window, n))
+    pad = [r[0]] * w + r + [r[-1]] * w
+    mx = [max(pad[i:i + 2 * w + 1]) for i in range(n)]
+    pad = [mx[0]] * w + mx + [mx[-1]] * w
+    return [sum(pad[i:i + 2 * w + 1]) / (2 * w + 1) for i in range(n)]
+
+
+def _stretch(t, q, s, rate_hz):
+    """Same path, played s times slower (uniform)."""
+    tn = _grid((t[-1] - t[0]) * s, rate_hz)
+    return tn, _cubic_resample(t, q, [min(x / s, t[-1]) for x in tn])
+
+
+def _local_warp(guardian, t, q, joints, rate_hz, rounds=8):
+    """Slow down only where a limit is exceeded (smooth time warp, same path). None if the
+    result would exceed the maximum duration."""
+    w = int(round(WARP_WINDOW_S * rate_hz))
+    for _ in range(rounds):
+        need = _local_need(guardian, t, q, joints)
+        if max(need) <= 1.0:
+            break
+        rate = _warp_rate(need, w)
+        tw = [0.0]
+        for i in range(len(t) - 1):
+            tw.append(tw[-1] + (t[i + 1] - t[i]) * rate[i])
+        if tw[-1] > guardian.max_duration_s:
+            return None
+        tn = _grid(tw[-1], rate_hz)
+        q = _cubic_resample(tw, q, [min(x, tw[-1]) for x in tn])
+        t = tn
+    return t, q
+
+
+def _shape(guardian, joints, q, context, rounds=6):
+    """Joints past their bound and violated coupled constraints brought back smoothly; what
+    stays inside is left exactly as the model made it."""
+    q = [list(r) for r in q]
+    bounds = [guardian.allowed_range(j) for j in joints]
+    for _ in range(rounds):
+        for c in guardian.constraints:
+            terms = c["terms"]
+            idx = [(joints.index(j), coef) for j, coef in terms.items() if j in joints]
+            if not idx or any(j not in joints and j not in context for j in terms):
+                continue
+            fixed = sum(coef * float(context[j]) for j, coef in terms.items() if j not in joints)
+            cvec = [coef for _, coef in idx]
+            cols = [k for k, _ in idx]
+            bound = c["bound"] - 1e-3
+            s = [sum(r[k] * cv for k, cv in zip(cols, cvec)) + fixed for r in q]
+            if not any(x > bound for x in s):
+                continue
+            s_new = _soft_upper(s, bound, SOFT_BAND_RAD)
+            nn = _dot(cvec, cvec)
+            for r, a, b in zip(q, s, s_new):
+                d = b - a
+                if d:
+                    for k, cv in zip(cols, cvec):
+                        r[k] += d * cv / nn
+        for k, (lo, hi) in enumerate(bounds):
+            col = [r[k] for r in q]
+            if min(col) < lo or max(col) > hi:
+                for r, v in zip(q, _soft_box(col, lo, hi, SOFT_BAND_RAD)):
+                    r[k] = v
+    return q
+
+
+def _make_playable(guardian, joints, t, q, context=None, rate_hz=50.0, mode="local"):
+    """Adapted copy of the gesture (joints, times, rows) + a description of the change. The
+    guardian must still validate it. Same as nao_motion.guardian.playable.make_playable."""
+    ctx = dict(context or {})
+    t0 = [x - t[0] for x in t]
+    tg = _grid(t0[-1], rate_hz)
+    src = _cubic_resample(t0, q, tg)
+    shaped = _shape(guardian, joints, src, ctx)
+    diff = [max(abs(a[k] - b[k]) for a, b in zip(shaped, src)) for k in range(len(joints))]
+    changed = [j for j, d in zip(joints, diff) if d > 1e-3]
+    notes = []
+    dur = tg[-1]
+    bt, bq = tg, shaped
+    s0 = max(1.0, guardian.min_duration_s / dur)
+    if s0 > 1.0:
+        bt, bq = _stretch(bt, bq, s0, rate_hz)
+    local = 1.0
+    if mode == "local" and _time_scale(guardian, bt, bq, joints) > 1.0:
+        warped = _local_warp(guardian, bt, bq, joints, rate_hz)
+        if warped is not None:
+            local = warped[0][-1] / bt[-1]
+            bt, bq = warped
+    s, st, sq = 1.0, bt, bq
+    for _ in range(6):
+        need = _time_scale(guardian, st, sq, joints)
+        if need <= 1.0:
+            break
+        s_new = s * need * TIME_SAFETY
+        if bt[-1] * s_new > guardian.max_duration_s:
+            s_new = max(s, guardian.max_duration_s / bt[-1])
+            if s_new == s:
+                break
+            notes.append("slow-down capped by max duration (%s s): the guardian may refuse"
+                         % guardian.max_duration_s)
+            s = s_new
+            st, sq = _stretch(bt, bq, s, rate_hz)
+            break
+        s = s_new
+        st, sq = _stretch(bt, bq, s, rate_hz)
+    if changed:
+        notes.append("brought back inside limits / coupled zone: %s (max %.3f rad)" % (changed, max(diff)))
+    if local > 1.0 + 1e-9:
+        notes.append("fast moments slowed down locally: duration x%.2f" % local)
+    if s > 1.0 + 1e-9:
+        notes.append("slowed down uniformly x%.2f for velocity / acceleration limits" % s)
+    bounds = [guardian.allowed_range(j) for j in joints]
+    sq = [[min(hi, max(lo, v)) for v, (lo, hi) in zip(r, bounds)] for r in sq]
+    total = st[-1] / dur
+    info = {"changed": total > 1.0 + 1e-9 or max(diff) > 1e-6,
+            "time_scale": round(total if total > 1.0 + 1e-9 else 1.0, 3),
+            "max_shape_change_rad": round(max(diff), 4), "joints_changed": changed, "notes": notes}
+    return st, sq, info
+
+
 class Gesture(object):
     """Proposed movement. `ok` = accepted by the guardian; nothing has been sent to the robot."""
 
-    def __init__(self, joints, times, positions, report, gesture_report, segments, inputs, notes, durations):
+    def __init__(self, joints, times, positions, report, gesture_report, segments, inputs, notes, durations,
+                 adaptation=None, raw_report=None):
         self.joints = list(joints)
         self.times = list(times)            # s, from 0
         self.positions = positions          # one row per time step, one column per joint
@@ -308,6 +593,8 @@ class Gesture(object):
         self.inputs = inputs
         self.notes = notes
         self.group_durations_s = durations
+        self.adaptation = adaptation        # what was changed to make the gesture playable (None: off)
+        self.raw_report = raw_report        # report on the raw learned gesture, before the adaptation
 
     @property
     def ok(self):
@@ -345,6 +632,8 @@ class Gesture(object):
         return {"ok": self.ok, "inputs": self.inputs, "duration_s": self.duration, "notes": self.notes,
                 "segments": self.segments, "group_durations_s": self.group_durations_s,
                 "guardian": self.report.to_dict(), "gesture_guardian": self.gesture_report.to_dict(),
+                "adaptation": self.adaptation,
+                "raw_guardian": None if self.raw_report is None else self.raw_report.to_dict(),
                 "trajectory": {"joints": self.joints, "unit": "rad", "time_unit": "s",
                                "t": self.times, "q": self.positions}}
 
@@ -404,6 +693,14 @@ class GestureGenerator(object):
         if not self.models:
             raise GestureError("No model in the file")
         self._knots = _knots(self.K)
+        # playback adaptation, as the project UI does (robot.yaml execution.*); files exported
+        # before this setting existed get the project defaults
+        pb = data.get("playback") or {}
+        self.project_control_points = bool(pb.get("project_control_points", True))
+        self.adapt_generated = bool(pb.get("adapt_generated", True))
+        self.slow_down = pb.get("slow_down", "local")
+        if self.slow_down not in SLOW_DOWN_MODES:
+            self.slow_down = "local"
         for j in self.groups["arms"] + self.groups["head"] + self.groups.get("hands", []):
             if j not in self.guardian.limits:
                 raise GestureError("Joint %s missing from the guardian" % j)
@@ -448,7 +745,7 @@ class GestureGenerator(object):
         return [_f32(v) for v in self._emotion_vector(emotion) + [x] + event_features(event)]
 
     # -- generation ------------------------------------------------------------------
-    def _plan(self, model, x, variation, seed):
+    def _plan(self, model, x, variation, seed, project=False, notes=None):
         out = model.predict(x)
         J, K = len(model.joints), model.K
         ctrl = [out[i * J:(i + 1) * J] for i in range(K)]
@@ -460,23 +757,33 @@ class GestureGenerator(object):
             ctrl = [[c + s for c, s in zip(cr, sr)] for cr, sr in zip(ctrl, sm)]
         dur = min(self.guardian.max_duration_s, max(self.guardian.min_duration_s, math.exp(out[-1])))
         ctrl = [[c * model.scale[j] + model.center[j] for j, c in enumerate(row)] for row in ctrl]
+        if project:
+            # control points outside the guardian zone -> nearest point inside; by the convex
+            # hull property the decoded curve then stays in the zone for these position limits
+            ctrl, moved, n_moved = _project_control_points(self.guardian, ctrl, model.joints)
+            if n_moved and notes is not None:
+                notes.append("%s: %d control point(s) moved into the zone (max %.3f rad)"
+                             % (model.name, n_moved, moved))
         if model.clip:
             lo, hi = model.clip
             ctrl = [[min(hi[j], max(lo[j], c)) for j, c in enumerate(row)] for row in ctrl]
         return ctrl, dur
 
-    def gesture(self, emotion, intensity, event=None, variation=0.0, seed=None):
-        """Gesture alone (arms + head + hands), no transitions: (joints, times, positions, info)."""
+    def gesture(self, emotion, intensity, event=None, variation=0.0, seed=None, project=False):
+        """Gesture alone (arms + head + hands), no transitions: (joints, times, positions, info).
+        project=True moves the control points that fall outside the guardian zone inside it
+        (raw model output otherwise)."""
         x = self.model_input(emotion, intensity, event)
         variation = float(variation or 0.0)
-        plans = {}
+        plans, proj_notes = {}, []
         for k, name in enumerate(COMPONENTS):
             if name in self.models:
-                plans[name] = self._plan(self.models[name], x, variation, None if seed is None else int(seed) + k)
+                plans[name] = self._plan(self.models[name], x, variation, None if seed is None else int(seed) + k,
+                                         project=project, notes=proj_notes)
         T = max(d for _, d in plans.values())
         n = max(4, int(math.ceil(T * self.rate_hz)) + 1)
         tt = _linspace(0.0, T, n)
-        joints, cols, notes = [], [], []
+        joints, cols, notes = [], [], list(proj_notes)
         start = self.guardian.pose("start")
         for name in COMPONENTS:
             js = self.groups.get(name) or []
@@ -504,28 +811,40 @@ class GestureGenerator(object):
         return joints, tt, rows, {"notes": notes, "durations": durations}
 
     def generate(self, emotion, intensity, event=None, current_pose=None, from_rest=False, return_to="start",
-                 variation=0.0, seed=None):
+                 variation=0.0, seed=None, adapt=None):
         """Generates and validates. See the module documentation.
 
         current_pose : measured posture {joint: value}; adds the transitions.
         from_rest    : the robot is at rest (rest -> start segment under the "rest" rules).
         return_to    : "start" (end in the start position) or "rest" (go back to rest);
                        ignored without current_pose.
-        variation    : small random variation (0 = learned gesture; seed `seed`)."""
-        joints, tt, rows, extra = self.gesture(emotion, intensity, event, variation, seed)
+        variation    : small random variation (0 = learned gesture; seed `seed`).
+        adapt        : make the gesture playable before the check, like the project UI
+                       (control points into the zone, smooth saturation, slow-down where a
+                       velocity or acceleration limit is exceeded). None = the file's setting
+                       (on by default), False = the raw learned gesture."""
+        if adapt is None:
+            adapt = self.adapt_generated
+        project = bool(adapt) and self.project_control_points
+        joints, tt, rows, extra = self.gesture(emotion, intensity, event, variation, seed, project=project)
         notes = list(extra["notes"])
         g = self.guardian
         ctx = {}
         if current_pose is not None:
             current_pose = dict((k, float(v)) for k, v in current_pose.items())
             ctx = dict((j, v) for j, v in current_pose.items() if j not in joints and j in g.limits)
+        adaptation = raw_report = None
+        if adapt:
+            raw_report = g.check_trajectory(tt, joints, rows, context=ctx)
+            tt, rows, adaptation = _make_playable(g, joints, tt, rows, mode=self.slow_down)
+            notes += adaptation["notes"]
         gesture_report = g.check_trajectory(tt, joints, rows, context=ctx)
         inputs = {"emotion": emotion, "intensity": float(intensity), "event": event, "variation": variation,
                   "seed": seed, "timing": self.timing}
         if current_pose is None:
             notes.append("No measured posture: bring the robot to the start position before sending this gesture")
             return Gesture(joints, tt, rows, gesture_report, gesture_report, [("gesture", 0.0, round(tt[-1], 4))],
-                           inputs, notes, extra["durations"])
+                           inputs, notes, extra["durations"], adaptation, raw_report)
         if return_to not in ("start", "rest"):
             raise GestureError("return_to: 'start' or 'rest'")
         missing = [j for j in joints if j not in current_pose]
@@ -606,17 +925,18 @@ class GestureGenerator(object):
                      "collisions is up to the calibration.")
         report = Report(not violations, violations, reports[0].stats)
         return Gesture(joints, full["t"], full["q"], report, gesture_report, segments, inputs, notes,
-                       extra["durations"])
+                       extra["durations"], adaptation, raw_report)
 
 
 def _main(argv=None):
     """python nao_gesture.py nao_gesture.json joie 0.7 [azimuth_deg elevation_deg [distance_m]]"""
     argv = list(sys.argv[1:] if argv is None else argv)
     allow = "--allow-uncalibrated" in argv
+    raw = "--raw" in argv
     args = [a for a in argv if not a.startswith("--")]
     if len(args) not in (3, 5, 6):
         print("usage: python nao_gesture.py nao_gesture.json EMOTION INTENSITY [AZIMUTH_DEG ELEVATION_DEG "
-              "[DISTANCE_M]] [--allow-uncalibrated]")
+              "[DISTANCE_M]] [--allow-uncalibrated] [--raw]")
         return 2
     gen = GestureGenerator.load(args[0], allow_uncalibrated=allow)
     event = None
@@ -624,9 +944,9 @@ def _main(argv=None):
         event = {"azimuth_deg": float(args[3]), "elevation_deg": float(args[4])}
         if len(args) == 6:
             event["distance_m"] = float(args[5])
-    g = gen.generate(args[1], float(args[2]), event)
+    g = gen.generate(args[1], float(args[2]), event, adapt=False if raw else None)
     out = json.dumps({"ok": g.ok, "duration_s": round(g.duration, 3), "joints": g.joints,
-                      "guardian": g.report.to_dict(), "notes": g.notes}, indent=1, ensure_ascii=False)
+                      "guardian": g.report.to_dict(), "adaptation": g.adaptation, "notes": g.notes}, indent=1, ensure_ascii=False)
     if not isinstance(out, str):  # Python 2: unicode -> bytes
         out = out.encode("utf-8")
     print(out)
