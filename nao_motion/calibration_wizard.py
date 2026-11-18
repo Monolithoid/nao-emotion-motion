@@ -35,7 +35,7 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from .calibration import (Calibration, CalibrationError, CalibrationSession, convex_hull,
-                          hull_constraints, in_zone, load_procedure, sim_sweeper, simplify_hull, zone_polygon)
+                          hull_constraints, import_group as _import_group, in_zone, load_procedure, sim_sweeper, simplify_hull, zone_polygon)
 
 POSE_NAMES = ("rest", "start")
 POSE_LABEL = {"rest": "repos", "start": "départ"}
@@ -157,6 +157,30 @@ class CalibrationWizard:
         self.message = (f"Groupe {_g(group)} repris de {cal.version}" +
                         (f" ; poses à capturer : {', '.join(miss)}." if miss else " (exploration et poses)."))
         return imp
+
+    def import_all(self, file: str) -> List[str]:
+        """Reprend TOUS les groupes (limites, enveloppes, poses, vitesses) d'une calibration
+        enregistrée : il ne reste qu'à recapturer la pose à changer (ex. le repos d'un
+        groupe), puis calculer et enregistrer sous un nouveau nom. Aucun mouvement."""
+        self._not_sweeping()
+        f = self.cfg.root / "calibration" / Path(str(file)).name
+        if not f.exists():
+            raise CalibrationError(f"Calibration introuvable : {f.name}")
+        cal = Calibration.load(f)
+        groups = list(self.cfg.groups)
+        for g in groups:  # vérifie tout avant de toucher à la séance
+            _import_group(cal, g, self.cfg.groups[g])
+        s = self.session
+        s.poses = {}  # les poses viennent toutes du fichier : pas de mélange avec une séance précédente
+        for g in groups:
+            s.import_group(cal, g)
+        self._invalidate()
+        self._save_draft()
+        miss = [f"{POSE_LABEL[n]} {_g(g)}" for n in POSE_NAMES for g in groups if g not in s.poses.get(n, {})]
+        self.message = (f"Calibration {cal.version} reprise entièrement. Recapturer seulement la pose à changer "
+                        "(ex. repos d'un groupe), puis Calculer et Enregistrer : le fichier d'origine n'est pas modifié."
+                        + (f" Poses absentes du fichier : {', '.join(miss)}." if miss else ""))
+        return groups
 
     def drop_import(self, group: str):
         self._not_sweeping()

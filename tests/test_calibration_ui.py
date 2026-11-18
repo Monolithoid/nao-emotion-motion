@@ -278,3 +278,41 @@ def test_reuse_groups_from_saved_calibration(ui, monkeypatch):
     # explorer un groupe repris annule la reprise
     cal.sweep_start("left_arm", max_duration_s=20, background=False)
     assert "left_arm" not in api.get_calibration({})["imported"]
+
+
+def test_change_only_rest_pose_of_saved_calibration(ui, monkeypatch):
+    """Reprendre une calibration enregistrée, ne recapturer que le repos d'un groupe et
+    enregistrer : tout le reste (limites, enveloppes, départ, marge, vitesses) est gardé."""
+    wb, api = ui
+    d = wb.cfg.root / "calibration"
+    src = _as_real(OLD_FILE, d / "base.yaml", "base")
+    raw = yaml.safe_load(src.read_text(encoding="utf-8"))
+    raw["kinematics"] = {"source": "takes p100", "velocity_rad_s": {"LShoulderPitch": 3.1, "LHand": 2.0},
+                         "acceleration_rad_s2": {"LShoulderPitch": 20.0}}
+    src.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    old = Calibration.load(src)
+    api.post_calibration_open({})
+    cal = wb.require_calibration()
+    st = api.post_calibration_import_all({"file": "base.yaml"})
+    assert set(st["imported"]) == set(wb.cfg.groups) and st["missing_poses"] == []
+    # nouveau repos du bras gauche : placé à la main puis capturé
+    new_rest = {j: v + 0.05 for j, v in old.poses["rest"]["left_arm"].items()}
+    for j, v in new_rest.items():
+        wb.adapter.q[j] = wb.adapter.target[j] = v
+    monkeypatch.setattr(cal, "sim", False)  # sinon la simulation « place » la pose de remplacement
+    api.post_calibration_capture({"pose": "rest", "group": "left_arm"})
+    api.post_calibration_compute({"version": "base-repos"})
+    api.post_calibration_save({})
+    new = Calibration.load(cal.saved_path)
+    assert new.poses["rest"]["left_arm"] == pytest.approx(new_rest)
+    for n in ("rest", "start"):
+        for g in wb.cfg.groups:
+            if (n, g) != ("rest", "left_arm"):
+                assert new.poses[n][g] == pytest.approx(old.poses[n][g])
+    assert {j: list(v) for j, v in new.limits.items()} == pytest.approx({j: list(v) for j, v in old.limits.items()})
+    assert sorted(c["name"] for c in new.coupled) == sorted(c["name"] for c in old.coupled)
+    assert new.margin_rad == old.margin_rad
+    assert new.kinematics["velocity_rad_s"] == {"LShoulderPitch": 3.1, "LHand": 2.0}
+    assert new.kinematics["acceleration_rad_s2"] == {"LShoulderPitch": 20.0}
+    assert "repos recapturée" in new.notes and src.exists()
+    assert Calibration.load(src).poses == old.poses  # l'original n'est pas touché
