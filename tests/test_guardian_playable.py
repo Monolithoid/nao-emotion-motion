@@ -57,6 +57,80 @@ def test_make_playable_brings_the_gesture_back_inside_the_limits(cfg):
     assert j in a.joints_changed and a.traj.q[:, k].max() <= hi - cfg.guardian.margin(j) + 1e-9
 
 
+def _human_like_gesture(cfg, seed=1, dur=3.9):
+    """Quick hand-made-like gesture: min-jerk strokes of up to 0.8 rad in 0.4-0.6 s with pauses."""
+    rng = np.random.default_rng(seed)
+    t = np.linspace(0, dur, int(dur * 50) + 1)
+    q0 = np.array(cfg.pose("start", cfg.arm_joints))
+    q = np.tile(q0, (len(t), 1))
+
+    def mj(u):
+        u = np.clip(u, 0, 1)
+        return 10 * u ** 3 - 15 * u ** 4 + 6 * u ** 5
+    for k, j in enumerate(cfg.arm_joints):
+        lo, hi = cfg.limits[j]
+        cur, ts = q0[k], 0.2
+        while ts < dur - 0.5:
+            d = rng.uniform(0.4, 0.6)
+            tgt = cur + np.clip(rng.uniform(lo + 0.15, hi - 0.15) - cur, -0.8, 0.8)
+            q[:, k] += (tgt - cur) * mj((t - ts) / d)
+            cur, ts = tgt, ts + d + rng.uniform(0.05, 0.3)
+        q[:, k] += (q0[k] - cur) * mj((t - (dur - 0.4)) / 0.4)
+    return Trajectory(cfg.arm_joints, t, q)
+
+
+def test_velocity_limits_follow_factory_speeds(cfg):
+    from nao_motion.config import factory_velocity
+    g, guard = cfg.guardian, cfg.raw["guardian"]
+    frac = float(guard["velocity_fraction_of_factory"])
+    speed = float(cfg.robot["execution"]["max_fraction_speed"])
+    assert factory_velocity(guard, "LShoulderPitch") == factory_velocity(guard, "RShoulderPitch") > 8
+    for j in cfg.arm_joints:
+        f = factory_velocity(guard, j)
+        assert g.velocity_limit(j) == pytest.approx(min(frac, speed) * f, abs=1e-3)
+        assert g.velocity_sources[j].startswith("factory")
+    # an explicit value in guardian.yaml wins, the hands (not angles) keep theirs
+    assert g.velocity_limit("HeadPitch") == pytest.approx(guard["per_joint_velocity_rad_s"]["HeadPitch"])
+    assert g.velocity_limit("LHand") == pytest.approx(guard["per_joint_velocity_rad_s"]["LHand"])
+
+
+def test_velocity_limits_never_exceed_what_setangles_allows(tmp_path, cfg):
+    import yaml
+    from nao_motion.config import factory_velocity
+    d = tmp_path / "configs"
+    shutil.copytree(cfg.root, d)
+    (d / "calibration" / "ACTIVE").unlink(missing_ok=True)
+    g = yaml.safe_load((d / "guardian.yaml").read_text())
+    g["per_joint_velocity_rad_s"]["LWristYaw"] = 50.0  # above the motor
+    (d / "guardian.yaml").write_text(yaml.safe_dump(g))
+    r = yaml.safe_load((d / "robot.yaml").read_text())
+    r["execution"]["max_fraction_speed"] = 0.3  # streaming slower than the guardian fraction (0.5)
+    (d / "robot.yaml").write_text(yaml.safe_dump(r))
+    c = load_config(d)
+    for j in ("LWristYaw", "RShoulderPitch"):
+        assert c.guardian.velocity_limit(j) == pytest.approx(0.3 * factory_velocity(g, j), abs=1e-3)
+        assert "ceiling" in c.guardian.velocity_sources[j]
+
+
+def test_local_slow_down_keeps_the_tempo_of_a_human_like_gesture(cfg):
+    g = Guardian(cfg)
+    raw = _human_like_gesture(cfg)
+    assert not g.validate(raw).ok  # a few peaks above the limits
+    uni = make_playable(cfg, raw, mode="uniform")
+    loc = make_playable(cfg, raw, mode="local")
+    for a in (uni, loc):
+        assert g.validate(a.traj).ok, g.validate(a.traj).summary()
+        assert a.max_shape_change_rad < 1e-6
+        assert a.traj.duration == pytest.approx(raw.duration * a.time_scale, rel=0.02)
+        assert np.allclose(a.traj.q[0], raw.q[0]) and np.allclose(a.traj.q[-1], raw.q[-1], atol=1e-6)
+    # only the fast moments are slowed down: much closer to the duration of the take
+    assert 1.0 < loc.time_scale < 1.25 and loc.time_scale < uni.time_scale - 0.3
+    # same path: the visited postures stay on the original curve (dense comparison)
+    dense = uni.traj.q
+    dist = np.sqrt(((loc.traj.q[:, None, :] - dense[None, :, :]) ** 2).sum(-1)).min(axis=1)
+    assert dist.max() < 0.05
+
+
 @pytest.fixture
 def narrow_setup(tmp_path, cfg):
     """Real-looking calibration whose LShoulderRoll range is narrower than the takes."""

@@ -2,10 +2,35 @@
 # Toutes les valeurs sont à ajuster sur le robot réel ; elles sont prudentes par défaut.
 schema_version: 1
 limit_margin_rad: 0.03          # marge intérieure appliquée aux limites min/max
-max_velocity_rad_s: 1.5         # par articulation (valeur par défaut)
-max_acceleration_rad_s2: 8.0
-per_joint_velocity_rad_s:       # surcharges éventuelles
-  HeadPitch: 1.0
+# Vitesse par articulation. Ordre de priorité :
+#   1. per_joint_velocity_rad_s ci-dessous (choix explicite) ;
+#   2. sinon velocity_fraction_of_factory x vitesse d'usine (factory_velocity_rad_s) ;
+#   3. sinon max_velocity_rad_s.
+# Les vitesses mesurées sur les prises (section kinematics d'une calibration étendue avec
+# les prises, si elle est active) remplacent ensuite ces valeurs. Plafond dans tous les cas :
+# robot.yaml max_fraction_speed x vitesse d'usine, la vitesse que setAngles laisse au moteur.
+max_velocity_rad_s: 1.5         # articulations sans vitesse d'usine connue
+# Vitesses à vide en sortie de réducteur (rad/s), calculées depuis la documentation
+# Aldebaran « NAO - Motors » (V3.3, identique V4 à V6) : moteur type 1 (RE-Max 17,
+# 11 900 tr/min) divisé par le rapport de réduction de l'articulation. Ce sont aussi les
+# valeurs que renvoie ALMotion.getLimits. Clés sans le préfixe L/R.
+factory_velocity_rad_s:
+  HeadYaw: 8.29                 # réduction 150.27
+  HeadPitch: 7.19               # 173.22
+  ShoulderPitch: 8.29           # 150.27
+  ShoulderRoll: 7.19            # 173.22
+  ElbowYaw: 8.29                # 150.27
+  ElbowRoll: 7.19               # 173.22
+  WristYaw: 24.62               # 50.61
+# À vide : en charge, le moteur va moins vite. La moitié laisse de la marge (bras : 3,6 à
+# 4,1 rad/s, poignet : 12,3 rad/s), au-dessus des pics d'un geste humain ample (~3 à 5 rad/s).
+velocity_fraction_of_factory: 0.5
+# Accélération : pas de valeur d'usine. 30 rad/s² permet d'atteindre 4 rad/s en ~0,13 s
+# (pic d'un geste humain de 1 rad en 0,4 s : ~36 rad/s² ; l'ancienne valeur, 8, ralentissait
+# un tel geste x2 à elle seule). Tête : plus prudent, voir per_joint_acceleration.
+max_acceleration_rad_s2: 30.0
+per_joint_velocity_rad_s:       # surcharges explicites (prioritaires)
+  HeadPitch: 1.0                # butée et câbles de la nuque
   LHand: 2.0                    # mains : fraction d'ouverture par seconde (0 = fermée, 1 = ouverte)
   RHand: 2.0
 # Surcharges par articulation de la marge et de l'accélération. Mains : plage d'usine
@@ -14,6 +39,8 @@ per_joint_margin:
   LHand: 0.0
   RHand: 0.0
 per_joint_acceleration:
+  HeadYaw: 8.0
+  HeadPitch: 8.0
   LHand: 20.0
   RHand: 20.0
 check_rate_hz: 100              # le trajet complet est vérifié à cette fréquence

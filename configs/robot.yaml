@@ -31,7 +31,11 @@ execution:
   # On such a stop: relax = cut the motors of the played joints (arms may drop), hold = keep
   # the measured posture stiff.
   tracking_stop_action: relax
-  max_fraction_speed: 0.3   # utilisé par setAngles
+  # setAngles (streaming) : vitesse max laissée au moteur, en fraction de sa vitesse d'usine.
+  # Elle doit dépasser la limite du guardian (guardian.yaml velocity_fraction_of_factory,
+  # 0.5), sinon le robot ne suit pas le geste validé et prend du retard (arrêt de suivi).
+  # Elle plafonne aussi les limites du guardian (voir guardian.yaml).
+  max_fraction_speed: 0.6
   hand_tracking_error: 0.5  # mains (fraction d'ouverture) : le moteur de la main suit plus lentement
   # The measured angle is compared with the command over the last tracking_lag_s (latency of
   # the bridge and of setAngles), so a joint that is only late does not stop the play.
@@ -51,6 +55,9 @@ execution:
   # (nao_motion/guardian/playable.py). The guardian still validates the result and refuses
   # what fails. false = the raw generated gesture is checked as is.
   adapt_generated: true
+  # How the gesture is slowed down: local = only the moments above a limit (smooth time warp,
+  # the rest keeps the model's tempo); uniform = the whole gesture by one factor.
+  slow_down: local
 recording:
   rate_hz: 50
   countdown_s: 3

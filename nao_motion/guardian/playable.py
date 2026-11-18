@@ -9,8 +9,12 @@ playback path adapts them first:
 1. shape: each joint is brought back inside its limits (margin included) with a
    smooth saturation (no kink, so no artificial acceleration spike), and the
    coupled constraints are enforced the same way along their normal direction;
-2. timing: the gesture is slowed down uniformly, just enough for the velocity
-   and acceleration limits (never sped up), within the duration bounds.
+2. timing: the gesture is slowed down just enough for the velocity and
+   acceleration limits (never sped up), within the duration bounds. By default
+   only the moments that exceed a limit are slowed down (`local`: a smooth time
+   warp, the rest keeps the tempo of the model); `uniform` slows the whole
+   gesture by one factor. In both cases the path is the same, only its timing
+   changes. robot.yaml: execution.slow_down.
 
 The guardian then validates the result as usual and stays the only judge: a
 gesture that still fails is refused and nothing is sent. This module never
@@ -107,6 +111,38 @@ def _time_scale(cfg: Config, t: np.ndarray, q: np.ndarray, joints) -> float:
     return s
 
 
+def _local_need(cfg: Config, t: np.ndarray, q: np.ndarray, joints) -> np.ndarray:
+    """Slow-down needed on each interval [t_i, t_i+1]: velocity ratio, and the square root of
+    the acceleration ratio at both ends (time x s divides velocity by s, acceleration by s²)."""
+    g = cfg.guardian
+    dt = np.diff(t)
+    vel = np.diff(q, axis=0) / dt[:, None]
+    vlim = np.array([g.velocity_limit(j) for j in joints])
+    need = np.abs(vel / vlim).max(axis=1)
+    if vel.shape[0] >= 2:
+        alim = np.array([g.acceleration_limit(j) for j in joints])
+        acc = np.diff(vel, axis=0) / ((dt[1:] + dt[:-1]) / 2)[:, None]
+        ra = np.sqrt(np.abs(acc / alim).max(axis=1))
+        need[:-1] = np.maximum(need[:-1], ra)
+        need[1:] = np.maximum(need[1:], ra)
+    return need
+
+
+def _warp_rate(need: np.ndarray, window: int) -> np.ndarray:
+    """Smooth local slow-down factor >= need (and >= 1): widened by a running max, then a
+    running mean of the same width, so that the factor changes gradually (an abrupt change of
+    tempo would itself create an acceleration peak)."""
+    r = np.maximum(need * TIME_SAFETY, 1.0)
+    r[need <= 1.0] = 1.0
+    n = len(r)
+    w = max(1, min(window, n))
+    pad = np.pad(r, (w, w), mode="edge")
+    mx = np.array([pad[i:i + 2 * w + 1].max() for i in range(n)])
+    pad = np.pad(mx, (w, w), mode="edge")
+    k = np.ones(2 * w + 1) / (2 * w + 1)
+    return np.convolve(pad, k, mode="valid")
+
+
 def _cubic_resample(t: np.ndarray, q: np.ndarray, tt: np.ndarray) -> np.ndarray:
     """Cubic Hermite interpolation (tangents from np.gradient). Linear interpolation
     between samples would add kinks, i.e. artificial acceleration spikes."""
@@ -124,8 +160,17 @@ def _grid(duration: float, rate_hz: float) -> np.ndarray:
     return np.linspace(0.0, duration, max(2, int(np.ceil(duration * rate_hz)) + 1))
 
 
+# width (s) of the smoothing of the local slow-down factor
+WARP_WINDOW_S = 0.2
+
+
+def slow_down_mode(cfg: Config) -> str:
+    mode = str((cfg.robot.get("execution") or {}).get("slow_down", "local"))
+    return mode if mode in ("local", "uniform") else "local"
+
+
 def make_playable(cfg: Config, traj: Trajectory, context_pose: Optional[Dict[str, float]] = None,
-                  resample_hz: float = 50.0) -> Adaptation:
+                  resample_hz: float = 50.0, mode: Optional[str] = None) -> Adaptation:
     """Adapted copy of `traj` (see module docstring). The guardian must still validate it."""
     g = cfg.guardian
     ctx = dict(context_pose or {})
@@ -137,30 +182,64 @@ def make_playable(cfg: Config, traj: Trajectory, context_pose: Optional[Dict[str
     changed = [j for j, d in zip(src.joints, diff) if d > 1e-3]
     notes = []
     dur = src.duration
-
-    def stretch(s):
-        tn = _grid(dur * s, resample_hz)
-        return Trajectory(src.joints, tn, _cubic_resample(src.t, q, np.minimum(tn / s, src.t[-1])))
-
-    s = max(1.0, g.min_duration_s / dur)
-    slowed = stretch(s)
-    # uniform slow-down (same path, longer time). Measured on the played samples themselves,
-    # as the guardian does; a few rounds because the finer sampling can reveal sharper peaks.
+    mode = mode or slow_down_mode(cfg)
+    base = Trajectory(src.joints, src.t, q)
+    s0 = max(1.0, g.min_duration_s / dur)
+    if s0 > 1.0:
+        base = _stretch(base, s0, resample_hz)
+    local = 1.0  # duration ratio of the local time warp (1 = none)
+    if mode == "local" and _time_scale(cfg, base.t, base.q, base.joints) > 1.0:
+        warped = _local_warp(cfg, base, resample_hz)
+        if warped is not None:
+            local = warped.duration / base.duration
+            base = warped
+    # uniform slow-down (same path, longer time), alone or to finish the local warp. Measured
+    # on the played samples themselves, as the guardian does; a few rounds because the finer
+    # sampling can reveal sharper peaks.
+    s, slowed = 1.0, base
     for _ in range(6):
         need = _time_scale(cfg, slowed.t, slowed.q, slowed.joints)
         if need <= 1.0:
             break
         s_new = s * need * TIME_SAFETY
-        if dur * s_new > g.max_duration_s:
-            s_new = max(s, g.max_duration_s / dur)
+        if base.duration * s_new > g.max_duration_s:
+            s_new = max(s, g.max_duration_s / base.duration)
             if s_new == s:
                 break
             notes.append(f"slow-down capped by max duration ({g.max_duration_s} s): the guardian may refuse")
-            s, slowed = s_new, stretch(s_new)
+            s, slowed = s_new, _stretch(base, s_new, resample_hz)
             break
-        s, slowed = s_new, stretch(s_new)
+        s, slowed = s_new, _stretch(base, s_new, resample_hz)
     if changed:
         notes.append(f"brought back inside limits / coupled zone: {changed} (max {diff.max():.3f} rad)")
+    if local > 1.0 + 1e-9:
+        notes.append(f"fast moments slowed down locally: duration x{local:.2f}")
     if s > 1.0 + 1e-9:
-        notes.append(f"slowed down x{s:.2f} for velocity / acceleration limits")
-    return Adaptation(slowed, s, float(diff.max()) if diff.size else 0.0, changed, notes)
+        notes.append(f"slowed down uniformly x{s:.2f} for velocity / acceleration limits")
+    total = slowed.duration / dur
+    return Adaptation(slowed, total if total > 1.0 + 1e-9 else 1.0,
+                      float(diff.max()) if diff.size else 0.0, changed, notes)
+
+
+def _stretch(traj: Trajectory, s: float, resample_hz: float) -> Trajectory:
+    """Same path, played s times slower (uniform)."""
+    tn = _grid(traj.duration * s, resample_hz)
+    return Trajectory(traj.joints, tn, _cubic_resample(traj.t, traj.q, np.minimum(tn / s, traj.t[-1])))
+
+
+def _local_warp(cfg: Config, traj: Trajectory, resample_hz: float, rounds: int = 8) -> Optional[Trajectory]:
+    """Slow down only where a limit is exceeded (smooth time warp, same path). None if the
+    result would exceed the maximum duration."""
+    g = cfg.guardian
+    w = int(round(WARP_WINDOW_S * resample_hz))
+    out = traj
+    for _ in range(rounds):
+        need = _local_need(cfg, out.t, out.q, out.joints)
+        if need.max() <= 1.0:
+            break
+        tw = np.concatenate([[0.0], np.cumsum(np.diff(out.t) * _warp_rate(need, w))])
+        if tw[-1] > g.max_duration_s:
+            return None
+        tn = _grid(float(tw[-1]), resample_hz)
+        out = Trajectory(out.joints, tn, _cubic_resample(tw, out.q, np.minimum(tn, tw[-1])))
+    return out

@@ -26,7 +26,8 @@ def limits_in_force(cfg) -> dict:
     rows = []
     for j in cfg.all_joints + list(cfg.hand_joints):
         rows.append({"joint": j, "zone": [round(cfg.limits[j][0] + g.margin(j), 3), round(cfg.limits[j][1] - g.margin(j), 3)],
-                     "velocity": g.velocity_limit(j), "velocity_source": "takes" if j in measured_v else "guardian.yaml",
+                     "velocity": g.velocity_limit(j),
+                     "velocity_source": g.velocity_sources.get(j) or ("takes" if j in measured_v else "guardian.yaml"),
                      "acceleration": g.acceleration_limit(j),
                      "acceleration_source": "takes" if j in measured_a else "guardian.yaml"})
     return {"calibrated": cfg.calibrated, "calibration": cfg.calibration_version, "joints": rows,
@@ -94,14 +95,14 @@ def hints(d: dict) -> List[str]:
     joints = {r["joint"]: r for r in lim["joints"]}
     raw = d["refusals"]["raw"]
     kin_codes = [r for r in raw if r["code"] in ("velocity", "acceleration")]
-    defaults = [r for r in kin_codes if joints.get(r["joint"], {}).get(r["code"] + "_source") == "guardian.yaml"]
+    defaults = [r for r in kin_codes if joints.get(r["joint"], {}).get(r["code"] + "_source", "takes") != "takes"]
     if defaults:
         js = sorted({r["joint"] for r in defaults})
-        h.append(f"Speed limits: the raw gestures exceed the DEFAULT guardian.yaml limits "
-                 f"(velocity {lim['joints'][0]['velocity']} rad/s, acceleration {lim['joints'][0]['acceleration']} rad/s²) "
-                 f"on {js}. These are cautious placeholders, not measured on your robot, and gestures recorded "
-                 f"by hand usually go faster. Use Calibration > Extend with the takes with « speeds » ticked to use the speeds of "
-                 f"your takes (p95), or raise them in guardian.yaml.")
+        shown = ", ".join(f"{j} {joints[j]['velocity']} rad/s, {joints[j]['acceleration']} rad/s²" for j in js[:4])
+        h.append(f"Speed limits: the raw gestures exceed the DEFAULT limits on {js} ({shown}{', ...' if len(js) > 4 else ''}): "
+                 f"guardian.yaml values or a fraction of the factory speed, not measured on your gestures. "
+                 f"Use Calibration > Extend with the takes with « speeds » ticked to use the speeds of "
+                 f"your takes (p95), or raise them in guardian.yaml (velocity_fraction_of_factory).")
     sd = d["slow_down"]
     if sd["median"] and sd["median"] > 1.5:
         h.append(f"To respect those limits, gestures are slowed down x{sd['median']} (median, max x{sd['max']}): "
