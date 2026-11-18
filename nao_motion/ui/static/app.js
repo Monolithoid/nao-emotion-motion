@@ -309,10 +309,20 @@ async function copyText(text, btn) {
 const refreshTrain = () => window.MLP && window.MLP.refresh();
 
 // ---- génération -----------------------------------------------------------------
-async function generate() {
+// consigne of the Generation tab (also used by the latent space view, latent.js)
+function genConsigne() {
   const e1 = $("g-emotion").value, e2 = $("g-emotion2").value, w = parseFloat($("g-mix").value);
-  const body = {emotion: e1, intensity: parseFloat($("g-intensity").value), variation: parseFloat($("g-var").value), use_event: $("g-event").checked, project_zone: $("g-project").checked};
+  const body = {emotion: e1, intensity: parseFloat($("g-intensity").value), use_event: $("g-event").checked};
   if (e2 && e2 !== e1) body.mix = {[e1]: 1 - w, [e2]: w};
+  return body;
+}
+// extra: CVAE fields from the latent space view ({latent, emotion, intensity, event, mix: null...})
+async function generate(extra) {
+  const body = {...genConsigne(), variation: parseFloat($("g-var").value), project_zone: $("g-project").checked};
+  const temp = $("g-temp").value.trim();
+  if (temp !== "") body.temperature = parseFloat(temp);
+  if (extra && typeof extra === "object" && !(extra instanceof Event)) Object.assign(body, extra);
+  if (body.mix === null) delete body.mix;
   const out = await api("generate", body);
   const tr = out.played || out.generated.trajectory;  // the gesture that would be played
   plot($("g-plot"), tr.t, cols(tr.q), tr.joints);
@@ -323,7 +333,9 @@ async function generate() {
     (ad && ad.changed ? `made playable: ${ad.notes.join(" ; ")} (raw gesture ${out.generated.duration_s.toFixed(2)} s, guardian on raw: ${out.raw_report.ok ? "accepted" : "refused"})\n` : "") +
     (mr.violations.length ? violationsText(mr.violations) + "\n" : "") +
     (cy ? `cycle complet (${cy.start === "rest" ? "from rest" : "from the current posture"}, if played now) : ${cy.report.ok ? "accepté" : "REFUSÉ"} (${cy.duration_s.toFixed(2)} s) ${cy.report.violations.length ? "\n" + violationsText(cy.report.violations) : ""}` : (out.cycle_error ? "cycle : " + out.cycle_error : "")) +
+    (out.generated.inputs.latent ? `\nCVAE : ${body.latent ? "z choisi sur la carte (" + Object.keys(body.latent).join(", ") + "), autres groupes : " : ""}température ${out.generated.inputs.temperature} · ` + Object.entries(out.generated.inputs.latent).map(([g, z]) => `${g} z = [${z.map((v) => v.toFixed(2)).join(", ")}]`).join(" · ") : "") +
     (out.generated.notes.length ? "\nnotes : " + out.generated.notes.join(" ; ") : "");
+  if (window.LATENT) window.LATENT.onGenerated(out);
   lastPlan = out.plan_id; lastGen = out;
   updatePlay();
   return out;
@@ -446,7 +458,8 @@ async function init() {
   initTakeView();  // takeview.js
   // entraînement et réseau : mlp.js
   // génération
-  $("g-go").onclick = generate;
+  $("g-go").onclick = () => generate();
+  $("g-temp").placeholder = (CFG.cvae || {}).temperature ?? 1;
   // no confirmation (operator preference): the permanent warning #g-alert replaces it
   $("g-play").onclick = play;
   $("g-diag-go").onclick = async () => {

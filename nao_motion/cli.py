@@ -121,7 +121,8 @@ def cmd_train(a):
     ov = {"hidden": a.hidden, "dropout": a.dropout, "weight_decay": a.weight_decay, "lr": a.lr,
           "smoothness_weight": a.smoothness, "mirror": a.mirror, "folds": a.folds,
           "motion_energy_weight": a.motion_energy,
-          "n_control_points": a.control_points}
+          "n_control_points": a.control_points, "cvae": a.cvae, "latent_dim": a.latent_dim, "beta": a.beta,
+          "kl_warmup": a.kl_warmup, "encoder_hidden": a.encoder_hidden}
     job = wb.train(a.component, epochs=a.epochs, include_pending=a.include_pending, background=False,
                    overrides={k: v for k, v in ov.items() if v is not None})
     if job["state"] != "done":
@@ -419,6 +420,12 @@ def main(argv=None):
                    "val_fraction (default: model.yaml training.folds)")
     s.add_argument("--control-points", type=int, help="B-spline control points per joint, 4 to 64 "
                    "(default: model.yaml representation.n_control_points); stored in the model")
+    s.add_argument("--cvae", action=argparse.BooleanOptionalAction, default=None,
+                   help="CVAE mode: latent z input + encoder of the takes (default: model.yaml cvae.enabled)")
+    s.add_argument("--latent-dim", type=int, help="CVAE: size of z (default: model.yaml cvae.latent_dim)")
+    s.add_argument("--beta", type=float, help="CVAE: weight of the KL term (default: model.yaml cvae.beta)")
+    s.add_argument("--kl-warmup", type=int, help="CVAE: epochs of KL warm-up (default: model.yaml cvae.kl_warmup)")
+    s.add_argument("--encoder-hidden", help='CVAE: encoder hidden layers, e.g. "64" (default: model.yaml)')
     s.set_defaults(fn=cmd_train)
     s = sub.add_parser("fidelity", help="how much detail K control points lose on the accepted takes "
                        "(no training, no movement)")

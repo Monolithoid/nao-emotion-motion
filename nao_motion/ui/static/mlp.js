@@ -6,7 +6,8 @@
 (function () {
   const GROUPS = {arms: "Bras", head: "Tête", hands: "Mains"};
   const GCOL = {arms: "#2f62d8", head: "#e07a12", hands: "#1d8a4b"};
-  const FIELDS = {hidden: "tr-hidden", dropout: "tr-dropout", weight_decay: "tr-wd", lr: "tr-lr", smoothness_weight: "tr-smooth", motion_energy_weight: "tr-energy", folds: "tr-folds", n_control_points: "tr-ctrl"};
+  const FIELDS = {hidden: "tr-hidden", dropout: "tr-dropout", weight_decay: "tr-wd", lr: "tr-lr", smoothness_weight: "tr-smooth", motion_energy_weight: "tr-energy", folds: "tr-folds", n_control_points: "tr-ctrl",
+    latent_dim: "tr-zdim", beta: "tr-beta", kl_warmup: "tr-warmup", encoder_hidden: "tr-enc"};
   const STORE = "nao-net-settings";
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
@@ -25,6 +26,16 @@
     return o;
   }
   const mirrorDefault = () => (M().training || {}).mirror ?? true;
+  const CV = () => (CFG.cvae || {});
+  const cvaeDefault = () => !!CV().enabled;
+  const cvaeOn = () => $("tr-cvae").checked;
+  // CVAE settings in effect (field if filled, else model.yaml)
+  function cvaeEff() {
+    const o = overrides(), c = CV();
+    const enc = o.encoder_hidden !== undefined ? o.encoder_hidden.replace(/,/g, " ").split(/\s+/).filter(Boolean).map(Number) : (c.encoder_hidden || [64]);
+    return {latent_dim: Number(o.latent_dim ?? c.latent_dim ?? 4), beta: Number(o.beta ?? c.beta ?? 0.01),
+            kl_warmup: Number(o.kl_warmup ?? c.kl_warmup ?? 200), encoder_hidden: enc};
+  }
   const foldsSetting = () => { const v = $("tr-folds").value.trim(); return parseInt(v !== "" ? v : ((M().training || {}).folds ?? 1)) || 0; };
   function setFields(v) { for (const [k, id] of Object.entries(FIELDS)) $(id).value = v[k] ?? ""; changed(); }
   function placeholders() {
@@ -33,6 +44,10 @@
     $("tr-wd").placeholder = T.weight_decay ?? ""; $("tr-lr").placeholder = T.lr ?? ""; $("tr-smooth").placeholder = T.smoothness_weight ?? ""; $("tr-energy").placeholder = T.motion_energy_weight ?? 0;
     $("tr-folds").placeholder = T.folds ?? 1;
     $("tr-ctrl").placeholder = (M().representation || {}).n_control_points ?? 8;
+    const c = CV();
+    $("tr-zdim").placeholder = c.latent_dim ?? 4; $("tr-beta").placeholder = c.beta ?? 0.01;
+    $("tr-warmup").placeholder = c.kl_warmup ?? 200; $("tr-enc").placeholder = (c.encoder_hidden || [64]).join(",");
+    $("tr-energy").placeholder = cvaeOn() ? 0 : (T.motion_energy_weight ?? 0);
   }
   // effective settings for a group: field if filled, else model.yaml
   function effective(g) {
@@ -48,15 +63,17 @@
             n_control_points: num("n_control_points", (M().representation || {}).n_control_points || 8)};
   }
   function changed() {
-    try { localStorage.setItem(STORE, JSON.stringify({...overrides(), mirror: $("tr-mirror").checked})); } catch (e) {}
-    drawNet(); summary();
+    try { localStorage.setItem(STORE, JSON.stringify({...overrides(), mirror: $("tr-mirror").checked, cvae: cvaeOn()})); } catch (e) {}
+    $("tr-cvae-fields").classList.toggle("hidden", !cvaeOn());
+    placeholders(); drawNet(); summary();
   }
   function summary() {
     const s = effective("arms"), o = overrides();
     $("tr-net-sum").textContent = Object.keys(o).length
-      ? `Réglages de l'onglet Réseau : ${Object.entries(o).map(([k, v]) => `${{hidden: "couches", dropout: "dropout", weight_decay: "weight decay", lr: "lr", smoothness_weight: "lissage", motion_energy_weight: "énergie du mouvement", folds: "parts de validation croisée", n_control_points: "points de contrôle"}[k]} ${v}`).join(" · ")}`
+      ? `Réglages de l'onglet Réseau : ${Object.entries(o).map(([k, v]) => `${{hidden: "couches", dropout: "dropout", weight_decay: "weight decay", lr: "lr", smoothness_weight: "lissage", motion_energy_weight: "énergie du mouvement", folds: "parts de validation croisée", n_control_points: "points de contrôle", latent_dim: "dimension de z", beta: "β", kl_warmup: "montée de β", encoder_hidden: "encodeur"}[k]} ${v}`).join(" · ")}`
       : "Réglages : ceux de model.yaml (modifiables dans l'onglet Réseau)";
     $("tr-net-sum").textContent += $("tr-mirror").checked ? " · miroir activé" : " · miroir désactivé";
+    if (cvaeOn()) { const c = cvaeEff(); $("tr-net-sum").textContent += ` · mode CVAE (z de dimension ${c.latent_dim}, β ${c.beta})`; }
     const k = foldsSetting();
     $("tr-net-sum").textContent += k >= 2 ? ` · validation croisée ${k} parts (≈ ${k + 1} entraînements)` : " · découpage unique 75/25";
     return s;
@@ -74,7 +91,8 @@
     const W = 1200, H = 660, top = 54, bot = 600;
     const s = effective(netGroup), J = joints(netGroup), k = K();
     if (!s.hidden) { svg.innerHTML = `<text x="600" y="330" text-anchor="middle" class="nt-bad">Couches cachées invalides : 1 à 4 nombres entre 1 et 1024 (ex. 32,32)</text>`; stats(null); return; }
-    const outDim = k * J.length + 1, dims = [inDim(), ...s.hidden, outDim];
+    const zc = cvaeOn() ? cvaeEff() : null, zd = zc && Number.isInteger(zc.latent_dim) && zc.latent_dim >= 1 ? zc.latent_dim : 0;
+    const outDim = k * J.length + 1, dims = [inDim() + zd, ...s.hidden, outDim];
     // columns: inputs, hidden layers, outputs, decoder
     const xIn = 330, xOut = 900, xDec = 1080, nh = s.hidden.length;
     const xs = [xIn, ...s.hidden.map((_, i) => xIn + (xOut - xIn) * (i + 1) / (nh + 1)), xOut];
@@ -82,7 +100,8 @@
     const ys = (n, gap = 1) => { const step = Math.min(40, (bot - top) / Math.max(n, 1)); const h = step * (n - 1); return Array.from({length: n}, (_, i) => (top + bot) / 2 - h / 2 + i * step * gap); };
     // input nodes (labelled), grouped
     const ev = CFG.net.event_features;
-    const inLab = [...CFG.emotions.map((e) => ({t: e.label, g: "emo"})), {t: "intensité", g: "int"}, ...ev.map((t) => ({t, g: "ev"}))];
+    const inLab = [...CFG.emotions.map((e) => ({t: e.label, g: "emo"})), {t: "intensité", g: "int"}, ...ev.map((t) => ({t, g: "ev"})),
+      ...Array.from({length: zd}, (_, i) => ({t: `z${i + 1}`, g: "z"}))];
     const inY = (() => { const n = inLab.length, step = Math.min(38, (bot - top - 40) / n); let y = (top + bot) / 2 - (step * (n - 1) + 40) / 2, prev = null; return inLab.map((l) => { if (prev && prev !== l.g) y += 20; prev = l.g; const r = y; y += step; return r; }); })();
     // hidden nodes: at most 12 drawn per layer, "⋮" in the middle
     const hidNodes = s.hidden.map((n) => { const shown = Math.min(n, 12); const yy = ys(shown + (n > 12 ? 1 : 0)); return n > 12 ? {y: [...yy.slice(0, 6), ...yy.slice(7)], dots: yy[6], n} : {y: yy, n}; });
@@ -101,8 +120,8 @@
       out.push("</g>");
     }
     // input column
-    const gl = {emo: "émotion (one-hot)", int: "intensité 0..1", ev: "événement"};
-    const gcol = {emo: "var(--accent)", int: "var(--guided)", ev: "var(--ok)"};
+    const gl = {emo: "émotion (one-hot)", int: "intensité 0..1", ev: "événement", z: "code latent z"};
+    const gcol = {emo: "var(--accent)", int: "var(--guided)", ev: "var(--ok)", z: "var(--bad)"};
     let prev = null;
     inLab.forEach((l, i) => {
       if (l.g !== prev) {
@@ -143,6 +162,8 @@
       `<text x="${xDec + 20}" y="${dy0 + 28}" class="nt-head" text-anchor="middle">Décodage</text>`);
     const dl = [`B-spline cubique`, `${k} points / articulation`, `+ durée (exp)`, `→ trajectoire de ${J.length}`, `articulation${J.length > 1 ? "s" : ""} (${netGroup === "hands" ? "ouverture" : "rad"})`, ``, `guardian : au jeu`, `seulement`];
     dl.forEach((t, i) => out.push(`<text x="${xDec + 20}" y="${dy0 + 58 + i * 22}" class="nt-sub" text-anchor="middle">${esc(t)}</text>`));
+    if (zd) ["Mode CVAE : code latent z", "entraînement : z ← encodeur", `(prise → z : ${[inDim() + outDim, ...cvaeEff().encoder_hidden, 2 * zd].join(" → ")})`, "génération : z ~ N(0, T²)", "T = 0 : geste central"]
+      .forEach((t, i) => out.push(`<text x="${xDec + 20}" y="${dy0 + 280 + i * 22}" class="nt-sub" text-anchor="middle" style="fill:var(--bad)">${esc(t)}</text>`));
     out.push(`<text x="600" y="${H - 16}" class="nt-sub" text-anchor="middle">Chaque ligne = une connexion pondérée (seuls 12 neurones par couche sont dessinés). Les trois groupes ont chacun leur réseau, mêmes entrées.</text>`);
     svg.innerHTML = out.join("");
     stats(dims);
@@ -151,12 +172,14 @@
   function stats(dims) {
     const el = $("net-stats"); if (!el) return;
     if (!dims) { el.innerHTML = ""; return; }
+    const zc = cvaeOn() ? cvaeEff() : null;
+    const encP = zc && dims[0] > inDim() ? nParams([inDim() + dims[dims.length - 1], ...zc.encoder_hidden, 2 * (dims[0] - inDim())]) : 0;
     const P = nParams(dims), g = netGroup;
     const acc = progress && progress.kinds && progress.kinds[g] ? progress.kinds[g].accepted : null;
     const targets = acc === null ? null : acc * (dims[dims.length - 1]);
     const ratio = targets ? P / targets : null;
     const cls = ratio === null ? "" : ratio <= 1 ? "v-good" : ratio <= 3 ? "v-warn" : "v-bad";
-    el.innerHTML = `<div><b>${P.toLocaleString("fr-FR")}</b> paramètres (${dims.join(" → ")})</div>` +
+    el.innerHTML = `<div><b>${P.toLocaleString("fr-FR")}</b> paramètres (${dims.join(" → ")})${encP ? ` + ${encP.toLocaleString("fr-FR")} pour l'encodeur (entraînement seulement)` : ""}</div>` +
       (acc === null ? "" : `<div>${acc} prise${acc > 1 ? "s" : ""} acceptée${acc > 1 ? "s" : ""} (${GROUPS[g].toLowerCase()}) × ${dims[dims.length - 1]} valeurs = ${targets.toLocaleString("fr-FR")} valeurs à apprendre</div>` +
         `<div class="verdict ${cls}">${ratio === null ? "" : `${fr(ratio, 1)} paramètre${ratio >= 2 ? "s" : ""} par valeur apprise · ` +
           (cls === "v-good" ? "taille raisonnable pour ces données" : cls === "v-warn" ? "réseau un peu gros pour ces données : surveiller l'écart entraînement / validation" : "réseau très gros pour ces données : risque de surapprentissage")}</div>` +
@@ -208,7 +231,25 @@
         (cls === "v-good" ? " : résultat stable" : cls === "v-warn" ? " : résultat assez variable d'une part à l'autre" : " : résultat très variable, il manque des prises")});
       out.push({k: "kept", cls: "v-good", text: `modèle gardé : réentraîné sur les ${m.n_examples} prises pendant ${cv.final_epochs} époques (meilleure époque moyenne des parts, ${Math.round(cv.best_epoch_mean)} ± ${Math.round(cv.best_epoch_std)})`});
     }
-    if (m.val_motion_kept !== undefined && m.val_motion_kept !== null) {
+    const cvae = (m.settings || {}).cvae;
+    if (cvae) {
+      const act = m.z_active, d = m.z_dim;
+      const labelEnough = m.val_rmse_rad !== undefined && m.val_baseline_label_mean_rmse_rad && m.val_rmse_rad <= 0.9 * m.val_baseline_label_mean_rmse_rad;
+      out.push({k: "zact", cls: act >= 1 ? "v-good" : labelEnough ? "v-warn" : "v-bad", text: `dimensions de z actives : ${act ?? "—"} / ${d ?? cvae.latent_dim}` +
+        (act === 0 ? (labelEnough ? " : z n'est pas utilisé, la consigne suffit à décrire les gestes (une seule façon de faire par consigne)"
+          : " : z n'est pas utilisé (β trop fort ou montée trop courte), le modèle refait la moyenne") : act === d ? " : toutes utilisées (une dimension de plus pourrait servir)" : "")});
+      const rk = m.val_recon_motion_kept ?? m.recon_motion_kept;
+      if (rk !== undefined && rk !== null) out.push({k: "recon", cls: rk >= 0.8 && rk <= 1.3 ? "v-good" : rk >= 0.6 ? "v-warn" : "v-bad",
+        text: `reconstruction (z lu dans la prise${m.val_recon_motion_kept !== undefined ? ", prises jamais vues" : ""}) : mouvement gardé ${Math.round(rk * 100)} %` +
+          (m.val_recon_rmse_rad !== undefined ? `, erreur ${fr(m.val_recon_rmse_rad)} rad` : "") + (rk < 0.6 ? " : le décodeur n'arrive pas à rendre les gestes (β à baisser)" : "")});
+      const dk = m.draws_motion_kept;
+      if (dk !== undefined && dk !== null) out.push({k: "draws", cls: dk >= 0.7 && dk <= 1.4 ? "v-good" : dk >= 0.5 ? "v-warn" : "v-bad",
+        text: `tirages au hasard (T = 1) : mouvement gardé ${Math.round(dk * 100)} %, écart entre deux tirages ${fr(m.draws_spread_rad, 2)} rad (entre deux prises : ${fr(m.takes_spread_rad, 2)} rad)` +
+          (dk < 0.5 ? " : tirages aplatis" : "")});
+    }
+    if (m.val_motion_kept !== undefined && m.val_motion_kept !== null && cvae) {
+      out.push({k: "central", cls: "v-good", text: `geste central (z = 0) : mouvement gardé ${Math.round(m.val_motion_kept * 100)} % ; normal qu'il soit calme, c'est le « milieu » des façons de faire. Juger plutôt la reconstruction et les tirages`});
+    } else if (m.val_motion_kept !== undefined && m.val_motion_kept !== null) {
       const k = m.val_motion_kept, r = m.val_baseline_motion_kept;
       out.push({k: "motion", cls: k >= 0.8 && k <= 1.3 ? "v-good" : k >= 0.6 ? "v-warn" : "v-bad",
         text: `mouvement gardé ${Math.round(k * 100)} % de celui des prises (geste moyen : ${r === null || r === undefined ? "—" : Math.round(r * 100) + " %"})` +
@@ -473,7 +514,33 @@
         m.cv.per_fold.map((f) => `  part ${f.fold} : ${f.n_val} prises de validation, ${f.n_train} d'entraînement (+${f.n_mirrored} miroirs) · val ${fr(f.val_rmse_rad)} · réf ${fr(f.val_baseline_rmse_rad)} · entr ${fr(f.train_rmse_rad)} · meilleure époque ${f.best_epoch}`).join("\n") + "\n" +
         `modèle gardé : toutes les prises, ${m.cv.final_epochs} époques, erreur sur ses propres prises ${fr(m.final_train_rmse_rad)}\n` +
         (m.cv.warning ? "⚠ " + m.cv.warning + "\n" : "") : "") +
+      (s && s.cvae ? `mode CVAE : z de dimension ${s.cvae.latent_dim} · β ${s.cvae.beta} (montée ${s.cvae.kl_warmup} époques) · encodeur ${(s.cvae.encoder_hidden || []).join("-")}\n` +
+        `  reconstruction sur toutes les prises : ${fr(m.recon_rmse_rad)} rad, mouvement gardé ${m.recon_motion_kept == null ? "—" : Math.round(m.recon_motion_kept * 100) + " %"}` +
+        (m.val_recon_rmse_rad !== undefined ? ` · prises jamais vues : ${fr(m.val_recon_rmse_rad)} rad, ${m.val_recon_motion_kept == null ? "—" : Math.round(m.val_recon_motion_kept * 100) + " %"}` : "") + "\n" +
+        `  z : variance par dimension ${JSON.stringify(m.z_var_per_dim)} · KL par dimension ${JSON.stringify(m.z_kl_per_dim)} (active si variance > 0,01)\n` +
+        `  « validation » et « entraînement » ci-dessus = geste central z = 0\n` : "") +
       (m.warning ? "⚠ " + m.warning : "");
+  }
+
+  // CVAE: how much each z dimension is used (variance of the takes' codes) and its KL
+  function zChart(m) {
+    const v = m.z_var_per_dim || [], kl = m.z_kl_per_dim || [];
+    if (!v.length) return `<p class="hint">Pas de mesure.</p>`;
+    const W = 560, rowH = 30, L = 60, R = 190, H = 30 + v.length * rowH + 24;
+    const mx = Math.max(1, ...v) * 1.05, X = (x) => L + Math.min(x, mx) / mx * (W - L - R);
+    const o = [`<svg viewBox="0 0 ${W} ${H}" class="chart">`,
+      `<line x1="${X(0.01)}" x2="${X(0.01)}" y1="14" y2="${H - 22}" class="goal"/>`,
+      `<text x="${X(0.01) + 3}" y="12" class="ax">seuil 0,01</text>`,
+      `<line x1="${X(1)}" x2="${X(1)}" y1="14" y2="${H - 22}" class="goal" style="opacity:.4"/>`,
+      `<text x="${X(1)}" y="12" class="ax" text-anchor="middle">1 = loi a priori</text>`];
+    v.forEach((x, i) => {
+      const y = 22 + i * rowH, on = x > 0.01;
+      o.push(`<text x="${L - 8}" y="${y + 15}" class="lab" text-anchor="end">z${i + 1}</text>`,
+        `<rect x="${L}" y="${y}" width="${Math.max(1, X(x) - L)}" height="20" rx="3" class="${on ? "c-val" : "c-ref"}"/>`,
+        `<text x="${W - R + 6}" y="${y + 15}" class="val">${fr(x, 2)} · KL ${fr(kl[i], 2)}${on ? "" : " (inutilisée)"}</text>`);
+    });
+    o.push(`<text x="${(L + W - R) / 2}" y="${H - 4}" class="ax" text-anchor="middle">variance des codes z des prises, par dimension</text></svg>`);
+    return `<div class="zbars">${o.join("")}</div>`;
   }
 
   function guardianBars(m) {
@@ -500,6 +567,7 @@
         ${m.cv ? `<figure><figcaption>Validation croisée : chaque part <span class="key k-val"></span>validation <span class="key k-ref"></span>geste moyen</figcaption>${foldsChart(m.cv)}</figure>` : ""}
         <figure><figcaption>Courbe d'apprentissage <span class="key k-train"></span>entraînement <span class="key k-val"></span>validation${m.cv ? " (moyenne des parts, zone = écart min–max)" : ""}</figcaption><div id="tr-curve">${curveChart(hist[r.run], m.best_epoch)}</div></figure>
         <figure><figcaption>Validation par articulation <span class="key k-val"></span>validation <span class="key k-train dotk"></span>entraînement <span class="key k-ref"></span>geste moyen <span class="key k-over"></span>≥ 0,9 × réf.</figcaption>${jointsChart(m)}</figure>
+        ${(m.settings || {}).cvae ? `<figure><figcaption>Mode CVAE : dimensions de z <span class="key k-val"></span>active <span class="key k-ref"></span>inutilisée</figcaption>${zChart(m)}</figure>` : ""}
         <figure><figcaption>Ce qu'on attend · verdict</figcaption>
           <ul class="checks">${a.map((x) => `<li class="${x.cls}">${esc(x.text)}</li>`).join("")}</ul>
           ${guardianBars(m)}
@@ -524,6 +592,8 @@
     setFields({hidden: (s.hidden || []).join(","), dropout: s.dropout, weight_decay: s.weight_decay, lr: s.lr,
                smoothness_weight: s.smoothness_weight, motion_energy_weight: s.motion_energy_weight || 0, n_control_points: s.n_control_points || 8, folds: (r.metrics.cv && r.metrics.cv.requested) || s.folds || 1});  // runs before cross-validation: single split
     $("tr-mirror").checked = s.mirror === true;  // runs before the mirror option: no mirror
+    $("tr-cvae").checked = !!s.cvae;
+    if (s.cvae) { $("tr-zdim").value = s.cvae.latent_dim; $("tr-beta").value = s.cvae.beta; $("tr-warmup").value = s.cvae.kl_warmup; $("tr-enc").value = (s.cvae.encoder_hidden || []).join(","); }
     if (s.epochs) $("tr-epochs").value = s.epochs;
     const b = document.querySelector(`[data-net-group="${r.component}"]`);
     if (b) b.click();
@@ -569,18 +639,21 @@
   }
 
   function train(c) {
-    return api("train", {component: c, epochs: parseInt($("tr-epochs").value), include_pending: $("tr-pending").checked, overrides: {...overrides(), mirror: $("tr-mirror").checked}}).then(refresh);
+    return api("train", {component: c, epochs: parseInt($("tr-epochs").value), include_pending: $("tr-pending").checked, overrides: {...overrides(), mirror: $("tr-mirror").checked, cvae: cvaeOn()}}).then(refresh);
   }
 
   function init() {
     // restore the last settings typed (this browser only)
     $("tr-mirror").checked = mirrorDefault();
-    try { const v = JSON.parse(localStorage.getItem(STORE) || "{}"); for (const [k, id] of Object.entries(FIELDS)) if (v[k] !== undefined) $(id).value = v[k]; if (typeof v.mirror === "boolean") $("tr-mirror").checked = v.mirror; } catch (e) {}
+    $("tr-cvae").checked = cvaeDefault();
+    try { const v = JSON.parse(localStorage.getItem(STORE) || "{}"); for (const [k, id] of Object.entries(FIELDS)) if (v[k] !== undefined) $(id).value = v[k]; if (typeof v.mirror === "boolean") $("tr-mirror").checked = v.mirror; if (typeof v.cvae === "boolean") $("tr-cvae").checked = v.cvae; } catch (e) {}
+    $("tr-cvae-fields").classList.toggle("hidden", !cvaeOn());
     placeholders();
     Object.values(FIELDS).forEach((id) => $(id).addEventListener("input", changed));
     $("tr-preset-small").onclick = () => setFields({hidden: "32", dropout: 0.1, weight_decay: 0.01, smoothness_weight: 0});
-    $("tr-preset-reset").onclick = () => { $("tr-mirror").checked = mirrorDefault(); setFields({}); };
+    $("tr-preset-reset").onclick = () => { $("tr-mirror").checked = mirrorDefault(); $("tr-cvae").checked = cvaeDefault(); setFields({}); };
     $("tr-mirror").addEventListener("change", changed);
+    $("tr-cvae").addEventListener("change", changed);
     const layers = () => (effective(netGroup).hidden || groupModel(netGroup).hidden || [64]).slice();
     $("net-add-layer").onclick = () => { const h = layers(); if (h.length < 4) { h.push(h[h.length - 1]); $("tr-hidden").value = h.join(","); changed(); } };
     $("net-del-layer").onclick = () => { const h = layers(); if (h.length > 1) { h.pop(); $("tr-hidden").value = h.join(","); changed(); } };

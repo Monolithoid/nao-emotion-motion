@@ -45,8 +45,13 @@ def _fit(ex: Examples, tr, va, arch, K, J, tcfg, predict_duration: bool, log=Non
     model = build(arch)
     B = torch.tensor(bspline_basis(K, np.linspace(0, 1, 50)), dtype=torch.float32)
     X = torch.tensor(ex.X, dtype=torch.float32)
-    Y = torch.tensor(ex.Y, dtype=torch.float32).reshape(-1, K, J)
+    Yf = torch.tensor(ex.Y, dtype=torch.float32)
+    Y = Yf.reshape(-1, K, J)
     Dl = torch.tensor(ex.log_dur, dtype=torch.float32)
+    enc = model.encoder  # CVAE mode (None for the plain MLP)
+    cv = arch.get("cvae") or {}
+    beta = float(cv.get("beta", 0.0))
+    warm = int(cv.get("kl_warmup", 0))
     opt = torch.optim.Adam(model.parameters(), lr=float(tcfg["lr"]), weight_decay=float(tcfg["weight_decay"]))
     sw = float(tcfg.get("smoothness_weight", 0.0))
     ew = float(tcfg.get("motion_energy_weight", 0.0))
@@ -57,9 +62,19 @@ def _fit(ex: Examples, tr, va, arch, K, J, tcfg, predict_duration: bool, log=Non
     dw = float(tcfg.get("duration_weight", 0.05))
     tr_t, va_t = torch.tensor(tr), torch.tensor(va)
 
-    def loss_on(idx, train=True):
+    def loss_on(idx, train=True, ep=None):
+        """Training loss; for the CVAE, train=True draws z from the encoder's posterior and
+        weighs the KL with the warm-up, train=False (validation) uses z = mu and the full beta:
+        the validation criterion is then the usual CVAE bound, comparable between epochs."""
         model.train(train)
-        out = model(X[idx])
+        kl = None
+        if enc is not None:
+            mu, logvar = enc(X[idx], Yf[idx], Dl[idx])
+            z = mu + torch.randn_like(mu) * torch.exp(0.5 * logvar) if train else mu
+            out = model(X[idx], z)
+            kl = 0.5 * (mu ** 2 + logvar.exp() - 1.0 - logvar).sum(1).mean()
+        else:
+            out = model(X[idx])
         C = out[:, : K * J].reshape(-1, K, J)
         dense = torch.einsum("nk,bkj->bnj", B, C)
         target = torch.einsum("nk,bkj->bnj", B, Y[idx])
@@ -74,21 +89,30 @@ def _fit(ex: Examples, tr, va, arch, K, J, tcfg, predict_duration: bool, log=Non
             # out of phase, which is flat (a wave becomes a still arm); this term does not care
             # about the phase, only about how much the joint moves.
             loss = loss + ew * ((_speed_rms(dense) - tgt_speed[idx]) ** 2).mean() / speed_scale ** 2
+        if kl is not None:
+            # KL warm-up: beta grows linearly from 0 over the first kl_warmup epochs, so the
+            # decoder learns to use z before the prior pulls the codes together
+            b = beta if (not train or not warm or ep is None) else beta * min(1.0, (ep + 1) / warm)
+            loss = loss + b * kl
         return loss
 
     best, best_state, history = float("inf"), None, []
     epochs = int(tcfg["epochs"])
+    # CVAE: the bound changes while beta warms up, so the best epoch is looked for after the
+    # warm-up only (else the early epochs, with almost no KL, would always look best)
+    first_kept = min(warm, epochs - 1) if enc is not None else 0
     for ep in range(epochs):
         opt.zero_grad()
-        l = loss_on(tr_t)
+        l = loss_on(tr_t, True, ep)
         l.backward()
         opt.step()
         if ep % 10 == 0 or ep == epochs - 1:
             with torch.no_grad():
                 lv = float(loss_on(va_t, False)) if len(va) else float("nan")
-            history.append({"epoch": ep, "train_loss": l.item(), "val_loss": lv})
+            history.append({"epoch": ep, "train_loss": l.item(), "val_loss": lv,
+                            **({"warmup": True} if ep < first_kept else {})})
             crit = lv if len(va) else float(l)
-            if crit < best and not keep_last:
+            if ep >= first_kept and crit < best and not keep_last:
                 best, best_state = crit, {k: v.clone() for k, v in model.state_dict().items()}
             if log:
                 log(ep, l.item(), lv)
@@ -96,6 +120,12 @@ def _fit(ex: Examples, tr, va, arch, K, J, tcfg, predict_duration: bool, log=Non
         model.load_state_dict(best_state)
     model.eval()
     return model, history
+
+
+def _best_epoch(hist):
+    """Epoch of the lowest validation loss, outside the CVAE KL warm-up."""
+    rows = [h for h in hist if not h.get("warmup")] or hist
+    return min(rows, key=lambda h: h["val_loss"])["epoch"]
 
 
 def _speed_rms(dense):
@@ -173,7 +203,10 @@ _NO_TAKES = {"arms": "Aucune prise de bras utilisable (statut 'accepted' requis 
 
 # réglages modifiables pour un entraînement (interface / CLI), sans toucher à model.yaml
 OVERRIDABLE = ("hidden", "dropout", "weight_decay", "lr", "smoothness_weight", "epochs", "mirror", "folds",
-               "n_control_points", "motion_energy_weight")
+               "n_control_points", "motion_energy_weight",
+               # CVAE mode (model.yaml section `cvae`)
+               "cvae", "latent_dim", "beta", "kl_warmup", "encoder_hidden")
+MAX_LATENT = 16
 MAX_FOLDS = 20
 
 _TRUE, _FALSE = ("1", "true", "yes", "on"), ("0", "false", "no", "off")
@@ -188,13 +221,21 @@ def check_overrides(o: Optional[dict]) -> dict:
         if k not in OVERRIDABLE:
             raise TrainingError(f"Réglage inconnu : {k}")
         try:
-            if k == "mirror":
+            if k in ("mirror", "cvae"):
                 if isinstance(v, str) and v.strip().lower() in _TRUE + _FALSE:
                     v = v.strip().lower() in _TRUE
                 ok = isinstance(v, bool)
-            elif k == "hidden":
+            elif k in ("hidden", "encoder_hidden"):
                 v = [int(x) for x in (v.replace(",", " ").split() if isinstance(v, str) else v)]
                 ok = 1 <= len(v) <= 4 and all(1 <= x <= 1024 for x in v)
+            elif k == "latent_dim":
+                f = float(v)
+                v = int(f)
+                ok = f == v and 1 <= v <= MAX_LATENT
+            elif k == "kl_warmup":
+                f = float(v)
+                v = int(f)
+                ok = f == v and 0 <= v <= 100000
             elif k == "epochs":
                 v = int(v)
                 ok = 1 <= v <= 100000
@@ -258,13 +299,20 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
         tcfg["epochs"] = epochs
     tcfg.update({k: ov[k] for k in ("weight_decay", "lr", "smoothness_weight", "epochs", "motion_energy_weight")
                  if k in ov})
+    cvc = cvae_settings(cfg, ov)
+    if cvc["enabled"] and "motion_energy_weight" not in ov:
+        # the energy term pushes a single curve to move "as much" as varied takes; the CVAE
+        # gets the amplitude from z instead, so the term is off unless asked for explicitly
+        tcfg["motion_energy_weight"] = 0.0
     use_mirror = bool(ov.get("mirror", tcfg.get("mirror", True)))
     folds_req = int(ov.get("folds", tcfg.get("folds", 1)) or 0)
     splits = grouped_kfold(ex.groups, folds_req, int(tcfg["seed"])) if folds_req >= 2 else []
     in_dim = motion_input_dim(len(cfg.emotions))
     assert ex.X.shape[1] == in_dim
     arch = {"in_dim": in_dim, "out_dim": K * J + 1, "hidden": list(mc["hidden"]),
-            "dropout": float(mc.get("dropout", 0)), "latent_dim": 0}
+            "dropout": float(mc.get("dropout", 0)), "latent_dim": cvc["latent_dim"] if cvc["enabled"] else 0}
+    if cvc["enabled"]:
+        arch["cvae"] = {k: cvc[k] for k in ("encoder_hidden", "beta", "kl_warmup")}
     norm = Norm.from_config(cfg, joints)
 
     def fit(tr, va, tc, flog, keep_last=False):
@@ -286,8 +334,12 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
         tr, va, _ = grouped_split(ex.groups, float(tcfg["val_fraction"]), int(tcfg["seed"]))
         model, hist, mirror_rep, mirrored = fit(tr, va, tcfg, log)
         metrics = _evaluate(model, ex, tr, va, norm, K, True)
+        if model.encoder is not None and len(va):
+            rec = _reconstruct(model, ex, va)
+            metrics["val_recon_rmse_rad"], _ = _dense_rmse(rec, ex.Y[va], norm, K)
+            metrics["val_recon_motion_kept"] = _motion_kept(rec, ex.Y[va], norm, K)
         if len(va) and hist:
-            metrics["best_epoch"] = min(hist, key=lambda h: h["val_loss"])["epoch"]
+            metrics["best_epoch"] = _best_epoch(hist)
     # réglages effectivement utilisés, et époque du modèle retenu
     metrics["settings"] = {"hidden": arch["hidden"], "dropout": arch["dropout"],
                            "weight_decay": float(tcfg["weight_decay"]), "lr": float(tcfg["lr"]),
@@ -295,7 +347,15 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
                            "motion_energy_weight": float(tcfg.get("motion_energy_weight", 0.0)),
                            "epochs": int(tcfg["epochs"]), "mirror": use_mirror,
                            "folds": len(splits) if splits else 1, "n_control_points": K,
+                           "cvae": ({k: cvc[k] for k in ("latent_dim", "beta", "kl_warmup", "encoder_hidden")}
+                                    if cvc["enabled"] else False),
                            "overrides": sorted(ov)}
+    latent_map = None
+    if cvc["enabled"]:
+        # reconstruction (z read from the take), random draws and z dimensions in use, on the
+        # kept model; with cross-validation the validation reconstruction is already in metrics
+        cm, latent_map = _cvae_report(model, ex, norm, K, int(tcfg["seed"]))
+        metrics.update(cm)
     metrics["mirror"] = mirror_rep
     # detail lost before any learning: takes vs their K-point curves (the model is compared
     # with those curves, so val/train RMSE never show this part)
@@ -312,6 +372,8 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
     run = _run_dir(runs_dir, component)
     meta = _meta(cfg, component, joints, norm, K, ex, tr, va, tcfg)
     meta["mirrored_take_ids"] = mirrored
+    if latent_map is not None:
+        meta["latent"] = latent_map  # map of the takes' z (Generation tab)
     if cv:
         meta["split"] = f"validation croisée par groupe, {len(splits)} parts ; modèle final sur toutes les prises"
         meta["cv_val_take_ids"] = [f["val_take_ids"] for f in cv["per_fold"]]
@@ -354,6 +416,7 @@ def _cross_validate(ex, splits, fit, norm, K, tcfg, log, folds_req):
     oof = np.zeros_like(ex.Y)
     oof_base = np.zeros_like(ex.Y)
     oof_dur = np.zeros(len(ex))
+    oof_rec = np.full_like(ex.Y, np.nan)
     rows, hists, train_pj = [], [], []
 
     def stage_log(label):
@@ -366,6 +429,8 @@ def _cross_validate(ex, splits, fit, norm, K, tcfg, log, folds_req):
         with torch.no_grad():
             out = model(torch.tensor(ex.X, dtype=torch.float32)).numpy().astype(np.float64)
         oof[va] = out[va, :KJ]
+        if model.encoder is not None:
+            oof_rec[va] = _reconstruct(model, ex, va)
         oof_dur[va] = out[va, -1]
         base = _baseline(ex, tr, va)
         oof_base[va] = base
@@ -377,7 +442,7 @@ def _cross_validate(ex, splits, fit, norm, K, tcfg, log, folds_req):
                      "n_mirrored": int(rep.get("added", 0) or 0),
                      "val_rmse_rad": v, "val_baseline_rmse_rad": b, "train_rmse_rad": t,
                      "ratio": v / b if b else None,
-                     "best_epoch": min(hist, key=lambda h: h["val_loss"])["epoch"],
+                     "best_epoch": _best_epoch(hist),
                      "val_take_ids": [ex.take_ids[i] for i in va]})
         hists.append(hist)
     best = [r["best_epoch"] for r in rows]
@@ -395,6 +460,10 @@ def _cross_validate(ex, splits, fit, norm, K, tcfg, log, folds_req):
     m["val_motion_kept"] = _motion_kept(oof, ex.Y, norm, K)
     m["val_baseline_motion_kept"] = _motion_kept(oof_base, ex.Y, norm, K)
     m["val_duration_mae_s"] = float(np.abs(np.exp(oof_dur) - np.exp(ex.log_dur)).mean())
+    if np.isfinite(oof_rec).all():
+        # CVAE: each take encoded and decoded by the fold model that never saw it
+        m["val_recon_rmse_rad"], _ = _dense_rmse(oof_rec, ex.Y, norm, K)
+        m["val_recon_motion_kept"] = _motion_kept(oof_rec, ex.Y, norm, K)
     # train error: mean over the folds (comparable with the validation above)
     m["train_rmse_rad"] = float(np.mean([r["train_rmse_rad"] for r in rows]))
     m["train_rmse_per_joint"] = {j: round(float(np.mean([p[j] for p in train_pj])), 4) for j in norm.joints}
@@ -424,6 +493,119 @@ def _cross_validate(ex, splits, fit, norm, K, tcfg, log, folds_req):
 
 
 _ENGINE_ARG = {"arms": "arm_model", "head": "head_model", "hands": "hands_model"}
+
+CVAE_DEFAULTS = {"enabled": False, "latent_dim": 4, "beta": 0.003, "kl_warmup": 200, "encoder_hidden": [64],
+                 "temperature": 1.0}
+
+
+def cvae_settings(cfg: Config, ov: Optional[dict] = None) -> dict:
+    """CVAE settings of a training: model.yaml `cvae`, then this training's overrides."""
+    c = dict(CVAE_DEFAULTS, **(cfg.model.get("cvae") or {}))
+    ov = ov or {}
+    if "cvae" in ov:
+        c["enabled"] = bool(ov["cvae"])
+    for k in ("latent_dim", "beta", "kl_warmup", "encoder_hidden"):
+        if k in ov:
+            c[k] = ov[k]
+    c["enabled"] = bool(c["enabled"])
+    c["latent_dim"], c["kl_warmup"], c["beta"] = int(c["latent_dim"]), int(c["kl_warmup"]), float(c["beta"])
+    c["encoder_hidden"] = [int(x) for x in c["encoder_hidden"]]
+    return c
+
+
+@torch.no_grad()
+def _encode(model, ex, idx):
+    idx = np.asarray(idx, dtype=int)
+    mu, logvar = model.encoder(torch.tensor(ex.X[idx], dtype=torch.float32),
+                               torch.tensor(ex.Y[idx], dtype=torch.float32),
+                               torch.tensor(ex.log_dur[idx], dtype=torch.float32))
+    return mu.numpy().astype(np.float64), logvar.numpy().astype(np.float64)
+
+
+@torch.no_grad()
+def _reconstruct(model, ex, idx):
+    """CVAE reconstruction: each take's z read by the encoder (posterior mean), then decoded
+    with the take's own consigne. Shows what the decoder can express, take by take."""
+    mu, _ = _encode(model, ex, idx)
+    out = model(torch.tensor(ex.X[np.asarray(idx, dtype=int)], dtype=torch.float32),
+                torch.tensor(mu, dtype=torch.float32)).numpy().astype(np.float64)
+    return out[:, : ex.Y.shape[1]]
+
+
+ACTIVE_Z_VAR = 0.01  # a z dimension is "active" when its mean code varies more than this across the takes
+
+
+@torch.no_grad()
+def _cvae_report(model, ex, norm, K, seed=0, n_draws=8):
+    """Metrics of a CVAE on all its (real) takes, and the map of their z codes.
+
+    - recon_*: takes encoded then decoded (what the model can play back with the right z);
+    - draws_*: random z ~ N(0, 1) with each take's consigne: how lively the draws are
+      (motion kept, 1 = as lively as the takes) and how different from each other
+      (mean RMS distance between two draws of the same consigne, rad);
+    - z dimensions: variance of the codes across takes and KL per dimension; a dimension
+      whose code never changes (variance < 0.01) is unused by the decoder."""
+    idx = np.arange(len(ex))
+    KJ = ex.Y.shape[1]
+    J = len(norm.joints)
+    mu, logvar = _encode(model, ex, idx)
+    rec = _reconstruct(model, ex, idx)
+    m = {}
+    m["recon_rmse_rad"], m["recon_rmse_per_joint"] = _dense_rmse(rec, ex.Y, norm, K)
+    m["recon_motion_kept"] = _motion_kept(rec, ex.Y, norm, K)
+    d = mu.shape[1]
+    rng = np.random.default_rng(seed)
+    X = torch.tensor(ex.X, dtype=torch.float32)
+    draws = np.stack([model(X, torch.tensor(rng.normal(size=(len(ex), d)), dtype=torch.float32)).numpy()[:, :KJ]
+                      for _ in range(n_draws)]).astype(np.float64)  # (S, N, KJ)
+    m["draws_motion_kept"] = _motion_kept(draws.reshape(-1, KJ), np.tile(ex.Y, (n_draws, 1)), norm, K)
+    Bm = bspline_basis(K, np.linspace(0, 1, 100))
+    dense = np.einsum("nk,sbkj->sbnj", Bm, norm.inv(draws.reshape(n_draws, len(ex), K, J)))
+    pair = [np.sqrt(((dense[a] - dense[b]) ** 2).mean()) for a in range(n_draws) for b in range(a + 1, n_draws)]
+    m["draws_spread_rad"] = float(np.mean(pair)) if pair else None
+    # spread of the takes themselves, for comparison: mean RMS distance between two takes
+    T = np.einsum("nk,bkj->bnj", Bm, norm.inv(ex.Y.reshape(-1, K, J)))
+    n = len(ex)
+    if n >= 2:
+        r = np.random.default_rng(seed + 1)
+        a, b = r.integers(0, n, 200), r.integers(0, n, 200)
+        keep = a != b
+        m["takes_spread_rad"] = float(np.mean(np.sqrt(((T[a[keep]] - T[b[keep]]) ** 2).mean(axis=(1, 2))))) \
+            if keep.any() else None
+    var = mu.var(axis=0) if n >= 2 else np.zeros(d)
+    kl = 0.5 * (mu ** 2 + np.exp(logvar) - 1.0 - logvar).mean(axis=0)
+    m["z_dim"] = int(d)
+    m["z_active"] = int((var > ACTIVE_Z_VAR).sum())
+    m["z_var_per_dim"] = [round(float(v), 4) for v in var]
+    m["z_kl_per_dim"] = [round(float(v), 4) for v in kl]
+    m["z_kl"] = float(kl.sum())
+    return m, latent_map(ex, mu, logvar)
+
+
+def latent_map(ex, mu, logvar) -> dict:
+    """z codes of the takes and their 2D PCA projection (map of the Generation tab).
+    z = mean + x * components[0] + y * components[1] maps a point of the map back to a z."""
+    d = mu.shape[1]
+    mean = mu.mean(axis=0)
+    c = mu - mean
+    comps = np.zeros((2, d))
+    expl = [0.0, 0.0]
+    if len(mu) >= 2 and np.abs(c).sum() > 0:
+        _, sv, vt = np.linalg.svd(c, full_matrices=False)
+        r = min(2, vt.shape[0])
+        comps[:r] = vt[:r]
+        tot = float((sv ** 2).sum()) or 1.0
+        expl = [float(sv[i] ** 2 / tot) if i < len(sv) else 0.0 for i in range(2)]
+    elif d >= 1:
+        comps[0, 0] = 1.0
+        if d >= 2:
+            comps[1, 1] = 1.0
+    xy = c @ comps.T
+    r4 = lambda a: np.round(np.asarray(a, dtype=float), 4).tolist()
+    return {"dim": int(d), "take_ids": list(ex.take_ids), "emotions": list(ex.emotions),
+            "intensities": r4(ex.intensities), "event_present": [bool(x[len(x) - 6]) for x in ex.X],
+            "mu": r4(mu), "sigma": r4(np.exp(0.5 * logvar).mean(axis=1)),
+            "pca": {"mean": r4(mean), "components": r4(comps), "explained": r4(expl), "xy": r4(xy)}}
 
 
 def train_arms(store: TakeStore, cfg: Config, runs_dir, statuses=("accepted",), epochs: Optional[int] = None,

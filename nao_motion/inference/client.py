@@ -15,11 +15,12 @@ class RemoteEngine:
         self.cfg, self.url, self.timeout = cfg, url.rstrip("/"), timeout_s
 
     def generate(self, emotion, intensity, event=None, head_current=None, variation=0.0, seed=None,
-                 hands_current=None) -> Generated:
+                 hands_current=None, project_zone=False, temperature=None, latent=None) -> Generated:
         body = json.dumps({"emotion": emotion, "intensity": intensity,
                            "event": event.to_dict() if event else None, "head_current": head_current,
-                           "hands_current": hands_current,
-                           "variation": variation, "seed": seed}).encode()
+                           "hands_current": hands_current, "project_zone": bool(project_zone),
+                           "variation": variation, "seed": seed, "temperature": temperature,
+                           "latent": latent}).encode()
         req = urllib.request.Request(self.url + "/generate", body, {"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=self.timeout) as r:
             d = json.loads(r.read())

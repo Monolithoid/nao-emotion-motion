@@ -15,6 +15,10 @@ Assemblage (configs/model.yaml, `combine.timing`) :
 Un groupe sans modèle : bras ou tête maintenus en position de départ, mains non
 commandées (laissées telles quelles). Il faut au moins un modèle.
 
+Modèles CVAE (model.yaml `cvae`) : chaque groupe tire son propre z ~ N(0, T²),
+T = `temperature` (0 = geste central z = 0, défaut `cvae.temperature`), ou reçoit
+un z donné (`latent`, ex. le z d'une prise sur la carte de l'onglet Génération).
+
 Le moteur PROPOSE des trajectoires ; il n'exécute rien. L'exécution passe par
 le contrôleur, qui fait valider le cycle complet par le guardian.
 """
@@ -29,7 +33,7 @@ from .config import Config
 from .data.representation import bspline_basis
 from .events import EventContext
 from .models.features import Norm, check_intensity, emotion_vector, motion_input
-from .models.nets import CheckpointError, load_model
+from .models.nets import CheckpointError, is_cvae, load_model
 from .trajectory import Trajectory
 
 Emotion = Union[str, Dict[str, float]]
@@ -88,10 +92,33 @@ class MotionEngine:
     def has_model(self) -> bool:
         return any(m is not None for m in (self.arm_model, self.head_model, self.hands_model))
 
+    def default_temperature(self) -> float:
+        return float((self.cfg.model.get("cvae") or {}).get("temperature", 1.0))
+
+    def latent_for(self, model, temperature: Optional[float] = None, seed: Optional[int] = None,
+                   z=None) -> Optional[np.ndarray]:
+        """z of a CVAE model: the given one, else drawn from N(0, T²). None for a plain MLP."""
+        if not is_cvae(model):
+            return None
+        d = int(model.arch["latent_dim"])
+        if z is not None:
+            z = np.asarray(z, dtype=np.float64).ravel()
+            if z.shape != (d,) or not np.isfinite(z).all():
+                raise ValueError(f"z attendu de dimension {d}")
+            return z
+        t = self.default_temperature() if temperature is None else float(temperature)
+        if not np.isfinite(t) or t < 0:
+            raise ValueError("Température invalide (>= 0)")
+        # own stream, distinct from the smooth-noise one (same seed => same gesture)
+        rng = np.random.default_rng(None if seed is None else [int(seed), 7])
+        return t * rng.normal(size=d)
+
     def _plan(self, model, emotion: Emotion, intensity: float, event: Optional[EventContext],
-              variation: float = 0.0, seed: Optional[int] = None):
-        """Points de contrôle normalisés (K×J) et durée (s) d'un groupe."""
-        out = model.predict(motion_input(self.cfg.emotions, emotion, intensity, event))[0]
+              variation: float = 0.0, seed: Optional[int] = None, z=None):
+        """Points de contrôle normalisés (K×J) et durée (s) d'un groupe. `z` : code latent
+        (modèles CVAE seulement)."""
+        x = motion_input(self.cfg.emotions, emotion, intensity, event)
+        out = (model.predict(x) if z is None else model.predict(x, z))[0]
         ctrl_n = out[:-1].reshape(model_k(model, self.K), -1)
         if variation > 0:
             ctrl_n = ctrl_n + self._smooth_noise(ctrl_n.shape, variation, seed)
@@ -128,10 +155,14 @@ class MotionEngine:
         n[0] = n[-1] = 0.0
         return n
 
+    def model_of(self, group: str):
+        return {"arms": self.arm_model, "head": self.head_model, "hands": self.hands_model}.get(group)
+
     def generate(self, emotion: Emotion, intensity: float, event: Optional[EventContext] = None,
                  head_current: Optional[Dict[str, float]] = None, variation: float = 0.0,
                  seed: Optional[int] = None, hands_current: Optional[Dict[str, float]] = None,
-                 project_zone: bool = False) -> Generated:
+                 project_zone: bool = False, temperature: Optional[float] = None,
+                 latent: Optional[Dict[str, list]] = None) -> Generated:
         """Geste combiné bras + tête + mains. `head_current` et `hands_current` ne sont plus des
         entrées des modèles (gardés pour compatibilité d'appel) : les transitions depuis la
         posture mesurée sont planifiées par le contrôleur."""
@@ -142,13 +173,16 @@ class MotionEngine:
         event = event or EventContext.none()
         cfg, notes = self.cfg, []
         sub = (lambda k: None if seed is None else int(seed) + k)  # une graine par groupe
-        plans = {}
-        if self.arm_model is not None:
-            plans["arms"] = self.plan_arms(emotion, intensity, variation, sub(0), event)
-        if self.head_model is not None:
-            plans["head"] = self.plan_head(emotion, intensity, event, variation, sub(1))
-        if self.hands_model is not None and cfg.hand_joints:
-            plans["hands"] = self.plan_hands(emotion, intensity, event, variation, sub(2))
+        plans, zs = {}, {}
+        latent = latent or {}
+        for k, group in enumerate(("arms", "head", "hands")):
+            model = self.model_of(group)
+            if model is None or (group == "hands" and not cfg.hand_joints):
+                continue
+            z = self.latent_for(model, temperature, sub(k), latent.get(group))
+            if z is not None:
+                zs[group] = [round(float(v), 4) for v in z]
+            plans[group] = self._plan(model, emotion, intensity, event, variation, sub(k), z)
         T = max(d for _, d in plans.values())
         n = max(4, int(np.ceil(T * self.rate)) + 1)
         tt = np.linspace(0.0, T, n)
@@ -201,5 +235,7 @@ class MotionEngine:
         return Generated(arms, head, combined, arm_ctrl, head_ctrl, T,
                          {"emotion": emotion, "intensity": intensity, "event": event.to_dict(),
                           "variation": variation, "seed": seed, "timing": self.timing,
-                          "project_zone": bool(project_zone)}, notes, hands, hand_ctrl,
+                          "project_zone": bool(project_zone),
+                          **({"temperature": self.default_temperature() if temperature is None else float(temperature),
+                              "latent": zs} if zs else {})}, notes, hands, hand_ctrl,
                          durations)

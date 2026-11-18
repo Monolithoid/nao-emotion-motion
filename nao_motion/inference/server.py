@@ -35,7 +35,8 @@ def make_handler(wb):
                 ev = EventContext.from_dict(d["event"]) if d.get("event") else EventContext.none()
                 gen = wb.get_engine().generate(d["emotion"], float(d["intensity"]), ev, d.get("head_current"),
                                                float(d.get("variation", 0)), d.get("seed"),
-                                               hands_current=d.get("hands_current"))
+                                               hands_current=d.get("hands_current"),
+                                               temperature=d.get("temperature"), latent=d.get("latent"))
                 # raw model output: the client makes it playable itself (Workbench.playable)
                 # before its own guardian check; the report below is for the playable version
                 played, adapt = wb.playable(gen.combined)

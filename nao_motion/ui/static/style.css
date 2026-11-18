@@ -273,3 +273,16 @@ table.fid tr.on td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 .g-actions{display:inline-flex;flex-direction:column;gap:6px;vertical-align:top}
 .g-actions button{width:100%}
 .g-actions button#g-play:not(:disabled){font-weight:600}
+/* CVAE settings (Network tab) and latent space (Generation tab) */
+.net-fields-sub{grid-column:1/-1;display:grid;grid-template-columns:auto 1fr;gap:8px 10px;align-items:center;padding:6px 0 6px 12px;border-left:3px solid var(--accent)}
+.net-fields-sub label{display:contents}.net-fields-sub label>span{display:flex;gap:4px;align-items:center}.net-fields-sub p{grid-column:1/-1;margin:0}
+.lat-grid{display:grid;grid-template-columns:minmax(280px,1fr) minmax(320px,1.4fr);gap:14px;align-items:start}
+@media (max-width:900px){.lat-grid{grid-template-columns:1fr}}
+.lat-grid figure{margin:0}.lat-grid figcaption{font-size:13px;margin-bottom:6px}
+#lat-map svg{width:100%;max-width:520px;height:auto;cursor:crosshair;border:1px solid rgba(127,127,127,.3);border-radius:6px}
+#lat-map circle.pt{cursor:pointer;stroke:var(--bg,#fff);stroke-width:1}#lat-map circle.pt:hover{stroke:currentColor;stroke-width:2}
+#lat-map circle.sel{stroke:currentColor;stroke-width:2.5}
+.lat-sw{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px}
+.lat-sw svg{width:100%;height:auto}.lat-sw .jn{font-size:12px}
+.zbars svg{width:100%;max-width:560px;height:auto}
+.net-fields-sub.hidden{display:none}

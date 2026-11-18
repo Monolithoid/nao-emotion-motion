@@ -127,7 +127,17 @@ def model_curves(wb, take, kind, joints, t0, t_fit, raw) -> dict:
     drawn from the start of the take's segment (its own learnt duration)."""
     m = take.meta
     try:
-        gen = wb.get_engine().generate(m.emotion, m.intensity, m.event_ctx)
+        eng = wb.get_engine()
+        kw = {}
+        model = eng.model_of(kind) if hasattr(eng, "model_of") else None
+        if model is not None and (model.arch or {}).get("latent_dim"):
+            # CVAE: the take's own z when the model has seen it (its reconstruction), else the
+            # central gesture z = 0, never a random draw
+            lat = (model.meta or {}).get("latent") or {}
+            ids = lat.get("take_ids") or []
+            z = lat["mu"][ids.index(m.take_id)] if m.take_id in ids else None
+            kw = {"temperature": 0.0, "latent": {kind: z} if z is not None else None}
+        gen = eng.generate(m.emotion, m.intensity, m.event_ctx, **kw)
     except Exception as e:  # no model, torch missing, remote engine down...
         return {"error": str(e)}
     traj = {"arms": gen.arms, "head": gen.head, "hands": gen.hands}.get(kind)
