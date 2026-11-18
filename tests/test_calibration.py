@@ -65,10 +65,27 @@ def test_active_calibration_drives_guardian(calibrated_cfg):
     c, cal = calibrated_cfg
     assert c.calibrated and c.poses_calibrated and c.calibration_version == cal.version
     assert c.limits["HeadYaw"] == pytest.approx(tuple(cal.limits["HeadYaw"]))
-    assert any(k.name.startswith("calib:") for k in c.guardian.coupled_constraints)
+    # the guardian protects the motors: factory limits read at calibration, not the explored
+    # zone, and none of the measured joint-pair envelopes (they refused most gestures)
+    assert cal.coupled and not any(k.name.startswith("calib:") for k in c.guardian.coupled_constraints)
+    factory = c.raw["guardian"]["factory_limits_rad"]  # the simulated robot reports none
+    for j in c.all_joints:
+        f = (cal.measured.get(j) or {}).get("factory") or factory[j]
+        assert c.guardian_limits[j] == pytest.approx(tuple(f))
     g = Guardian(c)
     q = np.array(c.pose("start", c.all_joints))
     assert g.validate(Trajectory(c.all_joints, [0, 1], [q, q]), check_duration=False).ok
+
+
+def test_calibrated_zone_restores_the_old_behaviour(calibrated_cfg):
+    c, cal = calibrated_cfg
+    gy = c.root / "guardian.yaml"
+    gy.write_text(gy.read_text(encoding="utf-8").replace("calibrated_zone: false", "calibrated_zone: true"),
+                  encoding="utf-8")
+    z = load_config(c.root)
+    assert z.guardian.calibrated_zone
+    assert any(k.name.startswith("calib:") for k in z.guardian.coupled_constraints)
+    assert z.guardian_limits["HeadYaw"] == pytest.approx(tuple(cal.limits["HeadYaw"]))
 
 
 def test_real_robot_requires_matching_calibration(tmp_path, cfg, calibrated_cfg):

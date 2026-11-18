@@ -50,8 +50,11 @@ def test_export_content(calibrated):
     d = json.loads(open(out["guardian"], encoding="utf-8").read())
     assert d["source"]["calibrated"] and d["source"]["calibration_version"] == c.calibration_version
     assert set(d["limits"]) == set(c.controlled_joints)  # bras, tête et mains (plage d'usine)
-    origins = {x["origin"] for x in d["coupled_constraints"]}
-    assert origins == {"manual", "calibration"}
+    # motor limits, not the calibrated zone: no coupled envelope by default, a collision model
+    assert d["calibrated_zone"] is False and d["coupled_constraints"] == []
+    sc = d["self_collision"]
+    assert sc["enabled"] and {b["name"] for b in sc["body"]} >= {"torse", "bassin"}
+    assert g.body is not None and g.body.clearance == sc["clearance_m"]
     assert set(d["poses"]) == {"rest", "start"} and set(d["poses"]["rest"]) == set(c.controlled_joints)
     assert open(out["checker"], encoding="utf-8").read() == CHECKER.read_text(encoding="utf-8")
     assert g.calibrated and g.joints == sorted(c.controlled_joints)
@@ -102,9 +105,18 @@ def test_same_verdicts_as_project_guardian(calibrated):
 def test_rest_to_start_cycle_accepted(calibrated):
     c, _, g = calibrated
     rest, start = g.pose("rest"), g.pose("start")
-    assert g.check_pose(rest).ok and g.check_pose(start).ok
+    assert g.check_pose(start).ok
+    # rest is a contact posture (hands on the knees): it is reached by rest <-> start segments,
+    # which tolerate the contacts of the rest pose
+    assert {v.code for v in g.check_pose(rest).violations} <= {"collision"}
     d = g.min_duration(rest, start)
-    assert g.check_move(rest, start, max(d, 1.0)).ok
+    js = list(start)
+    T = max(d, 1.0) / g.rest_velocity * g.max_velocity  # rest segments are slower
+    ts = [T * i / 50.0 for i in range(51)]
+    rows = [[rest[j] + (start[j] - rest[j]) * (10 * u ** 3 - 15 * u ** 4 + 6 * u ** 5) for j in js]
+            for u in (x / T for x in ts)]
+    assert g.check_rest_transition(ts, js, rows).ok
+    assert g.check_move(start, dict(start, HeadYaw=start["HeadYaw"] + 0.3), 1.0).ok
     too_short = g.check_move(rest, start, 0.1)
     assert not too_short.ok
     ref = Guardian(c)
@@ -126,10 +138,13 @@ def test_pose_checks(calibrated):
     assert [v.code for v in g.check_pose({"LKneePitch": 0.0}).violations] == ["legs"]
     assert [v.code for v in g.check_pose({"Foo": 0.0}).violations] == ["unknown_joint"]
     assert [v.code for v in g.check_pose({"HeadYaw": float("nan")}).violations] == ["format"]
-    # contrainte couplée manuelle : bras croisés devant le torse
-    pose = {"LShoulderRoll": -0.2, "RShoulderRoll": 0.2}
-    rep = g.check_pose(pose)
-    assert any(v.code == "coupled" for v in rep.violations) or not rep.ok
+    # auto-collision : avant-bras croisés devant le torse
+    start = g.pose("start")
+    crossed = dict(start, LShoulderPitch=0.0, LShoulderRoll=-0.3, LElbowYaw=0.0, LElbowRoll=-1.4,
+                   RShoulderPitch=0.0, RShoulderRoll=0.3, RElbowYaw=0.0, RElbowRoll=1.4)
+    rep = g.check_pose(crossed)
+    assert "collision" in {v.code for v in rep.violations}
+    assert any(v.joint == "L_hand/R_hand" for v in rep.violations)
 
 
 def test_malformed_inputs_rejected(calibrated):
@@ -147,7 +162,8 @@ def test_malformed_inputs_rejected(calibrated):
 def test_command_line(calibrated, tmp_path):
     c, out, _ = calibrated
     rest, start = (dict(zip(c.all_joints, c.pose(n, c.all_joints))) for n in ("rest", "start"))
-    good = Trajectory(c.all_joints, [0, 2.0], [[rest[j] for j in c.all_joints], [start[j] for j in c.all_joints]])
+    moved = dict(start, HeadYaw=start["HeadYaw"] + 0.4)
+    good = Trajectory(c.all_joints, [0, 2.0], [[start[j] for j in c.all_joints], [moved[j] for j in c.all_joints]])
     p = tmp_path / "geste.json"
     p.write_text(json.dumps({"trajectory": good.to_dict()}))
     assert ng.main([out["guardian"], str(p)]) == 0

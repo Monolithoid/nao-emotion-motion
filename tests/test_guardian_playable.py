@@ -47,14 +47,16 @@ def test_make_playable_brings_the_gesture_back_inside_the_limits(cfg):
     k = cfg.arm_joints.index(j)
     raw = _fast_arm_gesture(cfg, amp=0.0, dur=3.0)
     q = raw.q.copy()
-    lo, hi = cfg.limits[j]
+    lo, hi = cfg.guardian_limits[j]  # motor (factory) limits
     bump = np.sin(np.pi * raw.t / raw.duration) ** 2
-    q[:, k] = q[0, k] + (hi + 0.2 - q[0, k]) * bump  # goes 0.2 rad beyond the limit
+    q[:, k] = q[0, k] + (lo - 0.2 - q[0, k]) * bump  # arm raised 0.2 rad beyond the limit
     raw = Trajectory(raw.joints, raw.t, q)
     assert "limit" in {v.code for v in g.validate(raw).violations}
     a = make_playable(cfg, raw)
     assert g.validate(a.traj).ok, g.validate(a.traj).summary()
-    assert j in a.joints_changed and a.traj.q[:, k].max() <= hi - cfg.guardian.margin(j) + 1e-9
+    assert j in a.joints_changed and a.traj.q[:, k].min() >= lo + cfg.guardian.margin(j) - 1e-9
+    # only the joint that went past its limit is changed
+    assert a.joints_changed == [j]
 
 
 def _human_like_gesture(cfg, seed=1, dur=3.9):

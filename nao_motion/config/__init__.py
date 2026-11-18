@@ -46,6 +46,10 @@ class GuardianConfig:
     per_joint_acceleration: Dict[str, float] = field(default_factory=dict)
     # where each per-joint velocity limit comes from (guardian.yaml, factory speed, takes, ceiling)
     velocity_sources: Dict[str, str] = field(default_factory=dict)
+    # true = old behaviour: gestures bounded by the zone explored during the calibration
+    calibrated_zone: bool = False
+    # geometric self-collision model (guardian.yaml, self_collision; see guardian/collision.py)
+    self_collision: dict = field(default_factory=dict)
 
     def velocity_limit(self, joint: str) -> float:
         return float(self.per_joint_velocity_rad_s.get(joint, self.max_velocity_rad_s))
@@ -82,6 +86,10 @@ class Config:
     # Mains (LHand, RHand) : hors des groupes calibrés (on ne les guide pas à la main),
     # bornées par leur plage d'usine 0..1 et pilotées depuis l'interface.
     hand_joints: List[str] = field(default_factory=list)
+    # Limites appliquées par le guardian : butées des moteurs (limites d'usine), ou la zone
+    # calibrée si guardian.yaml calibrated_zone est vrai. `limits` reste la zone calibrée
+    # (normalisation des modèles, calibration, simulation).
+    guardian_limits: Dict[str, Tuple[float, float]] = field(default_factory=dict)
 
     # -- accès pratiques -------------------------------------------------
     @property
@@ -208,9 +216,23 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
             f = (m or {}).get("factory")
             if j in rest_limits and f:
                 rest_limits[j] = (min(float(f[0]), limits[j][0]), max(float(f[1]), limits[j][1]))
+    # butées des moteurs : limites d'usine lues sur le robot à la calibration, sinon
+    # guardian.yaml factory_limits_rad, sinon la configuration
+    calibrated_zone = bool(guard.get("calibrated_zone", False))
+    table = guard.get("factory_limits_rad") or {}
+    motor_limits = {}
+    for j in all_j:
+        f = ((calibration.measured or {}).get(j) or {}).get("factory") if calibration is not None else None
+        f = f or table.get(j)
+        motor_limits[j] = (float(f[0]), float(f[1])) if f else limits[j]
+        if not motor_limits[j][0] < motor_limits[j][1]:
+            raise ConfigError(f"guardian.yaml : limite d'usine invalide pour {j}")
+        rest_limits[j] = (min(rest_limits[j][0], motor_limits[j][0]), max(rest_limits[j][1], motor_limits[j][1]))
+    guardian_limits = dict(limits) if calibrated_zone else motor_limits
     # mains : plage d'usine, que la calibration ne remplace pas
     limits.update(hand_limits)
     rest_limits.update(hand_limits)
+    guardian_limits.update(hand_limits)
 
     def _check(name, g, gp, lims, hint="", js=None):
         js = groups[g] if js is None else js
@@ -226,7 +248,7 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
     hint = " (limites calibrées : capturer les poses pendant la calibration)" if calibration else ""
     pose_d = {"rest": {}, "start": {}}
     for g in groups:
-        pose_d["start"][g] = _check("start", g, poses["start"].get(g) or {}, limits, hint)
+        pose_d["start"][g] = _check("start", g, poses["start"].get(g) or {}, guardian_limits, hint)
         # le repos peut sortir de la zone de mouvement (contact), pas des limites d'usine
         pose_d["rest"][g] = _check("rest", g, poses["rest"].get(g) or {}, rest_limits, " (limites d'usine)")
     for n in ("rest", "start"):
@@ -245,7 +267,9 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
 
     cc = []
     manual = list(guard.get("coupled_constraints", []) or [])
-    for c in manual + (list(calibration.coupled) if calibration else []):
+    # enveloppes mesurées à la calibration : seulement avec calibrated_zone (elles décrivent
+    # la zone explorée, pas la géométrie du robot)
+    for c in manual + (list(calibration.coupled) if calibration and calibrated_zone else []):
         for j in c["terms"]:
             if j not in limits:
                 raise ConfigError(f"Contrainte {c['name']} : articulation inconnue {j}")
@@ -265,6 +289,8 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
         rest_velocity_rad_s=float(guard.get("rest_velocity_rad_s", 0.3)),
         per_joint_margin={k: float(v) for k, v in (guard.get("per_joint_margin") or {}).items()},
         per_joint_acceleration={k: float(v) for k, v in (guard.get("per_joint_acceleration") or {}).items()},
+        calibrated_zone=calibrated_zone,
+        self_collision=dict(guard.get("self_collision") or {"enabled": False}),
     )
     _factory_velocity_limits(gcfg, guard, robot, list(limits), calibration)
     return Config(
@@ -279,6 +305,7 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
         calibration=calibration,
         rest_limits=rest_limits,
         hand_joints=hand_joints,
+        guardian_limits=guardian_limits,
     )
 
 

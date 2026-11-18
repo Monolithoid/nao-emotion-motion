@@ -1,7 +1,28 @@
 # Contrôleur de sécurité indépendant des modèles.
-# Toutes les valeurs sont à ajuster sur le robot réel ; elles sont prudentes par défaut.
+# Le guardian protège le robot, pas le style du geste : butées des moteurs, vitesse,
+# accélération et auto-collision (bras contre corps, jambes, tête, autre bras). Il ne
+# borne PAS le geste à la zone explorée pendant la calibration (voir calibrated_zone).
 schema_version: 1
-limit_margin_rad: 0.03          # marge intérieure appliquée aux limites min/max
+# Limites articulaires = butées des MOTEURS : limites d'usine lues sur le robot à la
+# calibration (measured.*.factory), sinon factory_limits_rad ci-dessous.
+# calibrated_zone: true rétablit l'ancien comportement (geste borné à la zone explorée
+# pendant la calibration + enveloppes couplées mesurées) : il refusait la plupart des gestes.
+calibrated_zone: false
+# NAO V4 à V6, documentation Aldebaran « NAO - Joints » (= ALMotion.getLimits).
+factory_limits_rad:
+  HeadYaw: [-2.0857, 2.0857]
+  HeadPitch: [-0.6720, 0.5149]
+  LShoulderPitch: [-2.0857, 2.0857]
+  LShoulderRoll: [-0.3142, 1.3265]
+  LElbowYaw: [-2.0857, 2.0857]
+  LElbowRoll: [-1.5446, -0.0349]
+  LWristYaw: [-1.8238, 1.8238]
+  RShoulderPitch: [-2.0857, 2.0857]
+  RShoulderRoll: [-1.3265, 0.3142]
+  RElbowYaw: [-2.0857, 2.0857]
+  RElbowRoll: [0.0349, 1.5446]
+  RWristYaw: [-1.8238, 1.8238]
+limit_margin_rad: 0.03          # marge intérieure appliquée aux butées (le moteur force en butée)
 # Vitesse par articulation. Ordre de priorité :
 #   1. per_joint_velocity_rad_s ci-dessous (choix explicite) ;
 #   2. sinon velocity_fraction_of_factory x vitesse d'usine (factory_velocity_rad_s) ;
@@ -55,25 +76,34 @@ transition_velocity_rad_s: 0.5  # vitesse max des transitions repos <-> départ 
 # départ soit accessible sans heurt depuis le repos reste à la charge de qui calibre.
 rest_velocity_rad_s: 0.3
 
-# Contraintes couplées linéaires : sum(coef_i * q_i) <= bound (radians).
-# Elles complètent les min/max indépendants, qui ne garantissent PAS l'absence
-# de collision. Exemples ci-dessous, à remplacer par des zones mesurées.
-coupled_constraints:
-  - name: tete_baissee_tournee
-    description: "Limiter la flexion de la tête quand elle est très tournée (butée et câbles)."
-    terms: {HeadPitch: 1.0, HeadYaw: 0.25}
-    bound: 0.50
-  - name: tete_baissee_tournee_neg
-    terms: {HeadPitch: 1.0, HeadYaw: -0.25}
-    bound: 0.50
-  - name: bras_gauche_vers_tete
-    description: "Exemple : bras gauche levé et rentré vers l'axe pendant que la tête tourne à gauche."
-    terms: {LShoulderPitch: -1.0, LShoulderRoll: -1.0, HeadYaw: 0.5}
-    bound: 1.40
-  - name: bras_droit_vers_tete
-    terms: {RShoulderPitch: -1.0, RShoulderRoll: 1.0, HeadYaw: -0.5}
-    bound: 1.40
-  - name: avant_bras_croises
-    description: "Exemple : éviter que les deux bras se croisent devant le torse."
-    terms: {LShoulderRoll: -1.0, RShoulderRoll: 1.0}
-    bound: 0.35
+# Auto-collision : modèle géométrique du NAO (cinématique directe + capsules), vérifié sur
+# tout le trajet, segments repos <-> départ compris (les contacts de la pose de repos,
+# mains sur les genoux, y sont tolérés). Voir nao_motion/guardian/collision.py.
+# Dimensions en mètres, repère du torse (x devant, y à gauche, z en haut) ; à ajuster si
+# le guardian signale une collision sur une posture que le robot atteint sans contact
+# (onglet Génération, diagnostic du guardian).
+self_collision:
+  enabled: true
+  clearance_m: 0.01             # distance minimale entre surfaces
+  radius_m: {upper_arm: 0.030, forearm: 0.028, hand: 0.030, head: 0.065}
+  upper_arm_start_m: 0.035      # le haut du bras (logement de l'épaule) fait partie du torse
+  hand_length_m: 0.075
+  head_center_m: [0.0, 0.0, 0.058]
+  body:                         # volumes fixes : segment a-b et rayon
+    - {name: torse, a: [0.0, 0.0, -0.030], b: [0.0, 0.0, 0.075], radius: 0.055}
+    - {name: bassin, a: [-0.01, -0.045, -0.085], b: [-0.01, 0.045, -0.085], radius: 0.050}
+  # Jambes (jamais commandées) : from_rest = genoux placés sous les mains de la pose de
+  # repos (NAO assis, mains sur les genoux), cuisses depuis les hanches ; none = ignorées.
+  legs: from_rest
+  thigh_radius_m: 0.040
+  shin_radius_m: 0.035
+  shin_length_m: 0.13
+  shin_direction: [0.45, 0.0, -1.0]
+
+# Contraintes couplées linéaires optionnelles : sum(coef_i * q_i) <= bound (radians).
+# Aucune par défaut : l'auto-collision est vérifiée par le modèle géométrique ci-dessus.
+# Exemple (butée et câbles de la nuque, tête baissée très tournée) :
+#   - name: tete_baissee_tournee
+#     terms: {HeadPitch: 1.0, HeadYaw: 0.25}
+#     bound: 0.50
+coupled_constraints: []

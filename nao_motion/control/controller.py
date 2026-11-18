@@ -180,7 +180,7 @@ class Controller:
         for name, s in segs:
             if name in rest_names:
                 reports.append(self.guardian.validate_rest_transition(
-                    s, start_state=start_state if t == 0 else None, time_offset=t))
+                    s, start_state=start_state if t == 0 else None, time_offset=t, context_pose=ctx))
             else:
                 main_t0 = t if main_t0 is None else main_t0
                 main.append(s)

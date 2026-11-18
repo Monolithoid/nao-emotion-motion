@@ -340,7 +340,7 @@ def test_tracking_fault_cuts_the_motors(gwb, cfg):
     assert "Moteurs coupés" in gwb.ctrl.last_error
 
 
-def test_guardian_diagnosis(gwb, cfg):
+def test_guardian_diagnosis(gwb, cfg, trained):
     from nao_motion.guardian.diagnose import diagnose
     n0 = len(gwb.adapter.command_log)
     d = Api(gwb).post_guardian_diagnose({})
@@ -351,3 +351,9 @@ def test_guardian_diagnosis(gwb, cfg):
     assert src["LHand"] == "guardian.yaml" and src["LShoulderPitch"].startswith("factory")
     assert len(gwb.adapter.command_log) == n0  # nothing sent
     assert diagnose(gwb, intensities=(0.5,))["n"] == len(cfg.emotions)
+    # recorded takes check the collision model (simulated takes skipped unless asked)
+    from nao_motion.guardian.diagnose import collisions_on_takes
+    assert d["takes_collisions"]["checked"] == 0
+    tc = collisions_on_takes(trained["wb"], include_simulated=True)
+    assert tc["checked"] > 0 and 0 <= tc["flagged"] <= tc["checked"]
+    assert all(set(p) == {"takes", "min_distance_mm", "example"} for p in tc["pairs"].values())

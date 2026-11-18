@@ -1,8 +1,9 @@
 """Export du guardian pour un autre projet (ia-agent, pont embarqué sur NAO...).
 
 Produit un dossier contenant :
-  - guardian.json   : limites calibrées, marge, vitesses, accélération, durées,
-                      contraintes couplées, poses calibrées, provenance ;
+  - guardian.json   : butées des moteurs, marge, vitesses, accélération, durées,
+                      modèle d'auto-collision, contraintes couplées choisies, poses
+                      calibrées, provenance ;
   - nao_guardian.py : vérificateur autonome (Python 2.7 et 3, sans dépendance)
                       qui applique les mêmes règles que `nao_motion.guardian`.
 
@@ -19,6 +20,7 @@ from typing import Optional
 
 from ..adapters.base import LEG_PREFIXES
 from ..config import Config
+from . import collision
 
 KIND = "nao_motion.guardian_export"
 SCHEMA_VERSION = 1
@@ -48,7 +50,11 @@ def guardian_dict(cfg: Config, allow_uncalibrated: bool = False) -> dict:
         "groups": dict({k: list(v) for k, v in cfg.groups.items()}, **({"hands": list(cfg.hand_joints)}
                                                                         if cfg.hand_joints else {})),
         "forbidden_joint_prefixes": list(LEG_PREFIXES),
-        "limits": {j: [float(lo), float(hi)] for j, (lo, hi) in cfg.limits.items()},
+        # butées des moteurs (ou zone calibrée si calibrated_zone)
+        "limits": {j: [float(lo), float(hi)] for j, (lo, hi) in cfg.guardian_limits.items()},
+        "calibrated_zone": bool(g.calibrated_zone),
+        # modèle géométrique résolu (jambes placées depuis la pose de repos)
+        "self_collision": collision.for_config(cfg).to_dict(),
         "limit_margin_rad": g.limit_margin_rad,
         # mains (LHand, RHand) : ouverture 0..1 et non radians ; marge et accélération propres
         "per_joint_margin": dict(g.per_joint_margin),
