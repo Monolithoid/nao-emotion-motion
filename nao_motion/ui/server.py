@@ -468,6 +468,11 @@ class Api:
         self._cal().import_group(d["file"], d["group"])
         return self._cal().state()
 
+    def post_calibration_import_all(self, d):
+        """Reprend tous les groupes d'une calibration enregistrée (pour ne changer qu'une pose)."""
+        self._cal().import_all(d["file"])
+        return self._cal().state()
+
     def post_calibration_drop_import(self, d):
         self._cal().drop_import(d["group"])
         return self._cal().state()

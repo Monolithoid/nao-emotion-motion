@@ -367,15 +367,55 @@ def compute_calibration(sweeps: Dict[str, Dict[str, np.ndarray]], joints: Sequen
                                                "explorer une zone plus large autour de cette pose")
     robot = robot or {}
     version = version or f"{robot.get('name') or 'nao'}-{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
-    notes = "; ".join(f"groupe {g} repris de la calibration {d['source']}" for g, d in sorted(imported.items()))
+    notes = []
+    for g, d in sorted(imported.items()):
+        changed = [n for n in ("rest", "start")
+                   if n in d["poses"] and (poses or {}).get(n, {}).get(g) is not None
+                   and any(abs(poses[n][g][j] - v) > 1e-9 for j, v in d["poses"][n].items() if j in poses[n][g])]
+        notes.append(f"groupe {g} repris de la calibration {d['source']}" +
+                     (f" (pose{'s' if len(changed) > 1 else ''} {' et '.join(POSE_FR[n] for n in changed)} "
+                      "recapturée" + ("s" if len(changed) > 1 else "") + ")" if changed else ""))
+    # Rien d'exploré, tout repris d'une même calibration (ex. seule la pose de repos change) :
+    # on garde sa marge et ses vitesses telles quelles.
+    if not samples and imported and len({d.get("margin_rad") for d in imported.values()}) == 1:
+        m0 = next(iter(imported.values())).get("margin_rad")
+        if m0 is not None:
+            margin = float(m0)
+    kinematics = _merge_kinematics(imported, set(samples))
     return Calibration(version=version, robot=robot, limits=limits, measured=measured, poses=poses or {},
-                       coupled=coupled, margin_rad=margin, warnings=warnings, notes=notes)
+                       coupled=coupled, margin_rad=margin, warnings=warnings, notes="; ".join(notes),
+                       kinematics=kinematics)
 
 
-def import_group(cal: "Calibration", group: str, joints: Sequence[str]) -> dict:
+POSE_FR = {"rest": "de repos", "start": "de départ"}
+
+
+def _merge_kinematics(imported: Dict[str, dict], swept) -> Optional[dict]:
+    """Vitesses des groupes repris (une articulation explorée à nouveau perd les siennes :
+    elles ne valent que pour la zone d'où elles ont été mesurées)."""
+    out = {"velocity_rad_s": {}, "acceleration_rad_s2": {}}
+    sources = []
+    for g, d in sorted(imported.items()):
+        k = d.get("kinematics")
+        if not k:
+            continue
+        if k.get("source") and k["source"] not in sources:
+            sources.append(k["source"])
+        for key in out:
+            for j, v in (k.get(key) or {}).items():
+                if j not in swept:
+                    out[key].setdefault(j, float(v))
+    if not out["velocity_rad_s"] and not out["acceleration_rad_s2"]:
+        return None
+    return {"source": ", ".join(sources), **out}
+
+
+def import_group(cal: "Calibration", group: str, joints: Sequence[str],
+                 other_joints: Optional[Sequence[str]] = None) -> dict:
     """Extrait d'une calibration enregistrée tout ce qui concerne un groupe : limites,
     mesures, contraintes couplées portant uniquement sur ses articulations, et poses
-    (si elles y sont). Sert à garder un groupe déjà calibré sans l'explorer à nouveau."""
+    (si elles y sont). Sert à garder un groupe déjà calibré sans l'explorer à nouveau.
+    other_joints : articulations des AUTRES groupes calibrés (leurs vitesses ne sont pas reprises ici)."""
     if is_simulated(cal):
         raise CalibrationError("Calibration simulée : ses valeurs ne peuvent pas être reprises")
     js = list(joints)
@@ -385,7 +425,16 @@ def import_group(cal: "Calibration", group: str, joints: Sequence[str]) -> dict:
     poses = {n: {j: float(v) for j, v in (cal.poses or {}).get(n, {}).get(group, {}).items()}
              for n in ("rest", "start")}
     poses = {n: p for n, p in poses.items() if set(js) <= set(p)}
+    # vitesses/accélérations mesurées sur les prises (calibration étendue) : celles du groupe,
+    # plus celles des articulations hors groupes calibrés (mains), pour ne pas les perdre
+    kin = None
+    if cal.kinematics:
+        keep = lambda j: j in js or j not in (other_joints or ())
+        kin = {"source": cal.kinematics.get("source", ""),
+               **{k: {j: float(v) for j, v in (cal.kinematics.get(k) or {}).items() if keep(j)}
+                  for k in ("velocity_rad_s", "acceleration_rad_s2")}}
     return {"source": cal.version, "file": cal.path.name if cal.path else None,
+            "margin_rad": float(cal.margin_rad), "kinematics": kin,
             "limits": {j: [float(cal.limits[j][0]), float(cal.limits[j][1])] for j in js},
             "measured": {j: dict((cal.measured or {}).get(j) or {}) for j in js},
             "coupled": [c for c in (cal.coupled or []) if set(c.get("terms", {})) <= set(js)],
@@ -466,7 +515,8 @@ class CalibrationSession:
     def import_group(self, cal: "Calibration", group: str) -> dict:
         """Reprend un groupe d'une calibration enregistrée (remplace son exploration ; ses
         poses aussi si le fichier les porte, sinon les capturer)."""
-        imp = import_group(cal, group, self.cfg.groups[group])
+        others = [j for j in self.cfg.all_joints if j not in self.cfg.groups[group]]
+        imp = import_group(cal, group, self.cfg.groups[group], others)
         self.sweeps.pop(group, None)
         self.imported[group] = imp
         for n, p in imp["poses"].items():

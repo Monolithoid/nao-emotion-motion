@@ -59,6 +59,7 @@
     $("c-sweep-clear").disabled = sweeping || !CAL.swept.includes(group);
     const imported = CAL.imported || {};
     $("c-import").disabled = sweeping || !$("c-import-file").value;
+    $("c-import-all").disabled = sweeping || !$("c-import-file").value;
     $("c-drop-import").disabled = sweeping || !(group in imported);
     $("c-discard").disabled = sweeping;
     $("c-persist").textContent = CAL.persist ? "Progression gardée à chaque étape (reprise à la prochaine ouverture)."
@@ -263,6 +264,12 @@
   $("c-activate").onclick = () => window.confirm("Activer cette calibration pour le guardian ? Le contrôleur reste désarmé.") &&
     call("activate", {confirm: true}).then(loadFiles);
   $("c-import").onclick = () => call("import", {file: $("c-import-file").value, group});
+  $("c-import-all").onclick = () => {
+    const f = $("c-import-file").value;
+    const has = (CAL.swept || []).length || Object.keys(CAL.imported || {}).length;
+    if (has && !window.confirm(`Remplacer les explorations, reprises et poses en cours par celles de ${f} ?`)) return;
+    call("import_all", {file: f});
+  };
   $("c-drop-import").onclick = () => call("drop_import", {group});
   $("c-discard").onclick = () => window.confirm("Effacer toute la progression de cette calibration (explorations, poses, reprises) ?") &&
     call("discard");

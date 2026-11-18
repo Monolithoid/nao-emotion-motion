@@ -523,6 +523,7 @@
     <div class="row cal-reuse">
       <label>Reprendre le groupe choisi de <select id="c-import-file"></select></label>
       <button id="c-import" title="Limites, enveloppes et poses du groupe reprises du fichier, sans nouvelle exploration">Reprendre ce groupe</button>
+      <button id="c-import-all" title="Tous les groupes : limites, enveloppes, poses et vitesses reprises du fichier. Il ne reste qu'à recapturer la pose à changer (ex. le repos), puis Calculer et Enregistrer sous un nouveau nom.">Reprendre toute la calibration</button>
       <button id="c-drop-import">Annuler la reprise</button>
       <button id="c-discard" class="bad" title="Efface explorations, poses et reprises gardées pour ce robot">Repartir de zéro</button>
       <span id="c-persist" class="hint"></span>
@@ -537,6 +538,9 @@
             <div class="row"><button id="c-sweep" class="ok">Démarrer / compléter l'exploration</button>
               <button id="c-sweep-stop">Terminer l'exploration</button>
               <button id="c-sweep-clear">Effacer l'exploration du groupe</button><span id="c-sweep-n" class="hint"></span></div></li>
+          <li class="hint">Pour ne changer que la pose de repos d'une calibration enregistrée : la choisir ci-dessus,
+            « Reprendre toute la calibration », passer l'exploration, recapturer le repos des groupes concernés,
+            puis Calculer et Enregistrer (nouveau fichier, l'ancien reste intact).</li>
           <li><div class="what">2. Pose de repos</div>
             <div class="hint">Relâcher, placer le groupe à la main en position de repos, capturer (moyenne de 5 lectures), raidir sur place.
             Le repos peut être hors de la zone de mouvement (bras posés sur les genoux) : il n'est borné que par les limites d'usine.
