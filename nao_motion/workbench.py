@@ -646,11 +646,16 @@ class Workbench:
         a = make_playable(self.cfg, traj)
         return a.traj, a
 
-    def execute_plan(self, plan_id, background=True, start=None, end="rest", guardian=True):
+    def execute_plan(self, plan_id, background=True, start=None, end="rest", guardian=True, relax_end=False):
         """Plays a generated gesture on the robot (simulated or real). With start=None the plan
         prepared at generation time is played as is (old behaviour); otherwise the cycle is
         planned again now from the measured posture (see plan_generated). The whole cycle must
-        pass the guardian: on a refusal NOTHING is sent."""
+        pass the guardian: on a refusal NOTHING is sent.
+
+        The joints of the cycle are stiffened in place just before the first command (the
+        other motors are left as they are). relax_end=True cuts them again once the cycle has
+        ended normally (not after a stop, which holds the posture). Relaxing during the play is
+        always possible (Controller.relax): the play ends there, as "relaxed"."""
         self.check_no_calibration()
         entry = self.plans.get(plan_id)
         if entry is None:
@@ -674,6 +679,7 @@ class Workbench:
                 notes.append(f"clipped to the factory limits: {clipped}")
             would = plan.report.to_dict()
             info = {"state": "playing", "plan_id": plan_id, "start": used, "end": end, "guardian": False,
+                    "relax_end": bool(relax_end),
                     "guardian_would": {"ok": would["ok"], "violations": len(would["violations"])},
                     "notes": notes, "duration_s": plan.traj.duration, "segments": plan.segments, "at": time.time()}
             return self._run_play(plan, info, background, guardian=False)
@@ -689,7 +695,7 @@ class Workbench:
                               "error": "Guardian : cycle refusé, rien n'a été envoyé", "at": time.time()}
             raise GuardianRejection(plan.report)
         info = {"state": "playing", "plan_id": plan_id, "start": used, "end": end, "guardian": True,
-                "duration_s": plan.traj.duration, "segments": plan.segments, "at": time.time()}
+                "relax_end": bool(relax_end), "duration_s": plan.traj.duration, "segments": plan.segments, "at": time.time()}
         return self._run_play(plan, info, background)
 
     def _run_play(self, plan, info, background, guardian=True):
@@ -699,7 +705,10 @@ class Workbench:
             try:
                 info["result"] = self.ctrl.execute(plan, guardian=guardian)
                 info["warnings"] = list(self.ctrl.tracking_warnings)
-                info["state"] = "stopped" if info["result"] == "stopped" else "done"
+                info["state"] = {"stopped": "stopped", "relaxed": "relaxed"}.get(info["result"], "done")
+                if info["state"] == "done" and info.get("relax_end"):
+                    self.ctrl.relax(plan.traj.joints, confirm=True)
+                    info["relaxed_end"] = True
             except Exception as e:
                 self.ctrl.last_error = str(e)
                 info["state"], info["error"] = "error", str(e)
@@ -714,6 +723,58 @@ class Workbench:
             work()
         return {"started": True, "duration_s": plan.traj.duration, "start": info["start"], "end": info["end"],
                 "guardian": guardian, "notes": info.get("notes", []), "cycle": plan.to_dict()}
+
+    def rest_and_relax(self, background=True) -> dict:
+        """Generation tab (key 3): motorised return to rest from the measured posture, then all
+        the motors relaxed (arms, head, hands). Joints relaxed before are first stiffened in place
+        (no commanded motion) so that the return starts where they are. Requires armed motors.
+        Relaxing during the return is possible (Space): it ends there."""
+        self.check_no_calibration()
+        if self._busy():
+            raise ControllerError("Robot occupé (exécution, enregistrement ou balayage en cours)")
+        if not self.adapter.is_connected():
+            raise ControllerError("Robot non connecté (onglet Robot)")
+        if not self.ctrl.armed:
+            raise ControllerError("Contrôleur désarmé : cocher « moteurs armés » ; aucun mouvement envoyé")
+        if self.ctrl.state == State.HOLDING:
+            self.ctrl.acknowledge()
+        if self.ctrl.state != State.IDLE:
+            raise ControllerError(f"Retour au repos impossible dans l'état {self.ctrl.state.value} (acquitter d'abord)")
+        joints = list(self.cfg.all_joints)
+        guided = [j for j in joints if self.adapter.roles.get(j) == "guided"]
+        if guided:
+            self.ctrl.hold(guided)
+        plan = self.ctrl.plan_return_to_rest(joints)
+        if not plan.report.ok:
+            from .guardian import GuardianRejection
+            self.play_info = {"state": "refused", "kind": "rest", "plan_id": None,
+                              "error": "Guardian : retour au repos refusé, rien n'a été envoyé", "at": time.time()}
+            raise GuardianRejection(plan.report)
+        info = {"state": "playing", "kind": "rest", "plan_id": None, "relax_end": True,
+                "duration_s": plan.traj.duration, "segments": plan.segments, "at": time.time()}
+        self.play_info = info
+        relax = list(self.cfg.controlled_joints)
+
+        def work():
+            try:
+                info["result"] = self.ctrl.execute(plan)
+                info["state"] = {"stopped": "stopped", "relaxed": "relaxed"}.get(info["result"], "done")
+                if info["state"] == "done":
+                    self.ctrl.relax(relax, confirm=True)
+                    info["relaxed_end"] = True
+            except Exception as e:
+                self.ctrl.last_error = str(e)
+                info["state"], info["error"] = "error", str(e)
+                if not background:
+                    raise
+            finally:
+                info["ended_at"] = time.time()
+
+        if background:
+            threading.Thread(target=work, daemon=True).start()
+        else:
+            work()
+        return {"started": True, "duration_s": plan.traj.duration, "segments": plan.segments}
 
     def stop(self):
         """Arrêt explicite global : enregistrement, relecture et exécution."""

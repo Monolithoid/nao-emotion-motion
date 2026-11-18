@@ -231,9 +231,19 @@ class Api:
         return self.wb.status()
 
     def post_relax(self, d):
+        """Relâche (raideur nulle). Groupes de joints.yaml, plus « hands » pour les mains. Possible
+        pendant un mouvement (Play, retour au repos) : le mouvement s'arrête là, puis les moteurs
+        sont coupés."""
+        c = self.wb.cfg
         groups = d.get("groups") or []
-        self.wb.ctrl.relax([j for g in groups for j in self.wb.cfg.groups[g]], confirm=bool(d.get("confirm")))
+        self.wb.ctrl.relax([j for g in groups for j in (c.hand_joints if g == "hands" else c.groups[g])],
+                           confirm=bool(d.get("confirm")))
         return self.wb.status()
+
+    def post_rest_relax(self, d):
+        """Onglet Génération (touche 3) : retour motorisé au repos puis relâchement de tous les
+        moteurs. Action explicite de l'opérateur, sans dialogue (avertissement permanent)."""
+        return self.wb.rest_and_relax()
 
     def post_rest(self, d):
         self.wb.ctrl.return_to_rest(confirm=bool(d.get("confirm")))
@@ -399,7 +409,8 @@ class Api:
         The cycle is planned again from the measured posture and must pass the guardian whole;
         motors must already be armed. No dialog (operator preference): permanent warning on the page."""
         return self.wb.execute_plan(d["plan_id"], start=d.get("start", "auto"), end=d.get("end", "rest"),
-                                    guardian=d.get("guardian", True) is not False)
+                                    guardian=d.get("guardian", True) is not False,
+                                    relax_end=d.get("relax_end", True) is not False)
 
 
     # calibration du guardian (aucune route ne commande de mouvement) ----------

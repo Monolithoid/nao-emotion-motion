@@ -12,8 +12,10 @@
 //   0          lance le « Tirage aléatoire » équilibré (émotion, intensité, angle, distance) des
 //              onglets Bras, Tête, Mains et Génération. Le tirage ne fait que remplir la
 //              consigne et l'événement : aucun mouvement.
-//   1 / 2      onglet Génération : « Générer et valider » / « Play on the robot » (sans
-//              confirmation, moteurs armés requis ; avertissement permanent #g-alert).
+//   1 2 3 4    onglet Génération : « Générer et valider » / « Play on the robot » /
+//              « Repos puis relâcher » / « Raidir sur place » (sans confirmation, moteurs
+//              armés requis pour 2 et 3 ; avertissement permanent #g-alert). Espace y relâche
+//              tous les moteurs (bras, tête, mains), même pendant un mouvement.
 //   V          inverse gauche/droite du champ de vision (vue robot de dos <-> vue observateur
 //              de face), mêmes onglets ; affichage seul, l'événement ne change pas.
 // Les touches sont ignorées quand le focus est dans un champ de saisie (texte, nombre,
@@ -35,8 +37,10 @@
   };
   // bouton « Tirage aléatoire » par onglet
   const RANDOM = {arms: "a-random", head: "h-random", hands: "m-random", gen: "g-random"};
-  // Generation tab: 1 = generate and validate, 2 = play the last generated gesture
-  const GEN = ["g-go", "g-play"], GEN_LABEL = ["générer et valider", "play on the robot"];
+  // Generation tab: 1 = generate and validate, 2 = play the last generated gesture,
+  // 3 = back to rest then relax, 4 = stiffen everything in place
+  const GEN = ["g-go", "g-play", "g-rest-relax", "g-hold"];
+  const GEN_LABEL = ["générer et valider", "play on the robot", "repos puis relâcher", "raidir sur place"];
   const ARMS = ["left_arm", "right_arm"], ALL = ["head", "left_arm", "right_arm"];
   const lastHold = {arms: false, head: false, hands: false};
   const bar = document.getElementById("shortcuts");
@@ -79,6 +83,7 @@
     if (tab === "head") return {label: "la tête", groups: ["head"]};
     if (tab === "calib" && window.CALIB && window.CALIB.active)
       return {label: `le groupe « ${window.CALIB.groupLabel} » (calibration)`, calib: true};
+    if (tab === "gen") return {label: "tous les moteurs", groups: [...ALL, "hands"]};
     return {label: "les bras et la tête", groups: ALL};
   }
 
@@ -156,7 +161,8 @@
     let h = `<span><kbd>Espace</kbd> relâcher ${t.label}</span>`;
     if (kind) h += `<span><kbd>1</kbd>–<kbd>4</kbd> étapes</span>` +
       `<span><kbd>→</kbd> étape suivante : <b>${nextStep(kind) + 1} · ${STEP_LABEL[nextStep(kind)]}</b></span>`;
-    if (tab === "gen") h += `<span><kbd>1</kbd> générer et valider</span><span><kbd>2</kbd> <b>play on the robot</b></span>`;
+    if (tab === "gen") h += `<span><kbd>1</kbd> générer et valider</span><span><kbd>2</kbd> <b>play on the robot</b></span>` +
+      `<span><kbd>3</kbd> repos puis relâcher</span><span><kbd>4</kbd> raidir sur place</span>`;
     if (randomButton(tab)) h += `<span><kbd>0</kbd> tirage aléatoire</span>`;
     if (RANDOM[tab] && window.FOV) h += `<span><kbd>V</kbd> vue ${window.FOV.view() === "observer" ? "observateur" : "robot"}</span>`;
     if (kind && draftReady(kind)) h += `<span><kbd>Entrée</kbd> <b>accepter la prise</b></span>` +
@@ -190,12 +196,12 @@
       return;
     }
     if (tab === "gen") {
-      const g = /^(?:Digit|Numpad)([12])$/.exec(e.code) || /^([12])$/.exec(e.key);
+      const g = /^(?:Digit|Numpad)([1-4])$/.exec(e.code) || /^([1-4])$/.exec(e.key);
       if (!g) return;
       e.preventDefault();
       if (e.repeat) return;
       const btn = document.getElementById(GEN[+g[1] - 1]);
-      if (!btn || btn.disabled) { flash(`${g[1]} : indisponible` + (g[1] === "2" ? " (voir sous le bouton Play)" : "")); return; }
+      if (!btn || btn.disabled) { flash(`${g[1]} : indisponible` + (g[1] === "2" || g[1] === "3" ? " (voir sous le bouton Play)" : "")); return; }
       flash(`${g[1]} · ${GEN_LABEL[+g[1] - 1]}`);
       btn.click();
       return;
