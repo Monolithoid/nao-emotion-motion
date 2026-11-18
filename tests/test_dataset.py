@@ -125,3 +125,72 @@ def test_hand_edited_readme_neither_blocks_import_nor_is_overwritten(tmp_path, s
     r2 = export_dataset(setup["data"], out, setup["conf"])
     assert r2.get("readme_kept") and (out / "README.md").read_text(encoding="utf-8") == "# Mon jeu de données\n"
     assert "## Content" in (out / "README.generated.md").read_text(encoding="utf-8")
+
+
+def test_placeholder_calibration_is_not_reported_missing(tmp_path, setup):
+    """Takes recorded before the first calibration cite joints.yaml's placeholder name, not a file."""
+    out = tmp_path / "export"
+    r = export_dataset(setup["data"], out, setup["conf"])
+    import yaml
+    ph = yaml.safe_load((setup["conf"] / "joints.yaml").read_text(encoding="utf-8"))["calibration"]["version"]
+    assert ph not in r["missing_calibrations"]
+    ok2 = json.loads((out / "takes" / setup["ids"]["ok2"] / "meta.json").read_text())
+    assert ok2["calibration_version"] == ph  # test config: no active calibration
+    assert r["uncalibrated_takes"] == 1 and "before the first calibration" in (out / "README.md").read_text()
+
+
+def test_generator_skipped_without_blocking_the_export(tmp_path, setup):
+    """No usable configuration / calibration / numpy model: dataset exported, generator left out."""
+    out = tmp_path / "export"
+    r = export_dataset(setup["data"], out, setup["conf"], setup["runs"])
+    assert r["takes"] == 2 and r["generator"]["error"]
+    assert not (out / "generator").exists()
+    assert "Ready-to-use" not in (out / "README.md").read_text()
+
+
+def test_generator_included_and_import_still_works(tmp_path, setup, cfg):
+    import shutil
+    from nao_motion.calibration import activate
+    from nao_motion.config import load_config
+    from nao_motion.demo import simulate_calibration
+    from tests.conftest import make_wb
+    from tests.test_gesture_export import _fake_npz, _load_lib
+
+    conf = tmp_path / "full_configs"
+    shutil.copytree(cfg.root, conf)
+    (conf / "calibration" / "ACTIVE").unlink(missing_ok=True)
+    path = simulate_calibration(make_wb(tmp_path / "w", load_config(conf))).save(conf / "calibration" / "gen.yaml")
+    activate(conf, path, allow_simulated=True)
+    c = load_config(conf)
+    runs = tmp_path / "runs2"
+    for k, comp in enumerate(("arms", "head")):
+        _fake_npz(runs / f"{comp}-1" / "model_numpy.npz", c, comp, k)
+        (runs / f"{comp}-1" / "model.pt").write_bytes(b"weights")
+        (runs / f"latest_{comp}.txt").write_text(f"{comp}-1")
+
+    out = tmp_path / "export"
+    r = export_dataset(setup["data"], out, conf, runs)
+    gen = r["generator"]
+    assert "error" not in gen, gen
+    assert gen["models"] == {"arms": "arms-1", "head": "head-1"} and gen["missing"] == ["hands"]
+    assert gen["calibration_version"] == c.calibration_version
+    lib = _load_lib(out / "generator" / "nao_gesture.py")
+    g = lib.GestureGenerator.load(str(out / "generator" / "nao_gesture.json")).generate("joie", 0.7)
+    assert g.joints
+    man = json.loads((out / "dataset.json").read_text())
+    assert "generator/nao_gesture.json" in man["files"] and man["generator"]["models"]["arms"] == "arms-1"
+    card = (out / "README.md").read_text()
+    assert "## Ready-to-use gesture generator" in card and "GestureGenerator.load('generator/nao_gesture.json')" in card
+
+    # re-export with the same models: generator files untouched (no diff in the dataset repository)
+    before = (out / "generator" / "nao_gesture.json").read_bytes()
+    export_dataset(setup["data"], out, conf, runs)
+    assert (out / "generator" / "nao_gesture.json").read_bytes() == before
+
+    # import ignores generator/ and still checks the data files
+    r2 = import_dataset(out, tmp_path / "pc2" / "data", tmp_path / "pc2" / "configs", tmp_path / "pc2" / "runs")
+    assert r2["takes_added"] == 2 and sorted(r2["models_added"]) == ["arms", "head"]
+
+    # --no-generator removes a previous generator/
+    r3 = export_dataset(setup["data"], out, conf, runs, generator=False)
+    assert r3["generator"] is None and not (out / "generator").exists()

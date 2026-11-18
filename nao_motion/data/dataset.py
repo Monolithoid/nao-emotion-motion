@@ -12,6 +12,8 @@ dépôt séparé (GitHub, ou plus tard Hugging Face, qui est aussi un dépôt Gi
     <out>/calibration/*.yaml       calibrations citées par les prises exportées
     <out>/configs/                 emotions.yaml et joints.yaml (lecture des étiquettes et articulations)
     <out>/models/<groupe>/         derniers modèles bras / tête / mains (option)
+    <out>/generator/               nao_gesture.py + nao_gesture.json, the same models ready to use
+                                   (same files as `nao-motion export-generator`, option)
 
 Par défaut, seules les prises ACCEPTÉES, issues du robot réel (pas `synthetic`) et
 complètes (sans le tag `incomplete`) sont exportées. Ré-exporter dans le même
@@ -43,6 +45,7 @@ MANIFEST = "dataset.json"
 COMPONENTS = ("arms", "head", "hands")
 MODEL_FILES = ("model.pt", "model_numpy.npz", "metrics.json", "split.json")
 CONFIG_FILES = ("emotions.yaml", "joints.yaml")
+GENERATOR_DIR = "generator"
 LICENSES = {
     "CC-BY-4.0": ("Creative Commons Attribution 4.0 International",
                   "https://creativecommons.org/licenses/by/4.0/"),
@@ -126,6 +129,32 @@ def _latest_runs(runs_dir: Path) -> Dict[str, Path]:
     return out
 
 
+def _placeholder_version(config_root: Path) -> Optional[str]:
+    """Name written in a take recorded while no calibration was active (joints.yaml
+    `calibration.version`, e.g. placeholder-0): not a calibration file, nothing to export."""
+    try:
+        import yaml
+        return str(yaml.safe_load((config_root / "joints.yaml").read_text(encoding="utf-8"))["calibration"]["version"])
+    except Exception:
+        return None
+
+
+def _export_generator(config_root: Path, runs_dir: Path, out: Path) -> dict:
+    """generator/ = `nao-motion export-generator` built from the same runs as models/ (active
+    model of each group) and the ACTIVE calibration of `config_root` (guardian limits)."""
+    from ..config import load_config
+    from ..gesture_export import ExportError, export_generator
+    runs = _latest_runs(runs_dir)
+    models = {c: (runs[c] / "model_numpy.npz" if c in runs and (runs[c] / "model_numpy.npz").exists() else None)
+              for c in COMPONENTS}
+    if not any(models.values()):
+        raise ExportError("no model_numpy.npz in the active runs (train at least one group)")
+    r = export_generator(load_config(config_root), out, models=models)
+    return {"files": [f"{GENERATOR_DIR}/{Path(r['library']).name}", f"{GENERATOR_DIR}/{Path(r['data']).name}"],
+            "models": r["models"], "missing": r["missing"], "calibration_version": r["calibration_version"],
+            "warnings": r["warnings"]}
+
+
 def _row(m: TakeMeta) -> dict:
     ev = m.event or {}
     return {"take_id": m.take_id, "kind": m.kind, "emotion": m.emotion, "intensity": m.intensity,
@@ -154,8 +183,12 @@ def export_dataset(data_dir, out_dir, config_root=None, runs_dir=None, *, name: 
                    version: Optional[str] = None, license_id: str = "CC-BY-4.0", author: str = "",
                    statuses: Sequence[str] = ("accepted",), include_synthetic: bool = False,
                    include_incomplete: bool = False, strip_notes: bool = False,
-                   kinds: Optional[Iterable[str]] = None) -> dict:
-    """Écrit (ou met à jour) le dossier d'export. Retourne un résumé."""
+                   kinds: Optional[Iterable[str]] = None, generator: bool = True) -> dict:
+    """Écrit (ou met à jour) le dossier d'export. Retourne un résumé.
+
+    generator: also write generator/ (nao_gesture.py + nao_gesture.json) from the exported models,
+    when `runs_dir` is given. If it cannot be built (no active calibration, no numpy model...),
+    the dataset is exported without it and the reason is in the summary (`generator.error`)."""
     from ..config import DEFAULT_CONFIG_DIR
     if license_id not in LICENSES:
         raise DatasetError(f"Licence inconnue : {license_id} (choix : {', '.join(LICENSES)})")
@@ -195,7 +228,9 @@ def export_dataset(data_dir, out_dir, config_root=None, runs_dir=None, *, name: 
 
     # calibrations citées, configuration utile à la lecture
     cals = _calibration_files(config_root)
-    used = sorted({m.calibration_version for m in metas})
+    placeholder = _placeholder_version(config_root)
+    uncalibrated = sum(1 for m in metas if m.calibration_version == placeholder)
+    used = sorted({m.calibration_version for m in metas} - {placeholder})
     missing_cal = [v for v in used if v not in cals]
     for v in used:
         if v in cals:
@@ -215,6 +250,16 @@ def export_dataset(data_dir, out_dir, config_root=None, runs_dir=None, *, name: 
         if d.is_dir() and d.name not in models:
             shutil.rmtree(d)
 
+    # ready-to-use generator built from those same models
+    gen = None
+    if runs_dir is not None and generator and models:
+        try:
+            gen = _export_generator(config_root, Path(runs_dir), out / GENERATOR_DIR)
+        except Exception as e:  # never blocks the dataset export
+            gen = {"error": str(e)}
+    if (gen is None or "error" in gen) and (out / GENERATOR_DIR).exists():
+        shutil.rmtree(out / GENERATOR_DIR)  # no stale generator next to newer models
+
     with open(out / "index.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=INDEX_COLUMNS)
         w.writeheader()
@@ -233,7 +278,8 @@ def export_dataset(data_dir, out_dir, config_root=None, runs_dir=None, *, name: 
         encoding="utf-8")
     filters = {"statuses": list(statuses), "include_synthetic": include_synthetic,
                "include_incomplete": include_incomplete}
-    card = _card(name, version, license_id, author, stats, [v for v in used if v in cals], models, filters)
+    card = _card(name, version, license_id, author, stats, [v for v in used if v in cals], models, filters,
+                 gen if gen and "error" not in gen else None, uncalibrated)
     readme = out / "README.md"
     prev = (json.loads((out / MANIFEST).read_text(encoding="utf-8")).get("files") or {}) \
         if (out / MANIFEST).exists() else {}
@@ -255,14 +301,15 @@ def export_dataset(data_dir, out_dir, config_root=None, runs_dir=None, *, name: 
                             "include_incomplete": include_incomplete, "strip_notes": strip_notes,
                             "kinds": sorted(kinds or COMPONENTS)},
                 "stats": stats, "calibrations": used, "missing_calibrations": missing_cal,
-                "models": models, "files": files}
+                "uncalibrated_takes": uncalibrated, "models": models, "generator": gen, "files": files}
     (out / MANIFEST).write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     summary.update(takes=len(metas), calibrations=len(used) - len(missing_cal), missing_calibrations=missing_cal,
-                   models=sorted(models), out=str(out))
+                   uncalibrated_takes=uncalibrated, models=sorted(models), generator=gen, out=str(out))
     return summary
 
 
-def _card(name, version, license_id, author, stats, calibrations, models, filters) -> str:
+def _card(name, version, license_id, author, stats, calibrations, models, filters, generator=None,
+          uncalibrated=0) -> str:
     kinds_txt = {"arms": "arms guided by hand (head held stiff)",
                  "head": "head guided by hand (arms held stiff)",
                  "hands": "hands driven by the operator from the interface (opening 0..1, not an angle)"}
@@ -310,6 +357,9 @@ def _card(name, version, license_id, author, stats, calibrations, models, filter
         "index.csv                     one row per take",
         "calibration/*.yaml            joint limits measured on the robot (cited by meta.calibration_version)",
         "configs/                      emotions.yaml, joints.yaml",
+        *(["models/<group>/               trained models (PyTorch and numpy)"] if models else []),
+        *(["generator/                    nao_gesture.py + nao_gesture.json: the models, ready to use"]
+          if generator else []),
         "dataset.json                  manifest with sha256 of every file",
         "```", "",
         f"Sample rates: {', '.join(f'{r:g} Hz' for r in stats['sample_rates_hz'])}. "
@@ -322,8 +372,45 @@ def _card(name, version, license_id, author, stats, calibrations, models, filter
         "```", "",
         "To use the takes with the project: `nao-motion import-dataset <this folder>`, then `nao-motion train`.", "",
     ]
+    if generator:
+        g_models = ", ".join(f"{c} (run `{r}`)" for c, r in generator["models"].items())
+        lines += [
+            "## Ready-to-use gesture generator", "",
+            "`generator/` holds the trained models as two files to copy into another project, nothing to install: "
+            "`nao_gesture.py` (generator + safety guardian, Python 2.7 and 3, standard library only: no PyTorch, "
+            "no numpy, runs on the robot's own Python) and `nao_gesture.json` (network weights, settings, "
+            f"guardian limits). Models: {g_models}"
+            + (f"; no model for {', '.join(generator['missing'])} (arms/head held in the start position, "
+               "hands not commanded)" if generator["missing"] else "")
+            + f". Guardian limits: calibration `{generator['calibration_version']}` of the robot the takes were "
+            "recorded on; another NAO should be calibrated and the generator re-exported with the project "
+            "(`nao-motion export-generator`).", "",
+            "```python",
+            "from nao_gesture import GestureGenerator",
+            "gen = GestureGenerator.load('generator/nao_gesture.json')",
+            "print(gen.emotions)",
+            "g = gen.generate('joie', 0.7,                       # emotion (or a mix {'joie': 0.7, 'surprise': 0.3}), intensity 0..1",
+            "                 event={'azimuth_deg': 30, 'elevation_deg': 0, 'distance_m': 1.2},  # optional, torso frame",
+            "                 current_pose=measured_posture)     # {joint: rad}, adds the transitions",
+            "if g.ok:                                            # accepted by the guardian",
+            "    names, angles, times = g.angle_interpolation()",
+            "    motion.angleInterpolation(names, angles, times, True)   # ALMotion, absolute angles",
+            "else:",
+            "    print(g.report.summary())                       # never send a refused gesture",
+            "```", "",
+            "Azimuth is positive to the robot's left, elevation positive up, 0 = straight ahead. Without "
+            "`current_pose`, only the gesture is returned and the robot must be brought to the start position first. "
+            "The library never commands the robot itself. Quick check from a shell: "
+            "`python generator/nao_gesture.py generator/nao_gesture.json joie 0.7 30 0 1.2` "
+            "(exit code 0 accepted, 1 refused). Full documentation: "
+            "[Gesture generator library](https://github.com/Monolithoid/nao-emotion-motion#gesture-generator-library-export-for-another-project).", "",
+        ]
     if calibrations:
         lines += ["## Calibrations", "", *[f"- `{v}`" for v in calibrations], ""]
+    if uncalibrated:
+        lines += [f"{uncalibrated} take(s) were recorded before the first calibration (`calibration_version` "
+                  "is the placeholder name of `configs/joints.yaml`): their positions are measured like the "
+                  "others, only no calibration file goes with them.", ""]
     if models:
         lines += ["## Models", "",
                   "`models/<group>/model.pt` (PyTorch) and `model_numpy.npz` (numpy only), last training of each "

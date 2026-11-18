@@ -358,13 +358,23 @@ def cmd_export_dataset(a):
         r = export_dataset(a.data, a.out, a.config, None if a.no_models else a.runs, name=a.name,
                            version=a.version, license_id=a.license, author=a.author,
                            statuses=tuple(a.status), include_synthetic=a.include_synthetic,
-                           include_incomplete=a.include_incomplete, strip_notes=a.strip_notes)
+                           include_incomplete=a.include_incomplete, strip_notes=a.strip_notes,
+                           generator=not a.no_generator)
     except DatasetError as e:
         raise SystemExit(str(e))
     print(json.dumps(r, indent=1, ensure_ascii=False))
     if r["missing_calibrations"]:
         print("ATTENTION : calibration(s) citée(s) mais absente(s) de configs/calibration/ :",
               ", ".join(r["missing_calibrations"]))
+    if r["uncalibrated_takes"]:
+        print(f"Note: {r['uncalibrated_takes']} take(s) recorded before the first calibration "
+              "(placeholder calibration name, nothing to export for them).")
+    gen = r.get("generator")
+    if gen and gen.get("error"):
+        print(f"Generator NOT included (generator/): {gen['error']}")
+    elif gen:
+        print(f"Generator included: generator/nao_gesture.py + nao_gesture.json, calibration "
+              f"{gen['calibration_version']}" + (f", no model for {', '.join(gen['missing'])}" if gen["missing"] else ""))
     return 0
 
 
@@ -483,6 +493,8 @@ def main(argv=None):
     s.add_argument("--include-incomplete", action="store_true", help="inclure les prises coupées (tag incomplete)")
     s.add_argument("--strip-notes", action="store_true", help="vider les notes libres des prises")
     s.add_argument("--no-models", action="store_true", help="ne pas joindre les derniers modèles")
+    s.add_argument("--no-generator", action="store_true",
+                   help="do not add generator/ (nao_gesture.py + nao_gesture.json built from those models)")
     s.set_defaults(fn=cmd_export_dataset)
     s = sub.add_parser("import-dataset", help="importer un export dans data/ (n'écrase rien)")
     s.add_argument("src", help="dossier d'export (ex. clone du dépôt du jeu de données)")
