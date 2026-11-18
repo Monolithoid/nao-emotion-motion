@@ -344,8 +344,8 @@ async function generate(extra) {
 // ---- Generation tab: play the generated gesture on the robot ----------------------
 let lastGen = null, playing = false;
 // why Play is unavailable right now ("" when it can be pressed)
-function playBlocker() {
-  if (!lastGen) return "Generate a gesture first (key 1).";
+function playBlocker(noGesture = false) {
+  if (!lastGen && !noGesture) return "Generate a gesture first (key 1).";
   if (!STATUS) return "Waiting for the robot status…";
   if (!STATUS.connected) return "Robot not connected (Robot tab).";
   if (!STATUS.armed) return "Motors not armed: tick « moteurs armés » at the top of the page.";
@@ -355,16 +355,26 @@ function playBlocker() {
   if (STATUS.recording && ["countdown", "recording"].includes(STATUS.recording.state)) return "Recording in progress.";
   return "";
 }
+const RELAXED_END = "\nMotors relaxed at the end.";
 function updatePlay() {
   const why = playBlocker(), btn = $("g-play");
   if (!btn) return;
   btn.disabled = !!why;
+  $("g-rest-relax").disabled = !!playBlocker(true);
+  $("g-hold").disabled = !(STATUS && STATUS.connected) || STATUS.controller === "executing";
   const p = STATUS && STATUS.play;
   let txt = why;
-  if (p && lastGen && p.plan_id === lastGen.plan_id) {
+  if (p && p.kind === "rest") {
+    txt = (p.state === "playing" ? `↓ Going back to rest (${(+p.duration_s).toFixed(1)} s), then relaxing…` :
+      p.state === "done" ? "✓ At rest, motors relaxed." :
+      p.state === "relaxed" ? "Relaxed during the return to rest (the motion ended there)." :
+      p.state === "stopped" ? "■ Stopped: posture held." :
+      `✗ ${p.error}`) + (playBlocker(true) && p.state !== "playing" ? "\n" + playBlocker(true) : "");
+  } else if (p && lastGen && p.plan_id === lastGen.plan_id) {
     const from = p.start === "rest" ? "from rest" : "from the current posture";
     txt = (p.state === "playing" ? `▶ Playing ${from} (${(+p.duration_s).toFixed(1)} s)…` :
-      p.state === "done" ? `✓ Played ${from} (${(+p.duration_s).toFixed(1)} s).` :
+      p.state === "done" ? `✓ Played ${from} (${(+p.duration_s).toFixed(1)} s).` + (p.relaxed_end ? RELAXED_END : "") :
+      p.state === "relaxed" ? "Relaxed during the play (the motion ended there)." :
       p.state === "stopped" ? "■ Stopped: posture held." :
       p.state === "refused" ? `✗ ${p.error}` : `✗ Error: ${p.error}`) + (why && p.state !== "playing" ? "\n" + why : "");
     if (p.warnings && p.warnings.length) txt += "\n⚠ tracking (tolerated): " + p.warnings.join(" ; ");
@@ -379,7 +389,7 @@ async function play() {
   playing = true; $("g-play").disabled = true;
   try {
     const r = await api("play", {plan_id: lastPlan, start: $("g-start").value, end: $("g-end").value,
-      guardian: !$("g-noguard").checked}, {quiet: true});
+      guardian: !$("g-noguard").checked, relax_end: $("g-relax-end").checked}, {quiet: true});
     STATUS.play = {state: "playing", plan_id: lastPlan, start: r.start, end: r.end, duration_s: r.duration_s,
       guardian: r.guardian, notes: r.notes, guardian_would: r.guardian ? null : {ok: r.cycle.report.ok}};
     const c = r.cycle, tr = c && lastGen && (lastGen.played || lastGen.generated.trajectory);
@@ -390,6 +400,19 @@ async function play() {
   } catch (e) {
     $("g-play-why").textContent = "✗ " + e.message;
     playing = false; return;
+  }
+  playing = false; updatePlay();
+}
+
+// Generation tab, key 3: motorised return to rest from the measured posture, then every motor relaxed
+async function restRelax() {
+  if (playBlocker(true)) { updatePlay(); return; }
+  playing = true; $("g-rest-relax").disabled = true;
+  try {
+    const r = await api("rest_relax", {}, {quiet: true});
+    STATUS.play = {state: "playing", kind: "rest", duration_s: r.duration_s};
+  } catch (e) {
+    $("g-play-why").textContent = "✗ " + e.message;
   }
   playing = false; updatePlay();
 }
@@ -462,6 +485,10 @@ async function init() {
   $("g-temp").placeholder = (CFG.cvae || {}).temperature ?? 1;
   // no confirmation (operator preference): the permanent warning #g-alert replaces it
   $("g-play").onclick = play;
+  $("g-rest-relax").onclick = restRelax;
+  $("g-hold").onclick = () => api("hold", {}).then(refreshStatus);
+  // relaxing is always possible, also mid-gesture (the motion ends there): same as Space
+  $("g-relax").onclick = () => api("relax", {groups: ["head", "left_arm", "right_arm", "hands"], confirm: true}).then(refreshStatus);
   $("g-diag-go").onclick = async () => {
     $("g-diag-out").textContent = "Running…";
     const d = await api("guardian/diagnose", {project_zone: $("g-project").checked}).catch((e) => ({error: e.message}));

@@ -412,6 +412,9 @@
     <span class="g-actions">
       <button id="g-go" title="Key 1">1 Générer et valider</button>
       <button id="g-play" disabled title="Plays the last generated gesture (key 2); options and warnings below the curves">2 ▶ Play on the robot</button>
+      <button id="g-rest-relax" disabled title="Retour motorisé au repos depuis la posture mesurée, puis relâchement de tous les moteurs (touche 3). Moteurs armés requis, sans confirmation.">3 Repos puis relâcher</button>
+      <button id="g-hold" title="Raidit tous les moteurs (bras, tête, mains) sur leur posture mesurée, sans déplacement (touche 4)">4 Raidir sur place</button>
+      <button id="g-relax" class="bad" title="Relâche tous les moteurs (bras, tête, mains), à tout moment, même pendant Play : le mouvement s'arrête là (touche Espace). Tenir les bras.">Espace Relâcher</button>
     </span>
   </div>
   <details open><summary>Événement</summary><div id="g-fov"></div></details>
@@ -429,6 +432,7 @@
         <option value="rest" selected>back to rest</option>
         <option value="start">stay in the start pose</option>
       </select></label>
+      <label title="Une fois le cycle terminé normalement, les moteurs du geste sont relâchés (raideur nulle). Avec « stay in the start pose », les bras tombent : les tenir."><input type="checkbox" id="g-relax-end" checked> relax the motors at the end</label>
       <label class="g-noguard"><input type="checkbox" id="g-noguard"> Guardian off (test, at my own risk)</label>
     </div>
     <div class="alert hidden" id="g-noguard-alert"><b>GUARDIAN OFF.</b> <i>Play</i> sends the <b>raw</b> model
@@ -440,8 +444,11 @@
     <div class="alert" id="g-alert"><b>Warning:</b> <kbd>2</kbd> / <i>Play</i> sends the gesture to the robot
       <b>without confirmation</b> as soon as motors are armed: the cycle (posture → start → gesture → start → rest)
       is planned from the measured posture, made playable, then checked whole by the guardian (factory limits =
-      absolute ceiling); if refused, nothing is sent. Keep the area clear. <b>Stop</b> (top of the page) halts and
-      holds the posture.</div>
+      absolute ceiling); if refused, nothing is sent. Only the motors of the gesture are stiffened (in place, just
+      before the first command) and, with <i>relax the motors at the end</i>, relaxed once the cycle is over.
+      <kbd>Espace</kbd> relaxes every motor at any time, even mid-gesture (the motion ends there: hold the arms).
+      <kbd>3</kbd> goes back to rest then relaxes, <kbd>4</kbd> stiffens in place. Keep the area clear.
+      <b>Stop</b> (top of the page) halts and holds the posture.</div>
   </fieldset>
   <details class="g-latent" id="g-latent"><summary>Espace latent (CVAE) : carte des z et balayage</summary>
     <div class="row">

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import enum
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
@@ -98,6 +99,9 @@ class Controller:
         # keeps the measured posture stiff
         self.tracking_stop_action = str(ex.get("tracking_stop_action", "relax"))
         self.events: List[str] = []
+        # set by relax() when the operator relaxes motors during a play: the play ends cleanly
+        # ("relaxed"), it is neither a fault nor a held posture
+        self._relax_stop = False
 
     def _log(self, msg):
         self.events.append(msg)
@@ -353,6 +357,7 @@ class Controller:
             elif not plan.report.ok:
                 raise GuardianRejection(plan.report)
             self._stop.clear()
+            self._relax_stop = False
             self.state = State.EXECUTING
         joints = plan.traj.joints
         try:
@@ -400,13 +405,19 @@ class Controller:
             self.last_error = str(e)
             raise
         except Exception as e:
+            if self._relax_stop:  # a command reached a joint the operator had just relaxed
+                self.state = State.IDLE
+                return "relaxed"
             self.last_error = f"Erreur pendant l'exécution : {e}"
             self._safe_hold()
             self.state = State.FAULT
             self.armed = False
             self._log(self.last_error)
             raise
-        if result == "stopped":
+        if result == "stopped" and self._relax_stop:
+            result = "relaxed"  # the operator relaxed motors: nothing to hold, no fault
+            self.state = State.IDLE
+        elif result == "stopped":
             self.state = State.HOLDING
         else:
             self.state = State.IDLE
@@ -488,9 +499,22 @@ class Controller:
 
     def hold(self, joints):
         """Raidit des articulations sur leur posture mesurée (aucun déplacement commandé)."""
+        if self.state == State.EXECUTING:
+            raise ControllerError("Mouvement en cours : Stop (posture maintenue) ou relâcher")
         self.adapter.set_roles(driven=list(joints))
 
     def relax(self, joints, confirm: bool = False):
         if not confirm:
             raise ControllerError("Relâchement : confirmation explicite requise (les bras peuvent tomber)")
-        self.adapter.relax(list(joints))
+        joints = list(joints)
+        if self.state == State.EXECUTING:
+            # relaxing is always allowed, also during a play: the play is ended first (its last
+            # command is the measured posture), then the motors are cut
+            self._relax_stop = True
+            self._stop.set()
+            deadline = time.monotonic() + 1.0
+            while self.state == State.EXECUTING and time.monotonic() < deadline:
+                time.sleep(0.005)
+            self._log("relâchement demandé pendant un mouvement : mouvement interrompu")
+        self.adapter.relax(joints)
+        self._log(f"relâché : {', '.join(joints)}")
