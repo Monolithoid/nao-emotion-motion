@@ -46,6 +46,7 @@ class Api:
                 "countdown_s": c.robot.get("recording", {}).get("countdown_s", 3),
                 "project_control_points": bool((c.robot.get("execution") or {}).get("project_control_points", True)),
                 "model": {k: c.model.get(k) for k in ("arm_model", "head_model", "hands_model", "training", "representation")},
+                "cvae": __import__("nao_motion.training", fromlist=["cvae_settings"]).cvae_settings(c),
                 # network tab: what goes in and out of each group's MLP
                 "net": {"joints": {"arms": c.arm_joints, "head": c.head_joints, "hands": c.hand_joints},
                         "event_features": ["présent", "sin az", "cos az", "élévation", "distance connue", "proximité"]}}
@@ -287,11 +288,94 @@ class Api:
                              overrides=d.get("overrides"))
 
     def post_generate(self, d):
+        """CVAE models: `temperature` (0 = central gesture), `latent` {group: z}, `event` (dict,
+        replaces the current event, e.g. to play a take of the z map with its own event)."""
         emotion = d.get("mix") or d["emotion"]
+        temp = d.get("temperature")
         out = self.wb.generate(emotion, float(d["intensity"]), bool(d.get("use_event", True)),
                                float(d.get("variation", 0)), d.get("seed"),
-                               project_zone=d.get("project_zone"))
+                               project_zone=d.get("project_zone"),
+                               temperature=None if temp in (None, "") else float(temp),
+                               latent=d.get("latent") or None, event=d.get("event") or None)
         return out
+
+    # CVAE: map of the takes' z and sweep of one z dimension (read only, nothing moves) ----------
+    def _cvae_model(self, comp):
+        from ..models.nets import is_cvae
+        if comp not in ("arms", "head", "hands"):
+            raise ValueError(f"groupe inconnu : {comp}")
+        eng = self.wb.get_engine()
+        model = eng.model_of(comp) if hasattr(eng, "model_of") else None
+        if model is None:
+            return eng, None, f"Aucun modèle actif pour ce groupe ({comp})"
+        if not is_cvae(model):
+            return eng, None, ("Le modèle actif de ce groupe n'est pas un CVAE : l'entraîner avec le mode CVAE "
+                               "(onglet Réseau) pour avoir une carte des z")
+        return eng, model, None
+
+    def get_latent(self, q):
+        """z codes of the takes of the active CVAE model, with their 2D PCA projection."""
+        from ..data.trash import active_runs
+        comp = q.get("component", "arms")
+        eng, model, why = self._cvae_model(comp)
+        if model is None:
+            return {"available": False, "component": comp, "reason": why}
+        lat = (model.meta or {}).get("latent")
+        if not lat:
+            return {"available": False, "component": comp, "reason": "Carte des z absente du modèle"}
+        mt = (model.meta or {}).get("metrics") or {}
+        events = []
+        for tid in lat.get("take_ids") or []:  # each take's own event, to play it back
+            try:
+                events.append(self.wb.store.load_meta(tid).event)
+            except Exception:
+                events.append(None)
+        return {"available": True, "events": events, "component": comp, "run": active_runs(self.wb.runs_dir).get(comp),
+                "temperature": eng.default_temperature(), **lat,
+                "z_var_per_dim": mt.get("z_var_per_dim"), "z_kl_per_dim": mt.get("z_kl_per_dim"),
+                "z_active": mt.get("z_active")}
+
+    def post_latent_sweep(self, d):
+        """Curves of one group when ONE z dimension goes from -range to +range (the others fixed
+        at `z`, default 0), for a consigne. Read only: no guardian, nothing is sent."""
+        from ..data.representation import bspline_basis
+        from ..engine import model_k
+        from ..events import EventContext
+        comp = d.get("component", "arms")
+        eng, model, why = self._cvae_model(comp)
+        if model is None:
+            raise ValueError(why)
+        D = int(model.arch["latent_dim"])
+        dim = int(d.get("dim", 0))
+        if not 0 <= dim < D:
+            raise ValueError(f"dimension de z hors de [0, {D - 1}]")
+        base = np.zeros(D) if d.get("z") is None else np.asarray(d["z"], dtype=float).ravel()
+        if base.shape != (D,):
+            raise ValueError(f"z attendu de dimension {D}")
+        rng = float(d.get("range", 2.0))
+        n = int(np.clip(int(d.get("steps", 5)), 2, 11))
+        values = np.linspace(-rng, rng, n)
+        if d.get("event"):
+            ev = EventContext.from_dict(d["event"])
+        else:
+            ev = self.wb.current_event() if d.get("use_event", True) else EventContext.none()
+        emotion = d.get("mix") or d["emotion"]
+        norm = {"arms": eng.arm_norm, "head": eng.head_norm, "hands": eng.hand_norm}[comp]
+        K = model_k(model, eng.K)
+        u = np.linspace(0, 1, 100)
+        Bm = bspline_basis(K, u)
+        curves, durs = [], []
+        for v in values:
+            z = base.copy()
+            z[dim] = v
+            ctrl_n, dur = eng._plan(model, emotion, float(d["intensity"]), ev, 0.0, None, z)
+            curves.append(np.round(Bm @ norm.inv(ctrl_n), 4))
+            durs.append(round(dur, 3))
+        C = np.stack(curves)  # (n, 100, J)
+        spread = np.sqrt(((C - C.mean(axis=0)) ** 2).mean(axis=(0, 1)))
+        return {"component": comp, "dim": dim, "values": np.round(values, 3).tolist(), "z": base.tolist(),
+                "joints": list(norm.joints), "phase": np.round(u, 3).tolist(), "durations": durs,
+                "curves": C.tolist(), "spread_per_joint": np.round(spread, 4).tolist()}
 
     def post_request(self, d):
         """Point d'entrée pour un LLM extérieur : émotion + intensité -> proposition

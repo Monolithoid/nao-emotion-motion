@@ -330,6 +330,14 @@
         <label title="Pénalité sur la courbure des points de contrôle : aplatit les battements et les pics rapides, d'autant plus qu'il y a peu de points. 0 = aucune (la courbe est déjà lisse par construction).">Lissage <input type="number" id="tr-smooth" step="0.01" min="0" class="num"></label>
         <label title="Validation croisée : les prises sont réparties en N parts (par prise) ; N modèles sont entraînés, chacun validé sur la part qu'il n'a jamais vue, donc chaque prise sert une fois de validation. Le modèle gardé est ensuite réentraîné sur TOUTES les prises, pendant le nombre moyen d'époques trouvé par les parts. Entraînement environ N + 1 fois plus long. 0 ou 1 = ancien découpage unique 75/25.">Validation croisée
           <span><input type="number" id="tr-folds" step="1" min="0" max="20" class="num"> parts (0 ou 1 = découpage unique 75/25)</span></label>
+        <label title="CVAE mode: the MLP becomes a decoder that also receives a latent code z, and a small encoder reads each take to give its z. The same consigne can then give several whole gestures (one per z) instead of their mean. Unticked = the plain MLP, unchanged. Default: configs/model.yaml, section cvae.">Mode CVAE <span><input type="checkbox" id="tr-cvae"> code latent z (plusieurs gestes par consigne)</span></label>
+        <div id="tr-cvae-fields" class="net-fields-sub">
+          <label title="Taille de z : combien de « façons de faire » indépendantes le modèle peut distinguer. 2 à 8 ; 4 par défaut. Les dimensions inutiles sont ignorées (voir « dimensions de z actives » dans Entraînement).">Dimension de z <input type="number" id="tr-zdim" step="1" min="1" max="16" class="num"></label>
+          <label title="Poids du terme KL qui rapproche les codes z d'une loi normale. Plus haut = carte des z plus régulière et tirages plus sûrs, mais moins de dimensions utilisées et reconstruction moins fidèle. Plus bas = reconstruction fidèle, tirages au hasard moins fiables.">β (KL) <input type="number" id="tr-beta" step="0.005" min="0" class="num"></label>
+          <label title="Nombre d'époques pendant lesquelles β monte de 0 à sa valeur. La meilleure époque n'est cherchée qu'après.">Montée de β <span><input type="number" id="tr-warmup" step="50" min="0" class="num"> époques</span></label>
+          <label title="Couches cachées de l'encodeur (il lit la prise pour donner son z ; sert à l'entraînement et à la carte des z, pas à la génération).">Encodeur <input id="tr-enc" class="num" style="width:8em"></label>
+          <p class="hint">En mode CVAE, l'énergie du mouvement est mise à 0 (sauf si le champ ci-dessus est rempli) : l'amplitude vient de z.</p>
+        </div>
         <label title="Adds, in memory only, the left/right mirror of every training take WITHOUT an event (takes with an event are never mirrored). Mirrors that leave the factory limits or go beyond the calibrated zone more than the original are dropped. Validation uses real takes only.">Miroir <span><input type="checkbox" id="tr-mirror"> gauche/droite des prises sans événement</span></label>
       </div>
       <div class="row">
@@ -397,6 +405,7 @@
     <label>part <input type="range" id="g-mix" min="0" max="1" step="0.05" value="0.5"></label>
     <label>Intensité <input type="range" id="g-intensity" min="0" max="1" step="0.05" value="0.7"> <span id="g-int-val"></span></label>
     <label>Variation <input type="number" id="g-var" value="0" step="0.02" min="0" class="num"></label>
+    <label title="CVAE models only: z is drawn from N(0, T²). 0 = central gesture (always the same), 1 = as varied as the takes, above 1 = bolder, less sure. No effect on a plain MLP.">Température <input type="number" id="g-temp" step="0.1" min="0" max="3" class="num"></label>
     <label><input type="checkbox" id="g-event" checked> utiliser l'événement</label>
     <label title="Control points of the MLP output that fall outside the guardian zone are moved to the nearest point inside (shortest translation). The curve then stays in the zone; speed is still adapted. Also applies with the guardian off."><input type="checkbox" id="g-project" checked> project control points into the zone</label>
     <button id="g-random" title="Tire émotion, intensité, angle et distance au hasard (touche 0)">Tirage aléatoire</button>
@@ -434,6 +443,34 @@
       absolute ceiling); if refused, nothing is sent. Keep the area clear. <b>Stop</b> (top of the page) halts and
       holds the posture.</div>
   </fieldset>
+  <details class="g-latent" id="g-latent"><summary>Espace latent (CVAE) : carte des z et balayage</summary>
+    <div class="row">
+      <span role="group" aria-label="Groupe"><button data-lat-group="arms" class="sel">Bras</button><button data-lat-group="head">Tête</button><button data-lat-group="hands">Mains</button></span>
+      <button id="lat-reload" title="Relit le modèle actif du groupe">Recharger</button>
+      <span id="lat-info" class="legend"></span>
+    </div>
+    <div class="lat-grid">
+      <figure>
+        <figcaption>Carte des z (2 axes principaux, ACP) : un point = une prise. <b>Clic sur un point</b> : rejouer la prise (son z, sa consigne). <b>Clic ailleurs</b> : nouveau geste depuis ce z avec la consigne ci-dessus.</figcaption>
+        <div id="lat-map"></div>
+        <div id="lat-legend" class="legend"></div>
+      </figure>
+      <figure>
+        <figcaption>Balayage d'une dimension de z, consigne ci-dessus, autres dimensions au point choisi (0 par défaut)</figcaption>
+        <div class="row">
+          <label>Dimension <select id="lat-dim"></select></label>
+          <label>de −<input type="number" id="lat-range" value="2" step="0.5" min="0.5" max="4" class="num"> à +</label>
+          <label><input type="number" id="lat-steps" value="5" step="1" min="2" max="11" class="num"> courbes</label>
+          <button id="lat-sweep">Balayer</button>
+          <span id="lat-base" class="legend"></span>
+        </div>
+        <div id="lat-sweep-out"></div>
+      </figure>
+    </div>
+    <div id="lat-pick" class="mono"></div>
+    <p class="hint">Lecture seule : la carte et le balayage ne commandent rien. « Rejouer » et « nouveau geste » passent par
+      <i>Générer et valider</i> comme d'habitude (courbes et guardian ci-dessus, <i>Play</i> reste une action explicite).</p>
+  </details>
   <details class="g-diag"><summary>Why does the guardian refuse or slow down? (diagnosis)</summary>
     <p class="hint">Generates every emotion at intensities 0.3 / 0.6 / 0.9 (no event) with your models and
       calibration, and counts what the guardian refuses: raw gesture, gesture made playable, and the whole
@@ -574,5 +611,6 @@
 <script src="shortcuts.js"></script>
 <script src="coverage.js"></script>
 <script src="mlp.js"></script>
+<script src="latent.js"></script>
 </body>
 </html>

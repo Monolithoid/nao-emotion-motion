@@ -9,9 +9,15 @@ Chacun s'entraîne seul ; le moteur combine leurs sorties en un geste unique.
 Référence déterministe : une régression par moindres carrés produit la MOYENNE
 des gestes portant la même étiquette. Si « joie » a été démontrée de deux
 façons différentes, le modèle peut générer un geste intermédiaire qui n'a été
-montré nulle part. Évolution prévue sans changer l'interface : `latent_dim > 0`
-ajoute une entrée latente z (nulle par défaut) qui permettra un CVAE ou un
-mélange de prototypes ; le premier prototype garde latent_dim = 0.
+montré nulle part.
+
+Mode CVAE (model.yaml `cvae.enabled`, désactivé par défaut) : le MLP ci-dessus
+devient le DÉCODEUR et reçoit en plus un code latent z (`latent_dim`). Un petit
+ENCODEUR (sous-module `encoder`, utilisé seulement à l'entraînement et pour la
+carte des z) lit la prise (consigne + points de contrôle + log durée) et donne
+la loi de son z. À la génération, z est tiré d'une loi normale N(0, T²) (T =
+température ; T = 0 donne le geste central z = 0). Sans CVAE (latent_dim = 0),
+le réseau est exactement le MLP d'avant.
 """
 from __future__ import annotations
 
@@ -38,8 +44,28 @@ class CheckpointError(RuntimeError):
     pass
 
 
+class Encoder(nn.Module):
+    """CVAE encoder q(z | consigne, prise): [X, control points, log duration] -> (mu, logvar)."""
+
+    def __init__(self, in_dim: int, latent_dim: int, hidden: List[int]):
+        super().__init__()
+        layers, d = [], in_dim
+        for h in hidden:
+            layers += [nn.Linear(d, h), nn.Tanh()]
+            d = h
+        layers.append(nn.Linear(d, 2 * latent_dim))
+        self.net = nn.Sequential(*layers)
+        self.latent_dim = latent_dim
+
+    def forward(self, x, y, log_dur):
+        h = self.net(torch.cat([x, y, log_dur.reshape(-1, 1)], dim=-1))
+        mu, logvar = h[:, : self.latent_dim], h[:, self.latent_dim:]
+        return mu, logvar.clamp(-10.0, 5.0)
+
+
 class MLP(nn.Module):
-    def __init__(self, in_dim: int, out_dim: int, hidden: List[int], dropout: float = 0.0, latent_dim: int = 0):
+    def __init__(self, in_dim: int, out_dim: int, hidden: List[int], dropout: float = 0.0, latent_dim: int = 0,
+                 encoder_hidden: Optional[List[int]] = None):
         super().__init__()
         self.in_dim, self.out_dim, self.latent_dim = in_dim, out_dim, latent_dim
         layers, d = [], in_dim + latent_dim
@@ -50,6 +76,9 @@ class MLP(nn.Module):
             d = h
         layers.append(nn.Linear(d, out_dim))
         self.net = nn.Sequential(*layers)
+        # CVAE: encoder reading [X, Y (out_dim - 1 control points), log duration]
+        self.encoder = Encoder(in_dim + out_dim, latent_dim, list(encoder_hidden)) \
+            if latent_dim and encoder_hidden is not None else None
 
     def forward(self, x, z=None):
         if self.latent_dim:
@@ -60,7 +89,14 @@ class MLP(nn.Module):
 
 
 def build(arch: dict) -> MLP:
-    return MLP(arch["in_dim"], arch["out_dim"], arch["hidden"], arch.get("dropout", 0.0), arch.get("latent_dim", 0))
+    cv = arch.get("cvae") or {}
+    return MLP(arch["in_dim"], arch["out_dim"], arch["hidden"], arch.get("dropout", 0.0), arch.get("latent_dim", 0),
+               cv.get("encoder_hidden") if cv else None)
+
+
+def is_cvae(model) -> bool:
+    """True for a CVAE model (torch or numpy): it takes a latent z besides the consigne."""
+    return bool((getattr(model, "arch", None) or {}).get("latent_dim", 0))
 
 
 def save_checkpoint(path, model: MLP, *, component: str, arch: dict, meta: dict):
@@ -131,9 +167,10 @@ class LoadedModel:
                                  f"config {cfg.calibration_version}")
 
     @torch.no_grad()
-    def predict(self, x: np.ndarray) -> np.ndarray:
+    def predict(self, x: np.ndarray, z: Optional[np.ndarray] = None) -> np.ndarray:
         t = torch.as_tensor(np.atleast_2d(x), dtype=torch.float32)
-        return self.model(t).numpy().astype(np.float64)
+        zt = None if z is None else torch.as_tensor(np.atleast_2d(z), dtype=torch.float32)
+        return self.model(t, zt).numpy().astype(np.float64)
 
     def export_numpy(self, path):
         """Export léger (numpy seul) pour une inférence sans PyTorch."""
@@ -165,10 +202,12 @@ class NumpyModel:
         if cfg is not None:
             LoadedModel.check_compat(self, cfg)
 
-    def predict(self, x: np.ndarray) -> np.ndarray:
+    def predict(self, x: np.ndarray, z: Optional[np.ndarray] = None) -> np.ndarray:
         h = np.atleast_2d(np.asarray(x, dtype=np.float64))
         if self.arch.get("latent_dim", 0):
-            h = np.concatenate([h, np.zeros((h.shape[0], self.arch["latent_dim"]))], axis=1)
+            zz = np.zeros((h.shape[0], self.arch["latent_dim"])) if z is None else \
+                np.broadcast_to(np.atleast_2d(np.asarray(z, dtype=np.float64)), (h.shape[0], self.arch["latent_dim"]))
+            h = np.concatenate([h, zz], axis=1)
         for i, (W, b) in enumerate(zip(self.W, self.b)):
             h = h @ W.T + b
             if i < len(self.W) - 1:

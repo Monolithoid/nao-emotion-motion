@@ -35,3 +35,15 @@ training:
   duration_weight: 0.05     # poids de l erreur sur log(durée)
   mirror: true              # add left/right mirrors of the training takes WITHOUT an event (in memory only;
                             # validation stays on real takes ; unfeasible mirrors are dropped, see data/mirror.py)
+cvae:                       # CVAE mode: the MLP above becomes a DECODER that also receives a latent code z,
+                            # and a small encoder reads each take to give its z. One consigne (emotion,
+                            # intensity, event) can then give several whole gestures instead of their mean.
+                            # Off = the plain MLP, unchanged. Per training: Network tab or --cvae
+  enabled: false
+  latent_dim: 4             # size of z: how many independent "ways of doing" the model can tell apart
+  beta: 0.003               # weight of the KL term (pulls the z codes towards N(0, 1)); higher = smoother
+                            # map but fewer z dimensions used, lower = sharper reconstruction
+  kl_warmup: 200            # epochs over which beta grows from 0; the best epoch is looked for after them
+  encoder_hidden: [64]      # hidden layers of the encoder (used for training and for the z map only)
+  temperature: 1.0          # generation: z drawn from N(0, T²). 0 = central gesture (z = 0), 1 = as varied
+                            # as the takes. Generation tab field

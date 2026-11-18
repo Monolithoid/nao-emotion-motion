@@ -571,10 +571,15 @@ class Workbench:
         return self.engine
 
     def generate(self, emotion, intensity, use_event=True, variation=0.0, seed=None, plan_cycle=True,
-                 project_zone=None) -> dict:
-        """Génère et valide ; ne bouge rien. Retourne un plan identifié pour exécution explicite."""
+                 project_zone=None, temperature=None, latent=None, event=None) -> dict:
+        """Génère et valide ; ne bouge rien. Retourne un plan identifié pour exécution explicite.
+        CVAE : `temperature` (0 = geste central), `latent` {groupe: z} ; `event` (dict) remplace
+        l'événement courant (ex. rejouer une prise de la carte des z avec son propre événement)."""
         eng = self.get_engine()
-        ev = self.current_event() if use_event else EventContext.none()
+        if event is not None:
+            ev = EventContext.from_dict(event)
+        else:
+            ev = self.current_event() if use_event else EventContext.none()
         head_now = hands_now = None
         try:
             if self.adapter.is_connected():
@@ -584,8 +589,11 @@ class Workbench:
             head_now = hands_now = None
         if project_zone is None:
             project_zone = bool(self.cfg.robot.get("execution", {}).get("project_control_points", True))
+        kw = {}
+        if temperature is not None or latent:
+            kw = {"temperature": None if temperature is None else float(temperature), "latent": latent or None}
         gen = eng.generate(emotion, intensity, ev, head_now, variation, seed, hands_current=hands_now,
-                           project_zone=project_zone)
+                           project_zone=project_zone, **kw)
         played, adapt = self.playable(gen.combined)
         out = {"generated": gen.to_dict(), "motion_report": self.guardian.validate(played).to_dict()}
         if adapt is not None:
