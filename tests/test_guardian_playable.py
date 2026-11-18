@@ -256,3 +256,56 @@ def test_make_playable_leaves_joints_inside_the_zone_untouched(cfg):
     q[:, r] = q[0, r] + (rhi - 0.01 - q[0, r]) * bump  # close to its edge, but inside
     a = make_playable(cfg, Trajectory(raw.joints, raw.t, q))
     assert a.joints_changed == [j]
+
+
+def test_speeds_of_the_takes_never_lower_the_factory_speeds(cfg):
+    """Slow takes once gave LShoulderRoll 1.65 rad/s against a factory speed of 7.19: the takes
+    themselves were then refused. Takes may only raise a limit."""
+    import copy
+    from nao_motion.config import _factory_velocity_limits
+    c = copy.deepcopy(cfg)
+    g = c.guardian
+    before_v, before_a = g.velocity_limit("LShoulderRoll"), g.acceleration_limit("LShoulderRoll")
+
+    class Cal:
+        version = "t"
+        kinematics = {"velocity_rad_s": {"LShoulderRoll": 1.65, "LElbowYaw": 99.0},
+                      "acceleration_rad_s2": {"LShoulderRoll": 15.7, "LElbowYaw": 77.0}}
+    _factory_velocity_limits(g, c.raw["guardian"], c.robot, list(c.limits), Cal())
+    assert g.velocity_limit("LShoulderRoll") == before_v and g.acceleration_limit("LShoulderRoll") == before_a
+    assert g.acceleration_limit("LElbowYaw") == 77.0  # faster takes raise it (velocity: setAngles ceiling)
+
+
+def test_transition_into_a_fast_gesture_stays_in_the_zone():
+    """A gesture entered at speed: the old search lengthened the quintic from the global default
+    speed (1.2 rad/s), and the long transition overshot out of the calibrated zone (most cycles
+    refused on start -> gesture). Per-joint caps and the shortest transition that stays inside."""
+    from nao_motion.control.transitions import boundary_derivatives, quintic_matched
+    from pathlib import Path
+    c = load_config(calibration_file=Path(__file__).resolve().parents[1] / "configs" / "calibration" / "nao-20261104-183718.yaml")
+    g = c.guardian
+    for j in c.arm_joints:
+        g.per_joint_velocity_rad_s[j], g.per_joint_acceleration[j] = 5.0, 60.0
+    G = Guardian(c)
+    js = c.arm_joints
+    start = np.array(c.pose("start", js))
+    vl = np.array([g.velocity_limit(j) for j in js]) * 0.8
+    al = np.array([g.acceleration_limit(j) for j in js]) * 0.8
+
+    def in_zone(s):
+        return not any(v.code in ("limit", "coupled") for v in G.validate(s, check_duration=False).violations)
+    rng = np.random.default_rng(0)
+    bad_old = bad_new = 0
+    for _ in range(20):
+        t = np.linspace(0, 3, 151)
+        q = start + rng.uniform(-0.4, 0.4, len(js)) + rng.uniform(0, 0.4, len(js)) * np.sin(
+            rng.uniform(4, 10, len(js)) * t[:, None] + rng.uniform(0, 6.28, len(js)))
+        tr = make_playable(c, Trajectory(js, t, q)).traj
+        v0, a0 = boundary_derivatives(tr)
+        z = np.zeros(len(js))
+        old = quintic_matched(start, z, z, tr.q[0], v0, a0, js, g.max_velocity_rad_s * 0.8, g.max_acceleration_rad_s2 * 0.8)
+        new = quintic_matched(start, z, z, tr.q[0], v0, a0, js, vl, al, accept=in_zone)
+        bad_old += not in_zone(old)
+        bad_new += not in_zone(new)
+        assert np.allclose(new.q[-1], tr.q[0]) and np.allclose(new.q[0], start)
+    assert bad_new <= 4 < bad_old

@@ -169,33 +169,41 @@ def _min_jerk(q0, q1, v_max, a_max, rate_hz=50.0, min_duration=0.4):
     return _traj([x * T for x in s], rows)
 
 
-def _quintic(q0, v0, a0, q1, v1, a1, v_max, a_max, rate_hz=50.0, min_duration=0.4, max_duration=6.0):
-    """Transition matched in position, velocity and acceleration at both ends. When no duration
-    keeps velocity and acceleration under the caps, the acceleration match is dropped (position
-    and velocity stay continuous) and the least bad of the two is kept. Same as
+def _quintic(q0, v0, a0, q1, v1, a1, v_max, a_max, rate_hz=50.0, min_duration=0.4, max_duration=6.0,
+             accept=None):
+    """Transition matched in position, velocity and acceleration at both ends. v_max / a_max:
+    one cap per joint. Among the durations within the caps, the shortest one that `accept`
+    approves (else the shortest); when none is within the caps, the acceleration match is
+    dropped, and failing that the least bad is kept. Same as
     nao_motion.control.transitions.quintic_matched."""
-    best, score = _quintic_search(q0, v0, a0, q1, v1, a1, v_max, a_max, rate_hz, min_duration, max_duration)
-    if score > 1.0:
-        z = [0.0] * len(q0)
-        alt, s2 = _quintic_search(q0, v0, z, q1, v1, z, v_max, a_max, rate_hz, min_duration, max_duration)
-        if s2 < score:
-            return alt
-    return best
+    z = [0.0] * len(q0)
+    leasts = []
+    for a_s, a_e in ((a0, a1), (z, z)):
+        cands, least = _quintic_candidates(q0, v0, a_s, q1, v1, a_e, v_max, a_max, rate_hz,
+                                           min_duration, max_duration)
+        if cands:
+            if accept is not None:
+                for c in cands:
+                    if accept(c):
+                        return c
+            return cands[0]
+        leasts.append(least)
+    return min(leasts, key=lambda x: x[1])[0]
 
 
-def _quintic_search(q0, v0, a0, q1, v1, a1, v_max, a_max, rate_hz, min_duration, max_duration):
-    d = max([abs(b - a) for a, b in zip(q0, q1)] or [0.0])
+def _quintic_candidates(q0, v0, a0, q1, v1, a1, v_max, a_max, rate_hz, min_duration, max_duration):
+    J = len(q0)
     # caps raised to the matched boundary values: the gesture may enter or leave faster
-    vcap = [max(v_max, abs(v0[j]), abs(v1[j])) for j in range(len(q0))]
-    acap = [max(a_max, abs(a0[j]), abs(a1[j])) for j in range(len(q0))]
-    T = max(min_duration, 1.875 * d / v_max)
-    best, best_score = None, float("inf")
-    while T <= max_duration:
+    vcap = [max(v_max[j], abs(v0[j]), abs(v1[j])) for j in range(J)]
+    acap = [max(a_max[j], abs(a0[j]), abs(a1[j])) for j in range(J)]
+    T = float(min_duration)
+    ok, least, least_score = [], None, float("inf")
+    while T <= max_duration + 1e-9:
         n = max(3, int(math.ceil(T * rate_hz)) + 1)
         tt = _linspace(0.0, T, n)
         T2, T3, T4, T5 = T ** 2, T ** 3, T ** 4, T ** 5
         C = []
-        for j in range(len(q0)):
+        for j in range(J):
             C.append([q0[j], v0[j], a0[j] / 2,
                       (20 * (q1[j] - q0[j]) - (8 * v1[j] + 12 * v0[j]) * T - (3 * a0[j] - a1[j]) * T2) / (2 * T3),
                       (30 * (q0[j] - q1[j]) + (14 * v1[j] + 16 * v0[j]) * T + (3 * a0[j] - 2 * a1[j]) * T2) / (2 * T4),
@@ -208,12 +216,13 @@ def _quintic_search(q0, v0, a0, q1, v1, a1, v_max, a_max, rate_hz, min_duration,
                 score = max(score, abs(sum(k * c[k] * t ** (k - 1) for k in range(1, 6))) / vcap[j],
                             abs(sum(k * (k - 1) * c[k] * t ** (k - 2) for k in range(2, 6))) / acap[j])
             rows.append(row)
-        if score < best_score - 1e-9:  # keep the least bad duration, never just the longest
-            best, best_score = _traj(tt, rows), score
+        tr = _traj(tt, rows)
         if score <= 1.0:
-            break
+            ok.append(tr)
+        if score < least_score - 1e-9:
+            least, least_score = tr, score
         T *= 1.15
-    return best, best_score
+    return ok, (least, least_score)
 
 
 def _boundary(tr, at_end=False):
@@ -506,14 +515,20 @@ class GestureGenerator(object):
         v0, a0 = _boundary(motion)
         v1, a1 = _boundary(motion, at_end=True)
         z = [0.0] * len(joints)
-        vlim, alim = g.max_velocity * 0.8, g.max_acceleration * 0.8
+        # per-joint caps (factory speeds or the takes'), not the global default
+        vlim = [g.velocity_limit(j) * 0.8 for j in joints]
+        alim = [g.acceleration_limit(j) * 0.8 for j in joints]
+
+        def in_zone(seg):  # transitions must stay inside the guardian zone (limits, coupled)
+            r = g.check_trajectory(seg["t"], joints, seg["q"], check_duration=False, context=ctx)
+            return not any(x.code in ("limit", "coupled") for x in r.violations)
         if from_rest:
             segs = [("rest_to_start", _min_jerk(q_cur, start, g.rest_velocity * 0.8, g.max_acceleration * 0.25))]
         else:
             segs = [("to_start", _min_jerk(q_cur, start, g.rest_velocity * 0.8, g.max_acceleration * 0.25))]
-        segs += [("start_to_gesture", _quintic(start, z, z, motion["q"][0], v0, a0, vlim, alim)),
+        segs += [("start_to_gesture", _quintic(start, z, z, motion["q"][0], v0, a0, vlim, alim, accept=in_zone)),
                  ("gesture", motion),
-                 ("gesture_to_start", _quintic(motion["q"][-1], v1, a1, start, z, z, vlim, alim))]
+                 ("gesture_to_start", _quintic(motion["q"][-1], v1, a1, start, z, z, vlim, alim, accept=in_zone))]
         if return_to == "rest":
             segs.append(("start_to_rest", _min_jerk(start, rest, g.rest_velocity * 0.8,
                                                     g.max_acceleration * 0.25)))

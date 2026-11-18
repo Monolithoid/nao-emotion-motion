@@ -228,7 +228,10 @@ class Controller:
         v0, a0 = boundary_derivatives(motion)
         v1, a1 = boundary_derivatives(motion, at_end=True)
         z = np.zeros(len(joints))
-        vlim, alim = g.max_velocity_rad_s * 0.8, g.max_acceleration_rad_s2 * 0.8
+        # per-joint caps (the gesture's own limits: factory speeds or the speeds of the takes),
+        # not the global default of guardian.yaml (1.5 rad/s), far below a real gesture
+        vlim = np.array([g.velocity_limit(j) for j in joints]) * 0.8
+        alim = np.array([g.acceleration_limit(j) for j in joints]) * 0.8
         if from_pose == "rest":
             # le repos peut être hors zone (contact) : segment vérifié à part
             segs = [("repos_vers_depart", self._rest_transition(q_cur, start, joints))]
@@ -237,9 +240,17 @@ class Controller:
             # resting on the legs...): like rest -> start, this approach segment is checked on
             # the factory limits at reduced speed, not on the zone (else refused at t = 0).
             segs = [("vers_depart", self._rest_transition(q_cur, start, joints))]
-        segs += [("depart_vers_geste", quintic_matched(start, z, z, motion.q[0], v0, a0, joints, vlim, alim)),
+        others = [j for j in self.cfg.all_joints if j not in joints]
+        ctx = self.measured(others) if others and current is None else {}
+
+        def in_zone(seg):  # the transition must stay inside the guardian zone (limits, coupled)
+            r = self.guardian.validate(seg, check_duration=False, context_pose=ctx)
+            return not any(x.code in ("limit", "coupled") for x in r.violations)
+        segs += [("depart_vers_geste", quintic_matched(start, z, z, motion.q[0], v0, a0, joints, vlim, alim,
+                                                       accept=in_zone)),
                  ("geste", motion),
-                 ("geste_vers_depart", quintic_matched(motion.q[-1], v1, a1, start, z, z, joints, vlim, alim))]
+                 ("geste_vers_depart", quintic_matched(motion.q[-1], v1, a1, start, z, z, joints, vlim, alim,
+                                                       accept=in_zone))]
         if to_pose == "rest":
             segs.append(("depart_vers_repos", self._rest_transition(start, rest, joints)))
         segments, t = [], 0.0
@@ -247,8 +258,6 @@ class Controller:
             segments.append((name, round(t, 4), round(t + s.duration, 4)))
             t += s.duration
         full = Trajectory.concat([s for _, s in segs])
-        others = [j for j in self.cfg.all_joints if j not in joints]
-        ctx = self.measured(others) if others and current is None else {}
         motion_report = self.guardian.validate(motion, context_pose=ctx)
         rep = self._validate_segments(segs, {"repos_vers_depart", "vers_depart", "depart_vers_repos"}, cur, ctx)
         notes.append("Segments posture mesurée / repos <-> départ : limites d'usine et vitesse réduite seulement "

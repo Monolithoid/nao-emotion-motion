@@ -27,7 +27,8 @@ from .calibration import (Calibration, CalibrationError, convex_hull, hull_const
 from .config import Config
 from .data.store import TakeStore
 
-PERCENTILE = 95
+# every take must pass the guardian: the limit is the fastest take, not a percentile of them
+PERCENTILE = 100
 MAX_POINTS = 600  # points per pair sent to the page
 
 
@@ -91,7 +92,7 @@ def _kinematics(cfg: Config, samples: List[dict]) -> Dict[str, dict]:
         out[j] = {"velocity_rad_s": round(max(v, g.velocity_limit(j)), 3),
                   "acceleration_rad_s2": round(max(a, g.acceleration_limit(j)), 3),
                   "current_velocity": g.velocity_limit(j), "current_acceleration": g.acceleration_limit(j),
-                  "takes_velocity_p95": round(v, 3), "takes_acceleration_p95": round(a, 3), "n_takes": len(pv)}
+                  "takes_velocity_max": round(v, 3), "takes_acceleration_max": round(a, 3), "n_takes": len(pv)}
     return out
 
 
@@ -191,7 +192,7 @@ def extend_with_takes(cfg: Config, store: TakeStore, base_path, statuses=("accep
         kinds[s["kind"]] = kinds.get(s["kind"], 0) + 1
     notes = (f"extended from {base.version} with {len(samples)} takes "
              f"({', '.join(f'{k} {n}' for k, n in sorted(kinds.items()))}, status {'/'.join(statuses)})"
-             + ("; speed limits from the takes (p95)" if kin else ""))
+             + ("; speed limits from the takes (fastest take)" if kin else ""))
     cal = Calibration(version=version, robot=robot, limits=limits, measured=measured, poses=base.poses or {},
                       coupled=coupled, margin_rad=m, warnings=warnings, notes=notes)
     if kin:

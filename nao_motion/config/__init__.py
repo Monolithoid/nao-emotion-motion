@@ -343,7 +343,10 @@ def _factory_velocity_limits(g: GuardianConfig, guard: dict, robot: dict, joints
     1. `per_joint_velocity_rad_s` in guardian.yaml (explicit choice);
     2. else `velocity_fraction_of_factory` x factory speed, for joints whose factory speed is known;
     3. else `max_velocity_rad_s`;
-    then the speeds measured on the takes (`kinematics` of the active calibration) replace them.
+    then the speeds measured on the takes (`kinematics` of the active calibration) RAISE them where
+    they are higher: the takes were done on the robot, so they prove a speed is reachable, but a
+    slow set of takes never lowers the factory speeds (it used to: 1.65 rad/s for a shoulder whose
+    factory speed is 7.19, so even the takes themselves were refused).
     Ceiling: max_fraction_speed (robot.yaml) x factory speed, i.e. what setAngles lets the motor
     reach while streaming; above it the robot could not follow the command."""
     frac = guard.get("velocity_fraction_of_factory")
@@ -365,9 +368,11 @@ def _factory_velocity_limits(g: GuardianConfig, guard: dict, robot: dict, joints
             for j, v in (kin.get(key) or {}).items():
                 if j not in joints:
                     raise ConfigError(f"Calibration {calibration.version} : kinematics, articulation inconnue {j}")
-                target[j] = float(v)
-                if key == "velocity_rad_s":
-                    g.velocity_sources[j] = "takes"
+                cur = g.velocity_limit(j) if key == "velocity_rad_s" else g.acceleration_limit(j)
+                if float(v) > cur:
+                    target[j] = float(v)
+                    if key == "velocity_rad_s":
+                        g.velocity_sources[j] = "takes"
     speed = float(((robot or {}).get("execution") or {}).get("max_fraction_speed", 0.3))
     for j in joints:
         f = factory_velocity(guard, j)
