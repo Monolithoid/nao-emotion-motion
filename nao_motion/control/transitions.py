@@ -1,7 +1,7 @@
 """Transitions gérées par le contrôleur (repos <-> départ <-> geste), non apprises."""
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Callable, Optional, Sequence
 
 import numpy as np
 
@@ -33,40 +33,48 @@ def _quintic_coeffs(q0, v0, a0, q1, v1, a1, T):
     return np.stack([c0, c1, c2, c3, c4, c5])
 
 
-def quintic_matched(q0, v0, a0, q1, v1, a1, joints, v_max: float, a_max: float,
-                    rate_hz: float = 50.0, min_duration: float = 0.4, max_duration: float = 6.0) -> Trajectory:
-    """See _quintic_search. When no duration keeps velocity and acceleration under the caps
-    while matching the boundary ACCELERATION too (a gesture entered while still accelerating
-    overshoots its entry speed just before it), the acceleration match is dropped: only position
-    and velocity stay continuous, and the least bad of the two is kept."""
-    best, score = _quintic_search(q0, v0, a0, q1, v1, a1, joints, v_max, a_max, rate_hz, min_duration, max_duration)
-    if score > 1.0:
-        z = np.zeros_like(np.asarray(a0, float))
-        alt, s2 = _quintic_search(q0, v0, z, q1, v1, z, joints, v_max, a_max, rate_hz, min_duration, max_duration)
-        if s2 < score:
-            return alt
-    return best
+def quintic_matched(q0, v0, a0, q1, v1, a1, joints, v_max, a_max,
+                    rate_hz: float = 50.0, min_duration: float = 0.4, max_duration: float = 6.0,
+                    accept: Optional[Callable[[Trajectory], bool]] = None) -> Trajectory:
+    """Transition matched in position, velocity and acceleration at both ends (see _candidates).
+
+    v_max / a_max: caps, one value or one per joint (raised to the matched boundary values).
+    Among the durations that respect the caps, the SHORTEST one that `accept` approves is kept
+    (accept: e.g. "stays inside the guardian zone"); without accept, or when none is approved,
+    the shortest one. A transition that must reach a moving gesture overshoots more the longer
+    it lasts (it has to wind up to the gesture's entry speed), so a long transition leaves the
+    zone: the old search started at a duration set by the global default speed (1.2 rad/s) and
+    lengthened it, which pushed most transitions out of the calibrated zone.
+
+    When no duration respects the caps while matching the boundary ACCELERATION too, the
+    acceleration match is dropped (position and velocity stay continuous)."""
+    z = np.zeros(np.shape(a0))
+    leasts = []
+    for a_s, a_e in ((a0, a1), (z, z)):
+        cands, least = _candidates(q0, v0, a_s, q1, v1, a_e, joints, v_max, a_max, rate_hz,
+                                   min_duration, max_duration)
+        if cands:
+            if accept is not None:
+                for c in cands:
+                    if accept(c):
+                        return c
+            return cands[0]
+        leasts.append(least)
+    return min(leasts, key=lambda x: x[1])[0]  # nothing within the caps: the least bad
 
 
-def _quintic_search(q0, v0, a0, q1, v1, a1, joints, v_max, a_max, rate_hz, min_duration, max_duration):
-    """Transition quintique raccordée en position, vitesse et accélération aux deux bouts.
-
-    Sert à entrer dans un geste généré (qui peut commencer avec une vitesse non
-    nulle) et à en sortir, sans discontinuité de vitesse. La durée est allongée
-    jusqu'à respecter v_max/a_max ; le guardian revalide de toute façon le tout.
-    """
+def _candidates(q0, v0, a0, q1, v1, a1, joints, v_max, a_max, rate_hz, min_duration, max_duration):
+    """Quintic transitions for durations min_duration x 1.15^k up to max_duration. Returns
+    (those within the caps, shortest first; (least bad transition, its score))."""
     q0, v0, a0, q1, v1, a1 = (np.asarray(x, float) for x in (q0, v0, a0, q1, v1, a1))
-    d = float(np.max(np.abs(q1 - q0))) if q0.size else 0.0
-    # The gesture may enter or leave faster than v_max / a_max (the guardian accepted it at
-    # its own limits): the transition cannot be slower than its matched boundary, so the caps
-    # are raised to the boundary values. Without this no duration satisfies the caps, the
-    # search ran up to max_duration and the long quintic overshot by several radians (cycle
-    # refused, gesture never playable).
-    vcap = np.maximum(v_max, np.maximum(np.abs(v0), np.abs(v1)))
-    acap = np.maximum(a_max, np.maximum(np.abs(a0), np.abs(a1)))
-    T = max(min_duration, 1.875 * d / v_max)
-    best, best_score = None, np.inf
-    while T <= max_duration:
+    vm = np.broadcast_to(np.asarray(v_max, float), q0.shape)
+    am = np.broadcast_to(np.asarray(a_max, float), q0.shape)
+    # the gesture may enter or leave faster than the caps: never ask for less than its own speed
+    vcap = np.maximum(vm, np.maximum(np.abs(v0), np.abs(v1)))
+    acap = np.maximum(am, np.maximum(np.abs(a0), np.abs(a1)))
+    T = float(min_duration)
+    ok, least, least_score = [], None, np.inf
+    while T <= max_duration + 1e-9:
         n = max(3, int(np.ceil(T * rate_hz)) + 1)
         t = np.linspace(0, T, n)
         C = _quintic_coeffs(q0, v0, a0, q1, v1, a1, T)
@@ -74,12 +82,13 @@ def _quintic_search(q0, v0, a0, q1, v1, a1, joints, v_max, a_max, rate_hz, min_d
         V = np.stack([k * t**(k - 1) if k else 0 * t for k in range(6)], axis=1) @ C
         A = np.stack([k * (k - 1) * t**(k - 2) if k > 1 else 0 * t for k in range(6)], axis=1) @ C
         score = max(float((np.abs(V) / vcap).max()), float((np.abs(A) / acap).max())) if q0.size else 0.0
-        if score < best_score - 1e-9:  # otherwise keep the least bad duration, never the longest
-            best, best_score = Trajectory(list(joints), t, P), score
+        tr = Trajectory(list(joints), t, P)
         if score <= 1.0:
-            break
+            ok.append(tr)
+        if score < least_score - 1e-9:
+            least, least_score = tr, score
         T *= 1.15
-    return best, best_score
+    return ok, (least, least_score)
 
 
 def boundary_derivatives(traj: Trajectory, at_end: bool = False):

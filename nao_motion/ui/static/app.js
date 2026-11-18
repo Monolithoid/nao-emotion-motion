@@ -474,6 +474,18 @@ async function init() {
       (d.connected ? ` · whole cycle ${d.ok.cycle}/${d.n}` : " · cycle not checked (no robot connected)") +
       `\nslow-down to respect the limits: median ×${d.slow_down.median} · max ×${d.slow_down.max}` +
       (d.slow_down.capped_by_max_duration ? ` · ${d.slow_down.capped_by_max_duration} capped by the max duration` : "") +
+      (() => {  // recorded takes, no model: every refusal here is a guardian error
+        const tk = d.takes || {};
+        if (tk.error) return `\nYOUR TAKES through the guardian: ✗ ${tk.error}`;
+        if (!tk.n) return "\nYOUR TAKES through the guardian: no recorded arm take";
+        const t2 = (rows) => rows.length ? rows.map((r) => `  ${String(r.takes).padStart(3)} × ${r.code} ${r.joint}` +
+          (r.segment ? ` [${SEG[r.segment] || r.segment}]` : "")).join("\n") : "  none";
+        return `\nYOUR TAKES through the guardian (no model): raw ${tk.ok.raw}/${tk.n} · made playable ${tk.ok.playable}/${tk.n}` +
+          (tk.connected ? ` · whole cycle ${tk.ok.cycle}/${tk.n}` : "") +
+          "\n  still refused after making them playable:\n" + t2(tk.refusals.playable) +
+          (tk.connected ? "\n  whole cycle:\n" + t2(tk.refusals.cycle) : "") +
+          (tk.refused_takes.length ? `\n  e.g. ${tk.refused_takes.slice(0, 5).join(", ")}` : "");
+      })() +
       "\n\nWHAT THIS MEANS\n" + d.hints.map((x) => "• " + x).join("\n") +
       "\n\nRefused on the RAW gesture (gestures per check):\n" + tbl(d.refusals.raw) +
       "\nStill refused after making it playable:\n" + tbl(d.refusals.playable) +

@@ -21,7 +21,7 @@ def limits_in_force(cfg) -> dict:
     g = cfg.guardian
     kin = (getattr(cfg.calibration, "kinematics", None) or {}) if cfg.calibration is not None else {}
     measured_v = set((kin.get("velocity_rad_s") or {}))
-    measured_a = set((kin.get("acceleration_rad_s2") or {}))
+    measured_a = dict(kin.get("acceleration_rad_s2") or {})
     cal_cc = {c["name"] for c in (cfg.calibration.coupled if cfg.calibration is not None else [])}
     rows = []
     for j in cfg.all_joints + list(cfg.hand_joints):
@@ -29,12 +29,58 @@ def limits_in_force(cfg) -> dict:
                      "velocity": g.velocity_limit(j),
                      "velocity_source": g.velocity_sources.get(j) or ("takes" if j in measured_v else "guardian.yaml"),
                      "acceleration": g.acceleration_limit(j),
-                     "acceleration_source": "takes" if j in measured_a else "guardian.yaml"})
+                     "acceleration_source": "takes" if j in measured_a and abs(float(measured_a[j]) - g.acceleration_limit(j)) < 1e-9
+                     else "guardian.yaml"})
     return {"calibrated": cfg.calibrated, "calibration": cfg.calibration_version, "joints": rows,
             "max_duration_s": g.max_duration_s,
             "coupled": [{"name": c.name, "terms": c.terms, "bound": c.bound,
                          "source": "calibration" if c.name in cal_cc else "guardian.yaml"}
                         for c in g.coupled_constraints]}
+
+
+def takes_through_guardian(wb, limit: int = 200, include_simulated: bool = False) -> dict:
+    """The recorded takes, played back as they are, through the same checks as a generated
+    gesture: raw, made playable, and the whole cycle from the measured posture when a robot is
+    connected (nothing is sent). They were done by hand on the robot, so every refusal points at
+    the guardian, not at the take. No model is involved."""
+    from ..control.recording import replay_trajectory
+    cfg, G = wb.cfg, wb.guardian
+    connected = wb.adapter.is_connected()
+    joints = list(cfg.arm_joints)
+    others = [j for j in cfg.all_joints if j not in joints]
+    ctx = dict(zip(others, cfg.pose("start", others)))
+    counts = {"raw": Counter(), "playable": Counter(), "cycle": Counter()}
+    ok = {"raw": 0, "playable": 0, "cycle": 0}
+    n, refused = 0, []
+    metas = [m for m in wb.store.list(kind="arms") if m.status != "rejected"
+             and (include_simulated or not m.synthetic)][:limit]
+    for m in metas:
+        try:
+            traj = replay_trajectory(wb.store.load(m.take_id), joints)
+        except Exception:
+            continue
+        n += 1
+        raw = G.validate(traj, context_pose=ctx, check_duration=False)
+        played, _ = wb.playable(traj)
+        rep = G.validate(played, context_pose=ctx)
+        reports = [("raw", raw), ("playable", rep)]
+        if connected:
+            try:
+                plan, _ = wb.plan_generated(played, "auto", "rest")
+                reports.append(("cycle", plan.report))
+            except Exception as ex:
+                counts["cycle"][("plan_error", "", str(ex)[:80])] += 1
+        for stage, r in reports:
+            ok[stage] += r.ok
+            for v in r.violations:
+                counts[stage][(v.code, v.joint or "", v.segment or "")] += 1
+        if not all(r.ok for st, r in reports if st != "raw"):
+            refused.append(m.take_id)
+
+    def table(c: Counter) -> List[dict]:
+        return [{"code": k[0], "joint": k[1], "segment": k[2], "takes": v} for k, v in c.most_common()]
+    return {"n": n, "connected": connected, "ok": ok, "refusals": {k: table(v) for k, v in counts.items()},
+            "refused_takes": refused[:20]}
 
 
 def diagnose(wb, intensities: Sequence[float] = (0.3, 0.6, 0.9), project_zone: Optional[bool] = None,
@@ -79,7 +125,11 @@ def diagnose(wb, intensities: Sequence[float] = (0.3, 0.6, 0.9), project_zone: O
         return [{"code": k[0], "joint": k[1], "segment": k[2], "gestures": v} for k, v in c.most_common()]
 
     lim = limits_in_force(cfg)
-    out = {"n": n, "project_zone": project_zone, "connected": connected, "ok": ok,
+    try:
+        takes = takes_through_guardian(wb)
+    except Exception as ex:  # no store, unreadable take...
+        takes = {"error": str(ex)[:120]}
+    out = {"takes": takes, "n": n, "project_zone": project_zone, "connected": connected, "ok": ok,
            "refusals": {k: table(v) for k, v in counts.items()},
            "slow_down": {"median": round(float(np.median(scales)), 2) if scales else None,
                          "max": round(float(np.max(scales)), 2) if scales else None,
@@ -102,7 +152,7 @@ def hints(d: dict) -> List[str]:
         h.append(f"Speed limits: the raw gestures exceed the DEFAULT limits on {js} ({shown}{', ...' if len(js) > 4 else ''}): "
                  f"guardian.yaml values or a fraction of the factory speed, not measured on your gestures. "
                  f"Use Calibration > Extend with the takes with « speeds » ticked to use the speeds of "
-                 f"your takes (p95), or raise them in guardian.yaml (velocity_fraction_of_factory).")
+                 f"your takes (fastest take), or raise them in guardian.yaml (velocity_fraction_of_factory).")
     sd = d["slow_down"]
     if sd["median"] and sd["median"] > 1.5:
         h.append(f"To respect those limits, gestures are slowed down x{sd['median']} (median, max x{sd['max']}): "
@@ -120,6 +170,14 @@ def hints(d: dict) -> List[str]:
         js = sorted({r["joint"] for r in lims})
         h.append(f"Calibrated zone: raw gestures leave it on {js}. Projection / adaptation bring them back; "
                  f"if the zone is narrower than your takes, use Calibration > Extend with the takes.")
+    tk = d.get("takes") or {}
+    if tk.get("n"):
+        stage = "cycle" if tk["connected"] else "playable"
+        bad = tk["n"] - tk["ok"][stage]
+        if bad:
+            h.append(f"YOUR TAKES: {bad}/{tk['n']} recorded takes are refused ({'whole cycle' if stage == 'cycle' else 'made playable'}). "
+                     f"They were done on the robot, so these refusals are guardian errors, not take errors: see the "
+                     f"takes table below.")
     cyc = d["refusals"]["cycle"]
     if cyc:
         segs = Counter(r["segment"] for r in cyc for _ in range(r["gestures"]))
