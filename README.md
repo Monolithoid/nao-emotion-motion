@@ -330,6 +330,8 @@ nao-motion export-generator --out gesture_export
 #   gesture_export/nao_gesture.json  the arms / head / hands models, their settings and the guardian (active calibration)
 ```
 
+**Integration guide** (for an LLM or coding agent wiring the generator into another project: stiffness at the start and end of a gesture, rest and start poses, `from_rest` / `return_to`, guardian refusals, failure handling): [docs/generator-integration.md](docs/generator-integration.md).
+
 The weights come from the numpy export written by every training run (`model_numpy.npz` of the latest run of each group), so the export does not need PyTorch. A group without a model is exported as missing: arms or head then stay in the start position, hands are not commanded. Like the guardian export, it is **refused without an active calibration** (`--allow-uncalibrated` for tests). After a new training or a new calibration, redo the export.
 
 ```python
