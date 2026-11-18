@@ -46,6 +46,9 @@ class GuardianConfig:
     per_joint_acceleration: Dict[str, float] = field(default_factory=dict)
     # where each per-joint velocity limit comes from (guardian.yaml, factory speed, takes, ceiling)
     velocity_sources: Dict[str, str] = field(default_factory=dict)
+    # margin kept inside the extremes reached during the calibration (replaces the calibration's
+    # own margin for the guardian); None = calibration margin + limit_margin_rad (old rule)
+    zone_margin_rad: Optional[float] = None
 
     def velocity_limit(self, joint: str) -> float:
         return float(self.per_joint_velocity_rad_s.get(joint, self.max_velocity_rad_s))
@@ -82,6 +85,10 @@ class Config:
     # Mains (LHand, RHand) : hors des groupes calibrés (on ne les guide pas à la main),
     # bornées par leur plage d'usine 0..1 et pilotées depuis l'interface.
     hand_joints: List[str] = field(default_factory=list)
+    # Plage AUTORISÉE par le guardian pour chaque articulation, marges comprises (voir
+    # _guardian_bounds). `limits` reste la zone calibrée telle qu'enregistrée (normalisation
+    # des modèles, calibration, simulation).
+    guardian_bounds: Dict[str, Tuple[float, float]] = field(default_factory=dict)
 
     # -- accès pratiques -------------------------------------------------
     @property
@@ -265,8 +272,10 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
         rest_velocity_rad_s=float(guard.get("rest_velocity_rad_s", 0.3)),
         per_joint_margin={k: float(v) for k, v in (guard.get("per_joint_margin") or {}).items()},
         per_joint_acceleration={k: float(v) for k, v in (guard.get("per_joint_acceleration") or {}).items()},
+        zone_margin_rad=None if guard.get("zone_margin_rad") is None else float(guard["zone_margin_rad"]),
     )
     _factory_velocity_limits(gcfg, guard, robot, list(limits), calibration)
+    bounds = _guardian_bounds(gcfg, limits, all_j, calibration)
     return Config(
         root=root, groups=groups, limits=limits,
         calibration_version=calibration.version if calibration else str(joints["calibration"]["version"]),
@@ -279,7 +288,42 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
         calibration=calibration,
         rest_limits=rest_limits,
         hand_joints=hand_joints,
+        guardian_bounds=bounds,
     )
+
+
+def _guardian_bounds(g: GuardianConfig, limits, joints, calibration) -> Dict[str, Tuple[float, float]]:
+    """Range allowed by the guardian per joint, margins included.
+
+    Old rule (zone_margin_rad absent): calibrated limit, which already keeps the calibration
+    margin (0.05) inside the explored extremes, minus limit_margin_rad (0.03) again: 0.08 rad
+    taken off each side of what the robot actually reached.
+
+    With zone_margin_rad: the explored extremes (calibrated limit + calibration margin) minus
+    zone_margin_rad only, and limit_margin_rad only protects the factory stops (when they are
+    known). The calibrated envelopes of joint pairs are widened the same way (unit normals:
+    bound + calibration margin - zone_margin_rad)."""
+    out = {}
+    zm = g.zone_margin_rad
+    cal_m = float(getattr(calibration, "margin_rad", 0.0) or 0.0) if calibration is not None else 0.0
+    measured = (calibration.measured or {}) if calibration is not None else {}
+    for j, (lo, hi) in limits.items():
+        m = g.margin(j)
+        if zm is None or j not in joints:  # old rule, and hands (factory range 0..1)
+            out[j] = (lo + m, hi - m)
+            continue
+        a, b = lo - cal_m + zm, hi + cal_m - zm
+        f = (measured.get(j) or {}).get("factory")
+        if f:
+            a, b = max(a, float(f[0]) + m), min(b, float(f[1]) - m)
+        elif calibration is None:
+            a, b = lo + m, hi - m  # placeholder limits, nothing measured: keep the margin
+        out[j] = (a, b) if a < b else (lo + m, hi - m)
+    if zm is not None and calibration is not None:
+        for c in g.coupled_constraints:
+            if c.name.startswith("calib:"):
+                c.bound = c.bound + cal_m - zm
+    return out
 
 
 def factory_velocity(guard: dict, joint: str) -> Optional[float]:

@@ -25,7 +25,7 @@ def limits_in_force(cfg) -> dict:
     cal_cc = {c["name"] for c in (cfg.calibration.coupled if cfg.calibration is not None else [])}
     rows = []
     for j in cfg.all_joints + list(cfg.hand_joints):
-        rows.append({"joint": j, "zone": [round(cfg.limits[j][0] + g.margin(j), 3), round(cfg.limits[j][1] - g.margin(j), 3)],
+        rows.append({"joint": j, "zone": [round(cfg.guardian_bounds[j][0], 3), round(cfg.guardian_bounds[j][1], 3)],
                      "velocity": g.velocity_limit(j),
                      "velocity_source": g.velocity_sources.get(j) or ("takes" if j in measured_v else "guardian.yaml"),
                      "acceleration": g.acceleration_limit(j),

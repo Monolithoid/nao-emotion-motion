@@ -51,7 +51,10 @@ def test_export_content(calibrated):
     assert d["source"]["calibrated"] and d["source"]["calibration_version"] == c.calibration_version
     assert set(d["limits"]) == set(c.controlled_joints)  # bras, tête et mains (plage d'usine)
     origins = {x["origin"] for x in d["coupled_constraints"]}
-    assert origins == {"manual", "calibration"}
+    assert origins == {"calibration"}  # no manual example constraint any more
+    # allowed ranges exported with the margins already taken: the checker removes nothing
+    assert d["limit_margin_rad"] == 0.0 and d["per_joint_margin"] == {}
+    assert all(d["limits"][j] == pytest.approx(list(c.guardian_bounds[j])) for j in c.controlled_joints)
     assert set(d["poses"]) == {"rest", "start"} and set(d["poses"]["rest"]) == set(c.controlled_joints)
     assert open(out["checker"], encoding="utf-8").read() == CHECKER.read_text(encoding="utf-8")
     assert g.calibrated and g.joints == sorted(c.controlled_joints)
@@ -112,7 +115,7 @@ def test_rest_to_start_cycle_accepted(calibrated):
     _same(ref.validate(tr), too_short)
     # grand déplacement trop rapide : refus pour vitesse
     lo, hi = g.allowed_range("HeadYaw")
-    a, b = dict(start, HeadYaw=lo), dict(start, HeadYaw=hi)
+    a, b = dict(start, HeadYaw=lo + 0.05), dict(start, HeadYaw=hi - 0.05)  # box corners may lie outside a pair envelope
     fast = g.check_move(a, b, 0.2)  # well above the factory speed of HeadYaw
     assert "velocity" in {v.code for v in fast.violations}
     assert g.check_move(a, b, g.min_duration(a, b) + 0.5).ok
@@ -126,10 +129,8 @@ def test_pose_checks(calibrated):
     assert [v.code for v in g.check_pose({"LKneePitch": 0.0}).violations] == ["legs"]
     assert [v.code for v in g.check_pose({"Foo": 0.0}).violations] == ["unknown_joint"]
     assert [v.code for v in g.check_pose({"HeadYaw": float("nan")}).violations] == ["format"]
-    # contrainte couplée manuelle : bras croisés devant le torse
-    pose = {"LShoulderRoll": -0.2, "RShoulderRoll": 0.2}
-    rep = g.check_pose(pose)
-    assert any(v.code == "coupled" for v in rep.violations) or not rep.ok
+    # enveloppe mesurée d'un couple : un coin de la boîte peut en sortir
+    assert all(c["name"].startswith("calib:") for c in g.constraints)
 
 
 def test_malformed_inputs_rejected(calibrated):

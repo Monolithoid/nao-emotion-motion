@@ -113,9 +113,7 @@ class Guardian:
         tt = np.union1d(traj.t, np.linspace(traj.t[0], traj.t[-1], n))
         qq = traj.sample(tt)
         for k, j in enumerate(traj.joints):
-            lo, hi = self.cfg.limits[j]
-            m = self.g.margin(j)  # mains : plage d'usine entière par défaut
-            lo, hi = lo + m, hi - m
+            lo, hi = self.cfg.guardian_bounds[j]  # marges comprises (config._guardian_bounds)
             bad = np.nonzero((qq[:, k] < lo) | (qq[:, k] > hi))[0]
             if bad.size:
                 i = bad[0]

@@ -6,9 +6,10 @@ propose gestures that are faster than the configured limits or that brush the
 edge of the calibrated zone. Instead of refusing those gestures outright, the
 playback path adapts them first:
 
-1. shape: each joint is brought back inside its limits (margin included) with a
-   smooth saturation (no kink, so no artificial acceleration spike), and the
-   coupled constraints are enforced the same way along their normal direction;
+1. shape: a joint that goes past its limit (margin included) is brought back
+   with a smooth saturation (no kink, so no artificial acceleration spike), and a
+   violated coupled constraint the same way along its normal direction; joints and
+   constraints that stay inside are not touched at all;
 2. timing: the gesture is slowed down just enough for the velocity and
    acceleration limits (never sped up), within the duration bounds. By default
    only the moments that exceed a limit are slowed down (`local`: a smooth time
@@ -72,11 +73,9 @@ def _soft_box(x: np.ndarray, lo: float, hi: float, band: float) -> np.ndarray:
 def _shape(cfg: Config, traj: Trajectory, context_pose: Dict[str, float], rounds: int = 6) -> np.ndarray:
     g = cfg.guardian
     q = traj.q.copy()
-    bounds = []
-    for j in traj.joints:
-        lo, hi = cfg.limits[j]
-        m = g.margin(j)
-        bounds.append((lo + m, hi - m))
+    # only what goes past a bound is changed: a joint (or a coupled constraint) that stays
+    # inside is left exactly as the model made it, even close to the edge
+    bounds = [cfg.guardian_bounds[j] for j in traj.joints]
     for _ in range(rounds):
         for c in g.coupled_constraints:
             idx = [(traj.joints.index(j), coef) for j, coef in c.terms.items() if j in traj.joints]
@@ -86,12 +85,15 @@ def _shape(cfg: Config, traj: Trajectory, context_pose: Dict[str, float], rounds
             cvec = np.array([coef for _, coef in idx])
             cols = [k for k, _ in idx]
             s = q[:, cols] @ cvec + fixed
+            if not np.any(s > c.bound - 1e-3):
+                continue
             s_new = _soft_upper(s, c.bound - 1e-3, SOFT_BAND_RAD)
             delta = s_new - s
             if np.any(delta):
                 q[:, cols] += np.outer(delta, cvec / float(cvec @ cvec))
         for k, (lo, hi) in enumerate(bounds):
-            q[:, k] = _soft_box(q[:, k], lo, hi, SOFT_BAND_RAD)
+            if np.any(q[:, k] < lo) or np.any(q[:, k] > hi):
+                q[:, k] = _soft_box(q[:, k], lo, hi, SOFT_BAND_RAD)
     return q
 
 
@@ -216,6 +218,10 @@ def make_playable(cfg: Config, traj: Trajectory, context_pose: Optional[Dict[str
         notes.append(f"fast moments slowed down locally: duration x{local:.2f}")
     if s > 1.0 + 1e-9:
         notes.append(f"slowed down uniformly x{s:.2f} for velocity / acceleration limits")
+    # the cubic resampling of the time warp can overshoot a saturated joint by ~1e-5 rad
+    lo = np.array([cfg.guardian_bounds[j][0] for j in slowed.joints])
+    hi = np.array([cfg.guardian_bounds[j][1] for j in slowed.joints])
+    slowed = Trajectory(slowed.joints, slowed.t, np.clip(slowed.q, lo, hi))
     total = slowed.duration / dur
     return Adaptation(slowed, total if total > 1.0 + 1e-9 else 1.0,
                       float(diff.max()) if diff.size else 0.0, changed, notes)

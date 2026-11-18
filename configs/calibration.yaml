@@ -7,7 +7,7 @@ margin_rad: 0.05            # marge retirée de l'amplitude mesurée (en plus de
 rate_hz: 50
 min_samples: 50             # en dessous, l'exploration d'un groupe est refusée
 min_range_rad: 0.2          # amplitude minimale explorée par articulation (sinon refus)
-max_hull_edges: 12          # simplification (conservatrice) des enveloppes couplées
+max_hull_edges: 32          # simplification des enveloppes couplées (retirer un sommet RÉTRÉCIT la zone)
 # Couples d'articulations dont l'enveloppe réellement atteignable est mesurée
 # pendant l'exploration (contraintes couplées dérivées de la calibration).
 pairs:

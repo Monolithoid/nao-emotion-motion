@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 import pytest
 
@@ -38,8 +40,22 @@ def test_safe_endpoints_unsafe_middle(cfg):
     assert not rep.ok and "limit" in codes(rep)
 
 
+def with_constraints(cfg, *cs):
+    """Copy of the configuration with coupled constraints chosen by the operator (none by default)."""
+    from nao_motion.config import CoupledConstraint
+    c = copy.deepcopy(cfg)
+    c.guardian.coupled_constraints = [CoupledConstraint(n, t, b) for n, t, b in cs]
+    return c
+
+
+def test_no_example_constraint_by_default(cfg):
+    """The five example constraints of guardian.yaml (never measured) refused about one gesture in ten."""
+    assert cfg.guardian.coupled_constraints == []
+
+
 def test_coupled_constraint_mid_path(cfg):
     """Chaque articulation reste dans ses min/max, mais la combinaison tête/tête viole une contrainte couplée."""
+    cfg = with_constraints(cfg, ("tete", {"HeadPitch": 1.0, "HeadYaw": 0.25}, 0.5))
     j = ["HeadYaw", "HeadPitch"]
     t = np.linspace(0, 4, 201)
     s = np.sin(np.pi * t / 4) ** 2
@@ -50,6 +66,7 @@ def test_coupled_constraint_mid_path(cfg):
 
 def test_head_arm_coupled_constraint_uses_context(cfg):
     """Un mouvement des bras seul est jugé avec la posture de la tête fournie en contexte."""
+    cfg = with_constraints(cfg, ("bras", {"LShoulderPitch": -1.0, "LShoulderRoll": -1.0, "HeadYaw": 0.5}, 1.4))
     j = ["LShoulderPitch", "LShoulderRoll"]
     t = np.linspace(0, 6, 301)
     s = np.sin(np.pi * t / 6) ** 2

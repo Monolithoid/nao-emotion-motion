@@ -1,7 +1,13 @@
 # Contrôleur de sécurité indépendant des modèles.
 # Toutes les valeurs sont à ajuster sur le robot réel ; elles sont prudentes par défaut.
 schema_version: 1
-limit_margin_rad: 0.03          # marge intérieure appliquée aux limites min/max
+# Zone de mouvement = ce que la calibration a exploré (bras guidés à la main), moins
+# zone_margin_rad. Cette marge REMPLACE celle de la calibration (0,05) pour le guardian :
+# auparavant 0,05 + 0,03 = 0,08 rad étaient retirés de chaque côté de ce que le robot a
+# réellement atteint, alors que la pose de départ est souvent à 0,1 rad d'un bord.
+# Supprimer la ligne pour revenir à l'ancienne règle.
+zone_margin_rad: 0.02
+limit_margin_rad: 0.03          # marge devant les BUTÉES D'USINE (pas devant la zone calibrée)
 # Vitesse par articulation. Ordre de priorité :
 #   1. per_joint_velocity_rad_s ci-dessous (choix explicite) ;
 #   2. sinon velocity_fraction_of_factory x vitesse d'usine (factory_velocity_rad_s) ;
@@ -55,25 +61,12 @@ transition_velocity_rad_s: 0.5  # vitesse max des transitions repos <-> départ 
 # départ soit accessible sans heurt depuis le repos reste à la charge de qui calibre.
 rest_velocity_rad_s: 0.3
 
-# Contraintes couplées linéaires : sum(coef_i * q_i) <= bound (radians).
-# Elles complètent les min/max indépendants, qui ne garantissent PAS l'absence
-# de collision. Exemples ci-dessous, à remplacer par des zones mesurées.
-coupled_constraints:
-  - name: tete_baissee_tournee
-    description: "Limiter la flexion de la tête quand elle est très tournée (butée et câbles)."
-    terms: {HeadPitch: 1.0, HeadYaw: 0.25}
-    bound: 0.50
-  - name: tete_baissee_tournee_neg
-    terms: {HeadPitch: 1.0, HeadYaw: -0.25}
-    bound: 0.50
-  - name: bras_gauche_vers_tete
-    description: "Exemple : bras gauche levé et rentré vers l'axe pendant que la tête tourne à gauche."
-    terms: {LShoulderPitch: -1.0, LShoulderRoll: -1.0, HeadYaw: 0.5}
-    bound: 1.40
-  - name: bras_droit_vers_tete
-    terms: {RShoulderPitch: -1.0, RShoulderRoll: 1.0, HeadYaw: -0.5}
-    bound: 1.40
-  - name: avant_bras_croises
-    description: "Exemple : éviter que les deux bras se croisent devant le torse."
-    terms: {LShoulderRoll: -1.0, RShoulderRoll: 1.0}
-    bound: 0.35
+# Contraintes couplées linéaires : sum(coef_i * q_i) <= bound (radians), en plus des
+# enveloppes mesurées par la calibration. Aucune par défaut : les cinq exemples livrés ici
+# (jamais mesurés) refusaient à eux seuls un geste sur dix, dont tout bras levé haut
+# (bras_gauche_vers_tete). Format :
+#   - name: tete_baissee_tournee
+#     description: "Limiter la flexion de la tête quand elle est très tournée."
+#     terms: {HeadPitch: 1.0, HeadYaw: 0.25}
+#     bound: 0.50
+coupled_constraints: []
