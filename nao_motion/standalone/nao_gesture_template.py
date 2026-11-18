@@ -158,8 +158,14 @@ def _traj(times, rows):
 
 
 def _min_jerk(q0, q1, v_max, a_max, rate_hz=50.0, min_duration=0.4):
-    d = max([abs(b - a) for a, b in zip(q0, q1)] or [0.0])
-    T = max(min_duration, 1.875 * d / v_max, math.sqrt(5.774 * d / a_max) if d > 0 else 0.0)
+    """v_max / a_max: one value or one per joint."""
+    J = len(q0)
+    vm = v_max if isinstance(v_max, (list, tuple)) else [v_max] * J
+    am = a_max if isinstance(a_max, (list, tuple)) else [a_max] * J
+    T = min_duration
+    for a, b, v, ac in zip(q0, q1, vm, am):
+        d = abs(b - a)
+        T = max(T, 1.875 * d / v, math.sqrt(5.774 * d / ac))
     n = max(3, int(math.ceil(T * rate_hz)) + 1)
     s = _linspace(0.0, 1.0, n)
     rows = []
@@ -223,6 +229,34 @@ def _quintic_candidates(q0, v0, a0, q1, v1, a1, v_max, a_max, rate_hz, min_durat
             least, least_score = tr, score
         T *= 1.15
     return ok, (least, least_score)
+
+
+def _ease(tr, ease_in, ease_out):
+    """Same path, retimed to start and/or end at rest (time warp t = Tw(u^3 - u^4/2)).
+    Same as nao_motion.control.transitions.ease."""
+    t0, ts, q = tr["t"][0], tr["t"], tr["q"]
+    h = ts[1] - ts[0]
+    D = ts[-1] - t0
+    ti = math.ceil(ease_in / h - 1e-9) * h if ease_in > 0 else 0.0
+    to = math.ceil(ease_out / h - 1e-9) * h if ease_out > 0 else 0.0
+    N = D + ti + to
+    taus = _linspace(0.0, N, int(round(N / h)) + 1)
+    tt = []
+    for tau in taus:
+        x = tau - ti
+        if ti > 0 and tau < 2 * ti:
+            u = tau / (2 * ti)
+            x = 2 * ti * (u ** 3 - u ** 4 / 2)
+        if to > 0 and tau > N - 2 * to:
+            u = (N - tau) / (2 * to)
+            x = D - 2 * to * (u ** 3 - u ** 4 / 2)
+        tt.append(t0 + min(max(x, 0.0), D))
+    cols = [[r[k] for r in q] for k in range(len(q[0]))]
+    return _traj(taus, _sample(ts, cols, tt))
+
+
+def _ease_duration(v, a_max, min_s=0.15):
+    return max([min_s] + [1.5 * abs(x) / a for x, a in zip(v, a_max)])
 
 
 def _boundary(tr, at_end=False):
@@ -526,9 +560,22 @@ class GestureGenerator(object):
             segs = [("rest_to_start", _min_jerk(q_cur, start, g.rest_velocity * 0.8, g.max_acceleration * 0.25))]
         else:
             segs = [("to_start", _min_jerk(q_cur, start, g.rest_velocity * 0.8, g.max_acceleration * 0.25))]
-        segs += [("start_to_gesture", _quintic(start, z, z, motion["q"][0], v0, a0, vlim, alim, accept=in_zone)),
-                 ("gesture", motion),
-                 ("gesture_to_start", _quintic(motion["q"][-1], v1, a1, start, z, z, vlim, alim, accept=in_zone))]
+        t_in = _quintic(start, z, z, motion["q"][0], v0, a0, vlim, alim, accept=in_zone)
+        t_out = _quintic(motion["q"][-1], v1, a1, start, z, z, vlim, alim, accept=in_zone)
+        # no velocity-matched transition inside the zone: ease the gesture in/out (same path,
+        # from/to rest) and join it with a straight segment, inside the (convex) zone
+        ti = 0.0 if in_zone(t_in) else _ease_duration(v0, alim)
+        to = 0.0 if in_zone(t_out) else _ease_duration(v1, alim)
+        if ti or to:
+            scale = min(1.0, 0.6 * (motion["t"][-1] - motion["t"][0]) / (ti + to))
+            motion = _ease(motion, ti * scale, to * scale)
+            if ti:
+                t_in = _min_jerk(start, motion["q"][0], vlim, alim)
+            if to:
+                t_out = _min_jerk(motion["q"][-1], start, vlim, alim)
+            notes.append("Straight transition, gesture eased %s: the velocity-matched transition left the zone"
+                         % " and ".join(x for x, y in (("in", ti), ("out", to)) if y))
+        segs += [("start_to_gesture", t_in), ("gesture", motion), ("gesture_to_start", t_out)]
         if return_to == "rest":
             segs.append(("start_to_rest", _min_jerk(start, rest, g.rest_velocity * 0.8,
                                                     g.max_acceleration * 0.25)))

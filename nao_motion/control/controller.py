@@ -27,7 +27,7 @@ from ..adapters.base import AdapterError, ConnectionLost
 from ..config import Config
 from ..guardian import Guardian, GuardianRejection, Report, Violation
 from ..trajectory import Trajectory
-from .transitions import boundary_derivatives, min_jerk, quintic_matched
+from .transitions import boundary_derivatives, ease, ease_duration, min_jerk, quintic_matched
 
 
 class State(str, enum.Enum):
@@ -246,11 +246,25 @@ class Controller:
         def in_zone(seg):  # the transition must stay inside the guardian zone (limits, coupled)
             r = self.guardian.validate(seg, check_duration=False, context_pose=ctx)
             return not any(x.code in ("limit", "coupled") for x in r.violations)
-        segs += [("depart_vers_geste", quintic_matched(start, z, z, motion.q[0], v0, a0, joints, vlim, alim,
-                                                       accept=in_zone)),
-                 ("geste", motion),
-                 ("geste_vers_depart", quintic_matched(motion.q[-1], v1, a1, start, z, z, joints, vlim, alim,
-                                                       accept=in_zone))]
+        t_in = quintic_matched(start, z, z, motion.q[0], v0, a0, joints, vlim, alim, accept=in_zone)
+        t_out = quintic_matched(motion.q[-1], v1, a1, start, z, z, joints, vlim, alim, accept=in_zone)
+        # A transition that must reach the gesture's entry speed can find no duration inside the
+        # zone (fast takes, entry far from the start pose). Then the gesture is eased in (same
+        # path, starting at rest) and joined by a straight min-jerk segment: the zone is convex,
+        # so a straight segment between two of its points stays inside. Same at the end.
+        ti = 0.0 if in_zone(t_in) else ease_duration(v0, alim)
+        to = 0.0 if in_zone(t_out) else ease_duration(v1, alim)
+        if ti or to:
+            scale = min(1.0, 0.6 * motion.duration / (ti + to))
+            motion = ease(motion, ti * scale, to * scale)
+            if ti:
+                t_in = min_jerk(start, motion.q[0], joints, vlim, alim)
+            if to:
+                t_out = min_jerk(motion.q[-1], start, joints, vlim, alim)
+            notes.append("Transition droite + geste démarré/arrêté en douceur "
+                         f"({'début' if ti else ''}{' et ' if ti and to else ''}{'fin' if to else ''}) : "
+                         "la transition raccordée en vitesse sortait de la zone.")
+        segs += [("depart_vers_geste", t_in), ("geste", motion), ("geste_vers_depart", t_out)]
         if to_pose == "rest":
             segs.append(("depart_vers_repos", self._rest_transition(start, rest, joints)))
         segments, t = [], 0.0

@@ -309,3 +309,32 @@ def test_transition_into_a_fast_gesture_stays_in_the_zone():
         bad_new += not in_zone(new)
         assert np.allclose(new.q[-1], tr.q[0]) and np.allclose(new.q[0], start)
     assert bad_new <= 4 < bad_old
+
+
+def test_whole_cycle_of_take_like_gestures_stays_in_the_zone(tmp_path):
+    """Recorded takes (fast entry, far from the start pose) were refused on start <-> gesture:
+    no velocity-matched quintic stayed inside the zone. The gesture is then eased in/out on its
+    own path and joined by a straight segment, inside the convex zone: every cycle passes."""
+    from pathlib import Path
+    from nao_motion.control.transitions import ease
+    c = load_config(calibration_file=Path(__file__).resolve().parents[1] / "configs" / "calibration" / "nao-20261104-183718.yaml")
+    g = c.guardian
+    for j in c.arm_joints:
+        g.per_joint_velocity_rad_s[j], g.per_joint_acceleration[j] = 5.0, 60.0
+    wb = make_wb(tmp_path, c)
+    js = c.arm_joints
+    start = np.array(c.pose("start", js))
+    rng = np.random.default_rng(0)
+    eased = 0
+    for _ in range(12):
+        t = np.linspace(0, 3, 151)
+        q = start + rng.uniform(-0.5, 0.5, len(js)) + rng.uniform(0, 0.5, len(js)) * np.sin(
+            rng.uniform(4, 10, len(js)) * t[:, None] + rng.uniform(0, 6.28, len(js)))
+        tr = make_playable(c, Trajectory(js, t, q)).traj
+        plan, _ = wb.plan_generated(tr, "auto", "rest")
+        assert plan.report.ok, [(v.code, v.joint, v.segment) for v in plan.report.violations]
+        eased += any("douceur" in n for n in plan.notes)
+    assert eased > 0
+    tr = Trajectory(["a"], np.linspace(0, 1, 51), np.linspace(0, 2, 51)[:, None])
+    e = ease(tr, 0.2, 0.2)
+    assert np.allclose(e.q[[0, -1]], tr.q[[0, -1]]) and np.allclose(e.q[1] - e.q[0], 0, atol=1e-3)

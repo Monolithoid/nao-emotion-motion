@@ -16,8 +16,9 @@ def min_jerk(q0: Sequence[float], q1: Sequence[float], joints, v_max: float, a_m
     pour respecter v_max et a_max sur l'articulation la plus contraignante.
     """
     q0, q1 = np.asarray(q0, float), np.asarray(q1, float)
-    d = float(np.max(np.abs(q1 - q0))) if q0.size else 0.0
-    T = max(min_duration, 1.875 * d / v_max, float(np.sqrt(5.774 * d / a_max)) if d > 0 else 0.0)
+    d = np.abs(q1 - q0)  # v_max / a_max: one value or one per joint
+    T = max([min_duration] + ([float(np.max(1.875 * d / v_max)), float(np.max(np.sqrt(5.774 * d / a_max)))]
+                              if q0.size else []))
     n = max(3, int(np.ceil(T * rate_hz)) + 1)
     s = np.linspace(0, 1, n)
     h = 10 * s**3 - 15 * s**4 + 6 * s**5
@@ -89,6 +90,44 @@ def _candidates(q0, v0, a0, q1, v1, a1, joints, v_max, a_max, rate_hz, min_durat
             least, least_score = tr, score
         T *= 1.15
     return ok, (least, least_score)
+
+
+def ease(traj: Trajectory, ease_in_s: float = 0.0, ease_out_s: float = 0.0) -> Trajectory:
+    """Same path, retimed so that it starts (ease_in_s > 0) and/or ends (ease_out_s > 0) at rest.
+
+    The first ease_in_s seconds of the gesture are played over 2 x ease_in_s with a time warp
+    t = Tw·(u³ - u⁴/2), u = τ/Tw, Tw = 2·ease_in_s: zero velocity and acceleration at τ = 0,
+    velocity and acceleration of the gesture at τ = Tw. Symmetric at the end. The joint-space
+    path, hence its place in the guardian zone, is unchanged; only its timing is. The eased ends
+    can then be joined to the start pose by a straight min-jerk segment, which stays inside the
+    zone (the zone is convex) where a velocity-matched quintic may overshoot out of it.
+    Durations are rounded up to the trajectory's time step so that the middle samples are the
+    original ones."""
+    h = float(traj.t[1] - traj.t[0])
+    D = traj.duration
+    ti = float(np.ceil(ease_in_s / h - 1e-9) * h) if ease_in_s > 0 else 0.0
+    to = float(np.ceil(ease_out_s / h - 1e-9) * h) if ease_out_s > 0 else 0.0
+    if ti + to > D:
+        raise ValueError("ease longer than the trajectory")
+    N = D + ti + to
+    tau = np.linspace(0.0, N, int(round(N / h)) + 1)
+    t = tau - ti
+    if ti > 0:
+        m = tau < 2 * ti
+        u = tau[m] / (2 * ti)
+        t[m] = 2 * ti * (u**3 - u**4 / 2)
+    if to > 0:
+        m = tau > N - 2 * to
+        u = (N - tau[m]) / (2 * to)
+        t[m] = D - 2 * to * (u**3 - u**4 / 2)
+    return Trajectory(traj.joints, tau, traj.sample(traj.t[0] + np.clip(t, 0.0, D)))
+
+
+def ease_duration(v, a_max, min_s: float = 0.15) -> float:
+    """Gesture time consumed by an ease from/to rest at boundary velocity v. The warp adds up to
+    1.5·|v|/Tw = 0.75·|v|/ease of acceleration; this keeps it to half of a_max."""
+    v = np.abs(np.asarray(v, float))
+    return float(max(min_s, np.max(1.5 * v / np.asarray(a_max, float)))) if v.size else min_s
 
 
 def boundary_derivatives(traj: Trajectory, at_end: bool = False):
