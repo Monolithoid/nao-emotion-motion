@@ -32,10 +32,10 @@ def test_rejects_limits(cfg):
 
 
 def test_safe_endpoints_unsafe_middle(cfg):
-    """Extrémités sûres ne suffisent pas : le milieu du trajet est vérifié."""
+    """Safe end points are not enough: the middle of the path is checked."""
     j = ["HeadYaw", "HeadPitch"]
     t = np.array([0.0, 1.0, 2.0])
-    q = np.array([[0.0, 0.0], [0.0, 0.7], [0.0, 0.0]])  # HeadPitch hors limite au milieu
+    q = np.array([[0.0, 0.0], [0.0, 0.7], [0.0, 0.0]])  # HeadPitch out of limits in the middle
     rep = Guardian(cfg).validate(Trajectory(j, t, q))
     assert not rep.ok and "limit" in codes(rep)
 
@@ -54,7 +54,7 @@ def test_no_example_constraint_by_default(cfg):
 
 
 def test_coupled_constraint_mid_path(cfg):
-    """Chaque articulation reste dans ses min/max, mais la combinaison tête/tête viole une contrainte couplée."""
+    """Each joint stays within its min/max, but the head/head combination violates a coupled constraint."""
     cfg = with_constraints(cfg, ("tete", {"HeadPitch": 1.0, "HeadYaw": 0.25}, 0.5))
     j = ["HeadYaw", "HeadPitch"]
     t = np.linspace(0, 4, 201)
@@ -65,13 +65,13 @@ def test_coupled_constraint_mid_path(cfg):
 
 
 def test_head_arm_coupled_constraint_uses_context(cfg):
-    """Un mouvement des bras seul est jugé avec la posture de la tête fournie en contexte."""
+    """An arm-only movement is judged with the head posture given as context."""
     cfg = with_constraints(cfg, ("bras", {"LShoulderPitch": -1.0, "LShoulderRoll": -1.0, "HeadYaw": 0.5}, 1.4))
     j = ["LShoulderPitch", "LShoulderRoll"]
     t = np.linspace(0, 6, 301)
     s = np.sin(np.pi * t / 6) ** 2
     start = np.array(cfg.pose("start", j))
-    q = start + np.stack([-2.4 * s, -0.1 * s], axis=1)  # bras gauche levé
+    q = start + np.stack([-2.4 * s, -0.1 * s], axis=1)  # left arm raised
     assert g_ok(cfg, Trajectory(j, t, q))
     g = Guardian(cfg)
     assert "coupled" not in codes(g.validate(Trajectory(j, t, q), context_pose={"HeadYaw": -1.0}))

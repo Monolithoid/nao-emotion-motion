@@ -20,7 +20,7 @@ def test_hull_constraints_contain_points_and_shrink():
     pts = pts[np.hypot(pts[:, 0], pts[:, 1]) < 1]  # disque
     hull = simplify_hull(convex_hull(pts), 8)
     cons = hull_constraints(hull, 0.0)
-    for nx, ny, b in cons:  # sommets conservés dans l'enveloppe (simplification conservatrice)
+    for nx, ny, b in cons:  # vertices kept inside the hull (conservative simplification)
         assert np.all(hull @ np.array([nx, ny]) <= b + 1e-9)
     shrunk = hull_constraints(hull, 0.05)
     assert all(b2 == pytest.approx(b1 - 0.05) for (_, _, b1), (_, _, b2) in zip(cons, shrunk))
@@ -56,7 +56,7 @@ def calibrated_cfg(tmp_path, cfg):
     cal = simulate_calibration(wb)
     path = cal.save(d / "calibration" / "sim-test.yaml")
     with pytest.raises(CalibrationError):
-        cal.save(path)  # jamais écrasée
+        cal.save(path)  # never overwritten
     activate(d, path, allow_simulated=True)
     return load_config(d), cal
 
@@ -79,7 +79,7 @@ def test_real_robot_requires_matching_calibration(tmp_path, cfg, calibrated_cfg)
     c, _ = calibrated_cfg
     wb2 = make_wb(tmp_path / "b", c)
     wb2.adapter.is_real = True
-    wb2.ctrl.arm(confirm=True)  # calibration faite sur « sim », robot « sim »
+    wb2.ctrl.arm(confirm=True)  # calibration made on "sim", robot "sim"
     wb2.ctrl.disarm()
     wb2.adapter.capabilities = lambda: {"robot_name": "autre-nao"}
     with pytest.raises(ControllerError, match="autre-nao"):
@@ -94,8 +94,8 @@ def test_calibration_file_validation(tmp_path):
 
 
 def test_exploration_beyond_factory_keeps_factory_limit_with_warning():
-    """Mesure au-delà d'une limite d'usine (butée, jeu mécanique) : pas de refus,
-    la limite d'usine est gardée et un avertissement est enregistré."""
+    """Measurement beyond a factory limit (end stop, mechanical play): not refused,
+    the factory limit is kept and a warning is recorded."""
     from nao_motion.calibration import Calibration, compute_calibration
     rng = np.random.default_rng(1)
     q = np.stack([rng.uniform(-0.70, 0.40, 200), rng.uniform(-1.0, 1.0, 200)], axis=1)
@@ -111,8 +111,8 @@ def test_exploration_beyond_factory_keeps_factory_limit_with_warning():
 
 
 def test_rest_pose_may_be_outside_motion_zone():
-    """Repos en contact (bras sur les genoux) : accepté hors des limites calibrées et
-    des enveloppes, mais pas hors des limites d'usine. Le départ reste vérifié."""
+    """Rest in contact (arms on the knees): accepted outside the calibrated limits and
+    hulls, but not outside the factory limits. The start pose is still checked."""
     rng = np.random.default_rng(2)
     q = np.stack([rng.uniform(-0.4, 0.3, 200), rng.uniform(-1.0, 1.0, 200)], axis=1)
     sweeps = {"head": {"joints": ["HeadPitch", "HeadYaw"], "q": q}}

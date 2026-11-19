@@ -7,7 +7,7 @@ def test_env_file_overrides_robot_yaml(tmp_path, cfg):
     assert parse_env_file(f)["NAO_IP"] == "10.0.0.7"
     r = apply_env(cfg.robot, f, environ={"NAO_PORT": "9600"})
     assert r["robot"]["ip"] == "10.0.0.7" and r["robot"]["naoqi_version"] == "2.1.4.13"
-    assert r["robot"]["port"] == 9600  # l'environnement l'emporte sur .env
+    assert r["robot"]["port"] == 9600  # the environment wins over .env
     assert "NAO_IP" in r["_env_sources"]
 
 

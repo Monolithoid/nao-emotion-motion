@@ -1,4 +1,4 @@
-"""Guardian exporté (guardian.json + nao_guardian.py) : mêmes verdicts que le guardian du projet."""
+"""Exported guardian (guardian.json + nao_guardian.py): same verdicts as the project's guardian."""
 import ast
 import json
 import shutil
@@ -49,7 +49,7 @@ def test_export_content(calibrated):
     c, out, g = calibrated
     d = json.loads(open(out["guardian"], encoding="utf-8").read())
     assert d["source"]["calibrated"] and d["source"]["calibration_version"] == c.calibration_version
-    assert set(d["limits"]) == set(c.controlled_joints)  # bras, tête et mains (plage d'usine)
+    assert set(d["limits"]) == set(c.controlled_joints)  # arms, head and hands (factory range)
     origins = {x["origin"] for x in d["coupled_constraints"]}
     assert origins == {"calibration"}  # no manual example constraint any more
     # allowed ranges exported with the margins already taken: the checker removes nothing
@@ -72,7 +72,7 @@ def _random_trajectories(c, rng, n=150):
             continue
         lo = np.array([c.limits[j][0] for j in js])
         hi = np.array([c.limits[j][1] for j in js])
-        spread = float(rng.choice([0.2, 0.6, 1.05]))  # parfois au-delà des limites
+        spread = float(rng.choice([0.2, 0.6, 1.05]))  # sometimes beyond the limits
         mid, half = (lo + hi) / 2, (hi - lo) / 2
         q = mid + half * spread * np.sin(rng.uniform(0, 2 * np.pi, len(js)) + t[:, None] * rng.uniform(0.2, 3, len(js)))
         yield Trajectory(js, t, q)
@@ -99,7 +99,7 @@ def test_same_verdicts_as_project_guardian(calibrated):
         assert a.stats["n_checked_points"] == b.stats["n_checked_points"]
         n_ok += a.ok
         n_bad += not a.ok
-    assert n_ok > 5 and n_bad > 50  # les deux cas sont réellement exercés
+    assert n_ok > 5 and n_bad > 50  # both cases are really exercised
 
 
 def test_rest_to_start_cycle_accepted(calibrated):
@@ -113,7 +113,7 @@ def test_rest_to_start_cycle_accepted(calibrated):
     ref = Guardian(c)
     tr = Trajectory(list(start), [0.0, 0.1], [[rest[j] for j in start], [start[j] for j in start]])
     _same(ref.validate(tr), too_short)
-    # grand déplacement trop rapide : refus pour vitesse
+    # large move too fast: refused for velocity
     lo, hi = g.allowed_range("HeadYaw")
     a, b = dict(start, HeadYaw=lo + 0.05), dict(start, HeadYaw=hi - 0.05)  # box corners may lie outside a pair envelope
     fast = g.check_move(a, b, 0.2)  # well above the factory speed of HeadYaw
@@ -129,7 +129,7 @@ def test_pose_checks(calibrated):
     assert [v.code for v in g.check_pose({"LKneePitch": 0.0}).violations] == ["legs"]
     assert [v.code for v in g.check_pose({"Foo": 0.0}).violations] == ["unknown_joint"]
     assert [v.code for v in g.check_pose({"HeadYaw": float("nan")}).violations] == ["format"]
-    # enveloppe mesurée d'un couple : un coin de la boîte peut en sortir
+    # measured hull of a pair: a corner of the box can fall outside it
     assert all(c["name"].startswith("calib:") for c in g.constraints)
 
 
@@ -159,7 +159,7 @@ def test_command_line(calibrated, tmp_path):
 
 
 def test_checker_is_python27_compatible():
-    """Pas de Python 2 dans l'environnement de test : contrôle statique de la syntaxe et des imports."""
+    """No Python 2 in the test environment: static check of the syntax and imports."""
     src = CHECKER.read_text(encoding="utf-8")
     tree = ast.parse(src)
     assert src.startswith("# -*- coding: utf-8 -*-")
@@ -181,4 +181,4 @@ def test_checker_is_python27_compatible():
         if isinstance(n, ast.Call):
             assert not (isinstance(n.func, ast.Name) and n.func.id in ("open",)), "io.open requis en Python 2"
         if isinstance(n, ast.ClassDef):
-            assert n.bases, f"{n.name} : hériter explicitement (object) en Python 2"
+            assert n.bases, f"{n.name}: inherit explicitly (object) in Python 2"

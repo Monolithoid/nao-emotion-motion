@@ -1,7 +1,7 @@
 "use strict";
-// Onglet Calibration : conduite pas à pas de la calibration du guardian.
-// La page ne garde aucun état propre : elle redessine tout depuis /api/calibration.
-// Aucune route appelée ici ne commande de mouvement.
+// Calibration tab: step-by-step driving of the guardian calibration.
+// The page keeps no state of its own: it redraws everything from /api/calibration.
+// No route called here commands a movement.
 (function () {
   const GROUP_LABEL = {head: "Tête", left_arm: "Bras gauche", right_arm: "Bras droit"};
   const POSE_LABEL = {rest: "repos", start: "départ"};
@@ -101,8 +101,8 @@
     $("c-table").innerHTML = h;
   }
 
-  // barre : plage d'usine (fond), plage explorée (bande), angle actuel (trait) ;
-  // le trait passe en rouge à moins de 0,05 rad d'une limite d'usine
+  // bar: factory range (background), explored range (band), current angle (line);
+  // the line turns red within 0.05 rad of a factory limit
   function facBar(f, q, rg) {
     if (!f) return "—";
     const W = 110, H = 10, X = (v) => Math.max(0, Math.min(W, (v - f[0]) / ((f[1] - f[0]) || 1) * W));
@@ -156,7 +156,7 @@
     box.innerHTML = h + "</table>";
   }
 
-  // -- calibrations enregistrées (liste + activation, même sans calibration ouverte) --
+  // -- saved calibrations (list + activation, even without an open calibration) --
   let FILES = [];
   async function loadFiles() {
     let d;
@@ -175,7 +175,7 @@
         "</table>";
       box.querySelectorAll("[data-activate]").forEach((b) => b.onclick = async () => {
         b.disabled = true;
-        try { await api("calibrations/activate", {file: b.dataset.activate}); } catch (e) { /* affiché */ }
+        try { await api("calibrations/activate", {file: b.dataset.activate}); } catch (e) { /* shown */ }
         await loadFiles();
         if (typeof refreshStatus === "function") refreshStatus();
       });
@@ -277,13 +277,13 @@
   document.querySelector('nav button[data-tab="calib"]').addEventListener("click", loadFiles);
   setInterval(poll, 300);
   document.querySelector('nav button[data-tab="calib"]').addEventListener("click", poll);
-  // lu par nao-figure.js (illustration) : groupe affiché et état de la calibration ;
-  // un clic sur une partie du robot choisit le groupe, comme les boutons
+  // read by nao-figure.js (illustration): shown group and calibration state;
+  // a click on a part of the robot chooses the group, like the buttons
   window.CALIB = {
     get active() { return !!CAL.active; },
     get group() { return group; },
     get groupLabel() { return glabel(group); },
-    // raccourci Espace (shortcuts.js) : relâche le groupe choisi, comme le bouton, sans boîte de dialogue
+    // Space shortcut (shortcuts.js): relaxes the chosen group, like the button, without a dialog
     release() { return CAL.active ? call("release", {group, confirm: true}) : undefined; },
     get sweeping() { return CAL.sweeping || null; },
     select(g) { if (CAL.active && !CAL.sweeping && CAL.groups && g in CAL.groups) { group = g; render(); } },
