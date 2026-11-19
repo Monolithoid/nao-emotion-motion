@@ -1,15 +1,14 @@
-"""Guardian : validation indépendante des trajectoires avant toute exécution.
+"""Guardian: independent validation of trajectories before any execution.
 
-Le guardian ne modifie jamais une trajectoire : il l'accepte ou la refuse en
-listant les violations. Il vérifie le TRAJET COMPLET (échantillonné finement),
-pas seulement ses extrémités.
+The guardian never modifies a trajectory: it accepts or refuses it, listing the
+violations. It checks the FULL PATH (finely sampled), not just its end points.
 
-Ce qu'il ne garantit pas :
-  - l'absence de collision au-delà des contraintes configurées (des limites
-    min/max indépendantes et quelques contraintes linéaires couplées ne
-    décrivent pas toute la géométrie du robot) ;
-  - la stabilité électrique ou logicielle du robot : il ne corrige pas des
-    redémarrages dont la cause n'est pas établie.
+What it does not guarantee:
+  - absence of collision beyond the configured constraints (independent min/max
+    limits and a few linear coupled constraints do not describe the whole
+    geometry of the robot);
+  - the electrical or software stability of the robot: it does not fix restarts
+    whose cause has not been established.
 """
 from __future__ import annotations
 
@@ -66,7 +65,7 @@ class Guardian:
         self.g = cfg.guardian
 
     def validate_raw(self, data: dict, **kw) -> Report:
-        """Valide une trajectoire reçue sous forme de dictionnaire (ex. réseau)."""
+        """Validates a trajectory received as a dictionary (e.g. over the network)."""
         try:
             if not isinstance(data, dict):
                 raise TrajectoryError("dictionnaire attendu")
@@ -79,11 +78,11 @@ class Guardian:
                  start_state: Optional[dict] = None, check_duration: bool = True,
                  context_pose: Optional[dict] = None) -> Report:
         """
-        expected_joints : ensemble exact attendu (trajectoire incompatible sinon).
-        start_state     : {joint: rad} mesuré ; le premier point doit en être proche.
-        context_pose    : {joint: rad} pour les articulations non commandées, utilisé
-                          dans les contraintes couplées (ex. tête maintenue pendant
-                          un mouvement des bras).
+        expected_joints : exact expected set (incompatible trajectory otherwise).
+        start_state     : measured {joint: rad}; the first point must be close to it.
+        context_pose    : {joint: rad} for the joints that are not commanded, used
+                          in the coupled constraints (e.g. head held during
+                          an arm movement).
         """
         v: List[Violation] = []
         try:
@@ -108,7 +107,7 @@ class Guardian:
             v.append(Violation("duration", "Durée hors bornes", value=dur,
                                limit=self.g.max_duration_s if dur > self.g.max_duration_s else self.g.min_duration_s))
 
-        # trajet complet : échantillons d'origine + grille fine
+        # full path: original samples + fine grid
         n = max(2, int(np.ceil(dur * self.g.check_rate_hz)) + 1)
         tt = np.union1d(traj.t, np.linspace(traj.t[0], traj.t[-1], n))
         qq = traj.sample(tt)
@@ -121,7 +120,7 @@ class Guardian:
                                    time_s=float(tt[i]), value=float(qq[i, k]),
                                    limit=lo if qq[i, k] < lo else hi))
 
-        # vitesses et accélérations du trajet linéaire par morceaux exécuté
+        # velocities and accelerations of the executed piecewise-linear path
         dt = np.diff(traj.t)
         vel = np.diff(traj.q, axis=0) / dt[:, None]
         max_v = np.abs(vel).max(axis=0) if vel.size else np.zeros(len(traj.joints))
@@ -143,7 +142,7 @@ class Guardian:
                     v.append(Violation("acceleration", "Accélération excessive", joint=j,
                                        time_s=float(traj.t[i + 1]), value=float(max_a[k]), limit=alim))
 
-        # contraintes couplées sur tout le trajet (y compris tête <-> bras)
+        # coupled constraints over the whole path (including head <-> arm)
         ctx = dict(context_pose or {})
         for c in self.g.coupled_constraints:
             total = np.zeros(tt.shape[0])
@@ -176,7 +175,7 @@ class Guardian:
                  "max_velocity": dict(zip(traj.joints, np.round(max_v, 4).tolist())),
                  "max_acceleration": dict(zip(traj.joints, np.round(max_a, 4).tolist()))}
         if any(x.code in ("velocity", "acceleration") for x in v):
-            # facteur de ralentissement qui suffirait (information seulement, pas appliqué)
+            # slow-down factor that would be enough (information only, not applied)
             sv = max(max_v[k] / self.g.velocity_limit(j) for k, j in enumerate(traj.joints))
             sa = float(np.sqrt(max(max_a[k] / self.g.acceleration_limit(j) for k, j in enumerate(traj.joints)))) \
                 if max_a.size else 0
@@ -185,14 +184,14 @@ class Guardian:
 
     def validate_rest_transition(self, traj: Trajectory, start_state: Optional[dict] = None,
                                  time_offset: float = 0.0) -> Report:
-        """Segment repos <-> départ.
+        """Rest <-> start segment.
 
-        Le repos peut être hors de la zone de mouvement calibrée (ex. bras posés sur les
-        genoux : contact). Ces segments sont les SEULS autorisés à la quitter. Ils sont
-        vérifiés sur les limites d'usine, à vitesse réduite et en accélération ; ni marge
-        ni contraintes couplées. Le guardian ne garantit pas l'absence de collision le
-        long de ce trajet : que le départ soit accessible sans heurt depuis le repos est
-        à la charge de l'opérateur qui calibre."""
+        Rest may be outside the calibrated movement zone (e.g. arms resting on the
+        knees: contact). These segments are the ONLY ones allowed to leave it. They are
+        checked against the factory limits, at reduced velocity and acceleration; no margin
+        and no coupled constraints. The guardian does not guarantee absence of collision along
+        this path: making sure the start pose can be reached smoothly from rest is
+        up to the operator who calibrates."""
         v: List[Violation] = []
         try:
             from ..trajectory import check_samples

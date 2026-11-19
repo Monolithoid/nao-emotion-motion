@@ -1,7 +1,7 @@
-"""Interface locale de collecte (HTTP + page web statique, bibliothèque standard).
+"""Local collection interface (HTTP + static web page, standard library).
 
-Écoute par défaut sur 127.0.0.1 uniquement. Aucune route ne déclenche de
-mouvement sans action explicite de l'opérateur (et `confirm: true`).
+Listens on 127.0.0.1 only by default. No route triggers a
+movement without an explicit operator action (and `confirm: true`).
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ class Api:
     def __init__(self, wb):
         self.wb = wb
         if wb.adapter.name == "sim":
-            wb.ctrl.connect()  # simulation : connexion sans risque, aucun mouvement
+            wb.ctrl.connect()  # simulation: risk-free connection, no movement
 
     # GET ---------------------------------------------------------------------
     def get_config(self, q):
@@ -98,7 +98,7 @@ class Api:
         return self.wb.store.stats()
 
     def get_progress(self, q):
-        """Avancement de la collecte (prises acceptées par groupe, paliers, couverture)."""
+        """Collection progress (accepted takes per group, milestones, coverage)."""
         from ..data.progress import progress
         return progress(self.wb.cfg, self.wb.store.list())
 
@@ -182,7 +182,7 @@ class Api:
         return self.wb.current_event().to_dict()
 
     def get_hands(self, q):
-        """Ouverture mesurée des mains (et, pendant le passage mains, cible et consigne). Aucune commande."""
+        """Measured hand opening (and, during the hands pass, target and prompt). No command."""
         return self.wb.hands_state()
 
     def get_calibration(self, q):
@@ -191,8 +191,8 @@ class Api:
 
     # POST --------------------------------------------------------------------
     def post_connect(self, d):
-        """{"mode": "sim"} ou {"mode": "robot", "robot_host": "nao.local" | "192.168.1.10",
-        "robot_port": 9559, "bridge_host"?: ..., "bridge_port"?: ...}. Aucun mouvement."""
+        """{"mode": "sim"} or {"mode": "robot", "robot_host": "nao.local" | "192.168.1.10",
+        "robot_port": 9559, "bridge_host"?: ..., "bridge_port"?: ...}. No movement."""
         mode = d.get("mode")
         if self.wb.calibration is not None and mode == "sim":
             raise ValueError("Calibration ouverte : la fermer avant de passer en simulation")
@@ -223,17 +223,17 @@ class Api:
         return self.wb.status()
 
     def post_hold(self, d):
-        """Raidit sur place (aucun déplacement). Groupes de joints.yaml, plus « hands » pour les mains ;
-        sans groupe : tout, mains comprises."""
+        """Stiffens in place (no movement). Groups from joints.yaml, plus "hands" for the hands;
+        without a group: everything, hands included."""
         c = self.wb.cfg
         groups = d.get("groups") or list(c.groups) + (["hands"] if c.hand_joints else [])
         self.wb.ctrl.hold([j for g in groups for j in (c.hand_joints if g == "hands" else c.groups[g])])
         return self.wb.status()
 
     def post_relax(self, d):
-        """Relâche (raideur nulle). Groupes de joints.yaml, plus « hands » pour les mains. Possible
-        pendant un mouvement (Play, retour au repos) : le mouvement s'arrête là, puis les moteurs
-        sont coupés."""
+        """Relaxes (zero stiffness). Groups from joints.yaml, plus "hands" for the hands. Possible
+        during a movement (Play, return to rest): the movement stops there, then the motors
+        are turned off."""
         c = self.wb.cfg
         groups = d.get("groups") or []
         self.wb.ctrl.relax([j for g in groups for j in (c.hand_joints if g == "hands" else c.groups[g])],
@@ -241,8 +241,8 @@ class Api:
         return self.wb.status()
 
     def post_rest_relax(self, d):
-        """Onglet Génération (touche 3) : retour motorisé au repos puis relâchement de tous les
-        moteurs. Action explicite de l'opérateur, sans dialogue (avertissement permanent)."""
+        """Generation tab (key 3): motorised return to rest, then all motors are
+        relaxed. Explicit operator action, without a dialog (permanent warning)."""
         return self.wb.rest_and_relax()
 
     def post_rest(self, d):
@@ -250,7 +250,7 @@ class Api:
         return self.wb.status()
 
     def post_record_prepare(self, d):
-        """{"kind": "arms"|"head"|"hands", "emotion", "intensity", "intention"?} : passages indépendants."""
+        """{"kind": "arms"|"head"|"hands", "emotion", "intensity", "intention"?}: independent passes."""
         return self.wb.prepare_take(d.get("kind", "arms"), d["emotion"], float(d["intensity"]),
                                     d.get("intention") or None, confirm=bool(d.get("confirm")))
 
@@ -269,8 +269,8 @@ class Api:
         return {"discarded": True}
 
     def post_hands(self, d):
-        """{"targets": {"LHand": 0..1, "RHand": 0..1}} : suivi en direct pendant le passage mains,
-        sinon mouvement court validé par le guardian (contrôleur armé requis)."""
+        """{"targets": {"LHand": 0..1, "RHand": 0..1}}: followed live during the hands pass,
+        otherwise a short movement validated by the guardian (armed controller required)."""
         return self.wb.set_hands(d.get("targets") or {})
 
     def post_take(self, take_id, d):
@@ -279,7 +279,7 @@ class Api:
         return m.to_dict()
 
     def post_draw(self, d):
-        """Tirage aléatoire équilibré : propose une consigne, ne commande rien."""
+        """Balanced random draw: suggests a prompt, commands nothing."""
         from ..data.balance import balanced_draw
         kind = d.get("kind")
         if kind not in ("arms", "head", "hands", "gen", None):
@@ -388,8 +388,8 @@ class Api:
                 "curves": C.tolist(), "spread_per_joint": np.round(spread, 4).tolist()}
 
     def post_request(self, d):
-        """Point d'entrée pour un LLM extérieur : émotion + intensité -> proposition
-        validée, JAMAIS exécutée automatiquement."""
+        """Entry point for an external LLM: emotion + intensity -> validated
+        proposal, NEVER executed automatically."""
         out = self.post_generate(d)
         out["note"] = "Proposition seulement : l'exécution exige une action explicite de l'opérateur."
         return out
@@ -413,7 +413,7 @@ class Api:
                                     relax_end=d.get("relax_end", True) is not False)
 
 
-    # calibration du guardian (aucune route ne commande de mouvement) ----------
+    # guardian calibration (no route commands a movement) ----------------------
     def post_calibration_open(self, d):
         return self.wb.open_calibration()
 
@@ -460,16 +460,16 @@ class Api:
         if not d.get("confirm"):
             raise ValueError("Confirmation explicite requise")
         cal = self._cal()
-        cal.activate()  # recharge la configuration (Workbench.activate_calibration)
+        cal.activate()  # reloads the configuration (Workbench.activate_calibration)
         return cal.state()
 
     def post_calibration_import(self, d):
-        """Reprend un groupe d'une calibration enregistrée dans la calibration ouverte."""
+        """Imports a group from a saved calibration into the open calibration."""
         self._cal().import_group(d["file"], d["group"])
         return self._cal().state()
 
     def post_calibration_import_all(self, d):
-        """Reprend tous les groupes d'une calibration enregistrée (pour ne changer qu'une pose)."""
+        """Imports all groups from a saved calibration (to change only one pose)."""
         self._cal().import_all(d["file"])
         return self._cal().state()
 
@@ -481,7 +481,7 @@ class Api:
         self._cal().discard_draft()
         return self._cal().state()
 
-    # calibrations enregistrées (configs/calibration/) : liste et activation -----
+    # saved calibrations (configs/calibration/): list and activation ------------
     def get_calibrations(self, q):
         return {"files": self.wb.list_calibrations(), "active": self.wb.cfg.calibration_version,
                 "calibrated": self.wb.cfg.calibrated}
@@ -492,7 +492,7 @@ class Api:
         return self.wb.extend_calibration(d.get("file"), bool(d.get("speeds")), bool(d.get("save")))
 
     def post_calibrations_activate(self, d):
-        """Active un fichier déjà enregistré (aucun mouvement, contrôleur laissé tel quel)."""
+        """Activates an already saved file (no movement, controller left as is)."""
         self.wb.activate_calibration(d["file"])
         return self.get_calibrations({})
 

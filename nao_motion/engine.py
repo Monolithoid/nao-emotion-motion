@@ -1,26 +1,26 @@
-"""Moteur de génération : trois modèles INDÉPENDANTS (bras, tête, mains) combinés.
+"""Generation engine: three INDEPENDENT models (arms, head, hands) combined.
 
-Chaque modèle reçoit la même consigne [émotion, intensité, événement] et produit
-la trajectoire de son seul groupe, avec sa propre durée. Aucun modèle ne lit la
-sortie d'un autre : bras, tête et mains s'entraînent séparément. La cohérence
-entre groupes vient de la consigne partagée (le bras pointe vers l'événement,
-la tête le regarde), pas d'une synchronisation apprise.
+Each model receives the same prompt [emotion, intensity, event] and produces the
+trajectory of its own group only, with its own duration. No model reads another's
+output: arms, head and hands are trained separately. Consistency between groups
+comes from the shared prompt (the arm points to the event, the head looks at it),
+not from a learned synchronisation.
 
-Assemblage (configs/model.yaml, `combine.timing`) :
-- `hold` (défaut) : tous les groupes démarrent ensemble, chacun à son tempo
-  appris ; un groupe plus court tient sa pose finale jusqu'à la fin du plus long ;
-- `stretch` : chaque groupe est étiré sur la durée la plus longue (plus lent,
-  jamais plus rapide que ce qui a été appris).
+Assembly (configs/model.yaml, `combine.timing`):
+- `hold` (default): all groups start together, each at its learned tempo; a
+  shorter group holds its final pose until the end of the longest one;
+- `stretch`: each group is stretched over the longest duration (slower, never
+  faster than what was learned).
 
-Un groupe sans modèle : bras ou tête maintenus en position de départ, mains non
-commandées (laissées telles quelles). Il faut au moins un modèle.
+A group without a model: arms or head held in the start position, hands not
+commanded (left as they are). At least one model is required.
 
-Modèles CVAE (model.yaml `cvae`) : chaque groupe tire son propre z ~ N(0, T²),
-T = `temperature` (0 = geste central z = 0, défaut `cvae.temperature`), ou reçoit
-un z donné (`latent`, ex. le z d'une prise sur la carte de l'onglet Génération).
+CVAE models (model.yaml `cvae`): each group draws its own z ~ N(0, T²),
+T = `temperature` (0 = central gesture z = 0, default `cvae.temperature`), or
+receives a given z (`latent`, e.g. the z of a take on the Generation tab map).
 
-Le moteur PROPOSE des trajectoires ; il n'exécute rien. L'exécution passe par
-le contrôleur, qui fait valider le cycle complet par le guardian.
+The engine PROPOSES trajectories; it executes nothing. Execution goes through the
+controller, which has the full cycle validated by the guardian.
 """
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ class Generated:
     notes: list = field(default_factory=list)
     hands: Optional[Trajectory] = None
     hand_ctrl: Optional[np.ndarray] = None
-    durations: Dict[str, float] = field(default_factory=dict)   # durée propre de chaque groupe généré
+    durations: Dict[str, float] = field(default_factory=dict)   # own duration of each generated group
 
     def to_dict(self):
         return {"inputs": self.inputs, "duration_s": self.duration, "notes": self.notes,
@@ -115,8 +115,8 @@ class MotionEngine:
 
     def _plan(self, model, emotion: Emotion, intensity: float, event: Optional[EventContext],
               variation: float = 0.0, seed: Optional[int] = None, z=None):
-        """Points de contrôle normalisés (K×J) et durée (s) d'un groupe. `z` : code latent
-        (modèles CVAE seulement)."""
+        """Normalised control points (K×J) and duration (s) of a group. `z`: latent code
+        (CVAE models only)."""
         x = motion_input(self.cfg.emotions, emotion, intensity, event)
         out = (model.predict(x) if z is None else model.predict(x, z))[0]
         ctrl_n = out[:-1].reshape(model_k(model, self.K), -1)
@@ -145,10 +145,10 @@ class MotionEngine:
         return self._plan(self.hands_model, emotion, intensity, event, variation, seed)
 
     def _smooth_noise(self, shape, sigma, seed):
-        """Variation non apprise : bruit lisse sur les points de contrôle intérieurs.
+        """Non-learned variation: smooth noise on the inner control points.
 
-        C'est une première façon simple de produire des variantes ; une variante
-        apprise (latent) est prévue dans les modèles (latent_dim)."""
+        This is a first simple way to produce variants; a learned
+        variant (latent) is provided in the models (latent_dim)."""
         rng = np.random.default_rng(seed)
         n = rng.normal(0, sigma, size=shape)
         n = (n + np.roll(n, 1, axis=0) + np.roll(n, -1, axis=0)) / 3
@@ -163,16 +163,16 @@ class MotionEngine:
                  seed: Optional[int] = None, hands_current: Optional[Dict[str, float]] = None,
                  project_zone: bool = False, temperature: Optional[float] = None,
                  latent: Optional[Dict[str, list]] = None) -> Generated:
-        """Geste combiné bras + tête + mains. `head_current` et `hands_current` ne sont plus des
-        entrées des modèles (gardés pour compatibilité d'appel) : les transitions depuis la
-        posture mesurée sont planifiées par le contrôleur."""
+        """Combined arms + head + hands gesture. `head_current` and `hands_current` are no longer
+        model inputs (kept for call compatibility): the transitions from the
+        measured posture are planned by the controller."""
         check_intensity(intensity)
         emotion_vector(self.cfg.emotions, emotion)
         if not self.has_model:
             raise CheckpointError("Aucun modèle entraîné (bras, tête ou mains)")
         event = event or EventContext.none()
         cfg, notes = self.cfg, []
-        sub = (lambda k: None if seed is None else int(seed) + k)  # une graine par groupe
+        sub = (lambda k: None if seed is None else int(seed) + k)  # one seed per group
         plans, zs = {}, {}
         latent = latent or {}
         for k, group in enumerate(("arms", "head", "hands")):
@@ -197,11 +197,11 @@ class MotionEngine:
                 if n_moved:
                     notes.append(f"{group}: {n_moved} control point(s) moved into the zone (max {moved:.3f} rad)")
             if lo is not None:
-                # points de contrôle ramenés dans la plage : par la propriété d'enveloppe convexe
-                # des B-splines, la courbe y reste aussi, sans cassure de vitesse
+                # control points clamped into the range: by the convex hull property
+                # of B-splines, the curve stays inside too, without a velocity break
                 ctrl = np.clip(ctrl, lo, hi)
             d = T if self.timing == "stretch" else dur
-            # au-delà de sa durée, le groupe tient sa pose finale (phase bornée à 1)
+            # beyond its duration, the group holds its final pose (phase capped at 1)
             u = np.clip(tt / d, 0.0, 1.0)
             return Trajectory(joints, tt, bspline_basis(ctrl.shape[0], u) @ ctrl), ctrl
 

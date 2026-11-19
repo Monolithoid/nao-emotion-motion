@@ -1,4 +1,4 @@
-"""Validation d'une adresse de robot saisie dans l'interface (IP ou nom DNS)."""
+"""Validation of a robot address entered in the interface (IP or DNS name)."""
 import ipaddress
 import re
 

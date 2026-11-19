@@ -1,4 +1,4 @@
-"""Transitions gérées par le contrôleur (repos <-> départ <-> geste), non apprises."""
+"""Transitions handled by the controller (rest <-> start <-> gesture), not learned."""
 from __future__ import annotations
 
 from typing import Callable, Optional, Sequence
@@ -10,10 +10,10 @@ from ..trajectory import Trajectory
 
 def min_jerk(q0: Sequence[float], q1: Sequence[float], joints, v_max: float, a_max: float,
              rate_hz: float = 50.0, min_duration: float = 0.4) -> Trajectory:
-    """Profil à jerk minimal (polynôme de degré 5), vitesse et accélération nulles aux bouts.
+    """Minimum-jerk profile (degree-5 polynomial), zero velocity and acceleration at both ends.
 
-    Vitesse crête = 1.875·Δ/T ; accélération crête ≈ 5.774·Δ/T². T est choisi
-    pour respecter v_max et a_max sur l'articulation la plus contraignante.
+    Peak velocity = 1.875·Δ/T; peak acceleration ≈ 5.774·Δ/T². T is chosen
+    to respect v_max and a_max on the most constraining joint.
     """
     q0, q1 = np.asarray(q0, float), np.asarray(q1, float)
     d = np.abs(q1 - q0)  # v_max / a_max: one value or one per joint
@@ -131,10 +131,10 @@ def ease_duration(v, a_max, min_s: float = 0.15) -> float:
 
 
 def boundary_derivatives(traj: Trajectory, at_end: bool = False):
-    """Vitesse et accélération (différences finies) au début ou à la fin d'une trajectoire."""
+    """Velocity and acceleration (finite differences) at the start or end of a trajectory."""
     q, t = traj.q, traj.t
     if at_end:
-        q, t = q[::-1], t[::-1]  # pas de temps négatifs : dérivées dans le bon sens
+        q, t = q[::-1], t[::-1]  # no negative time steps: derivatives in the right direction
     if len(t) < 3:
         return np.zeros(q.shape[1]), np.zeros(q.shape[1])
     dt1, dt2 = t[1] - t[0], t[2] - t[1]

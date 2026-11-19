@@ -1,10 +1,10 @@
-"""Entraînement des modèles bras, tête et mains (indépendants), avec métriques et checkpoints.
+"""Training of the arms, head and hands models (independent), with metrics and checkpoints.
 
-Les métriques sont calculées sur des trajectoires denses (radians), en
-entraînement et en validation, et comparées à une référence simple « moyenne
-des prises de même émotion et d'intensité voisine ». Aucun nombre de prises
-n'est imposé : le rapport indique simplement ce que les données permettent
-de mesurer (ex. pas de validation possible avec un seul groupe).
+Metrics are computed on dense trajectories (radians), on
+training and validation, and compared with a simple baseline "average
+of the takes with the same emotion and a close intensity". No number of takes
+is imposed: the report simply states what the data allows
+to measure (e.g. no validation possible with a single group).
 """
 from __future__ import annotations
 
@@ -152,7 +152,7 @@ def _motion_kept(pred_n, true_n, norm: Norm, K):
 
 
 def _dense_rmse(pred_n, true_n, norm: Norm, K):
-    """RMSE en radians sur trajectoires denses (phase), globale et par articulation."""
+    """RMSE in radians on dense trajectories (phase), overall and per joint."""
     J = len(norm.joints)
     B = bspline_basis(K, np.linspace(0, 1, 100))
     P = np.einsum("nk,bkj->bnj", B, norm.inv(pred_n.reshape(-1, K, J)))
@@ -162,8 +162,8 @@ def _dense_rmse(pred_n, true_n, norm: Norm, K):
 
 
 def _baseline(ex: Examples, tr, va):
-    """Prédiction de référence : moyenne des prises d'entraînement de même émotion et
-    d'intensité voisine (±0.2), sinon même émotion, sinon moyenne globale."""
+    """Baseline prediction: average of the training takes with the same emotion and
+    a close intensity (±0.2), otherwise same emotion, otherwise overall average."""
     preds = []
     for i in va:
         same = [j for j in tr if ex.emotions[j] == ex.emotions[i]]
@@ -201,7 +201,7 @@ _NO_TAKES = {"arms": "Aucune prise de bras utilisable (statut 'accepted' requis 
              "hands": "Aucune prise de mains utilisable (statut 'accepted' requis par défaut)"}
 
 
-# réglages modifiables pour un entraînement (interface / CLI), sans toucher à model.yaml
+# settings that can be changed for one training run (interface / CLI), without touching model.yaml
 OVERRIDABLE = ("hidden", "dropout", "weight_decay", "lr", "smoothness_weight", "epochs", "mirror", "folds",
                "n_control_points", "motion_energy_weight",
                # CVAE mode (model.yaml section `cvae`)
@@ -213,7 +213,7 @@ _TRUE, _FALSE = ("1", "true", "yes", "on"), ("0", "false", "no", "off")
 
 
 def check_overrides(o: Optional[dict]) -> dict:
-    """Valide les réglages d'un entraînement ; lève TrainingError si une valeur est invalide."""
+    """Validates the settings of a training run; raises TrainingError if a value is invalid."""
     out = {}
     for k, v in (o or {}).items():
         if v is None or v == "":
@@ -260,12 +260,12 @@ def check_overrides(o: Optional[dict]) -> dict:
 
 def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, statuses=("accepted",),
                     epochs: Optional[int] = None, log=None, overrides: Optional[dict] = None) -> Path:
-    """Entraîne UN groupe (bras, tête ou mains), indépendamment des deux autres.
+    """Trains ONE group (arms, head or hands), independently of the other two.
 
-    Entrée : [émotion, intensité, événement] ; sortie : points de contrôle du groupe
-    et log de sa durée. Aucun autre modèle n'est requis ni chargé.
-    `overrides` : réglages propres à cet entraînement (taille du réseau, dropout,
-    weight_decay, lr, lissage, époques, miroir, validation croisée) ; model.yaml n'est pas modifié.
+    Input: [emotion, intensity, event]; output: control points of the group
+    and log of its duration. No other model is required or loaded.
+    `overrides`: settings specific to this training run (network size, dropout,
+    weight_decay, lr, smoothing, epochs, mirror, cross-validation); model.yaml is not modified.
 
     Mirror (training.mirror, default on): left/right mirrors of the TRAINING takes without
     an event are added in memory (data/mirror.py). Validation, the baseline and the
@@ -340,7 +340,7 @@ def train_component(component: str, store: TakeStore, cfg: Config, runs_dir, sta
             metrics["val_recon_motion_kept"] = _motion_kept(rec, ex.Y[va], norm, K)
         if len(va) and hist:
             metrics["best_epoch"] = _best_epoch(hist)
-    # réglages effectivement utilisés, et époque du modèle retenu
+    # settings actually used, and epoch of the kept model
     metrics["settings"] = {"hidden": arch["hidden"], "dropout": arch["dropout"],
                            "weight_decay": float(tcfg["weight_decay"]), "lr": float(tcfg["lr"]),
                            "smoothness_weight": float(tcfg.get("smoothness_weight", 0.0)),
@@ -631,7 +631,7 @@ def _meta(cfg, component, joints, norm, K, ex, tr, va, tcfg):
             "config_fingerprint": cfg.fingerprint(),
             "train_take_ids": [ex.take_ids[i] for i in tr], "val_take_ids": [ex.take_ids[i] for i in va],
             "split": "par groupe (prise ; anciennes prises tête/mains : geste des bras rejoué)", "training": tcfg,
-            "synthetic_data": None}  # renseigné par l'appelant
+            "synthetic_data": None}  # filled in by the caller
 
 
 def _guardian_sweep(cfg, arm_model=None, head_model=None, intensities=(0.2, 0.5, 0.8, 1.0), hands_model=None):
@@ -721,7 +721,7 @@ def latest(runs_dir, component) -> Optional[Path]:
     p = Path(runs_dir) / f"latest_{component}.txt"
     if p.exists():
         name = Path(p.read_text().strip())
-        # nom du run relatif au dossier runs/ (indépendant du dossier courant)
+        # run name relative to the runs/ folder (independent of the current folder)
         run_name = name.parent.name if name.name == "model.pt" else name.name
         for q in (Path(runs_dir) / run_name / "model.pt", name):
             if q.exists():

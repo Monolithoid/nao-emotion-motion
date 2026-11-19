@@ -1,17 +1,17 @@
-"""Parcours complet en simulation (temps virtuel), données SYNTHÉTIQUES.
+"""Full walkthrough in simulation (virtual time), SYNTHETIC data.
 
-0. calibration simulée (exploration guidée -> limites et enveloppes) ;
-1. collecter et sauvegarder des démonstrations des bras ;
-2. les consulter et les rejouer virtuellement (validation guardian) ;
-3. entraîner le modèle des bras ;
-4. générer et valider une trajectoire, l'exécuter sur le robot simulé ;
-5. collecte tête, INDÉPENDANTE des bras : l'opérateur (ici simulé) guide la
-   tête pour une émotion, une intensité et un événement, bras raides sur place ;
-6. entraîner la tête seule et exécuter le geste combiné bras + tête ;
-7. collecte mains, indépendante : l'opérateur (simulé) pilote l'ouverture des
-   mains ; entraîner les mains seules, geste combiné bras + tête + mains.
+0. simulated calibration (guided exploration -> limits and hulls);
+1. collect and save arm demonstrations;
+2. review and replay them virtually (guardian validation);
+3. train the arms model;
+4. generate and validate a trajectory, execute it on the simulated robot;
+5. head collection, INDEPENDENT of the arms: the operator (simulated here) guides
+   the head for an emotion, an intensity and an event, arms stiff in place;
+6. train the head alone and execute the combined arms + head gesture;
+7. hands collection, independent: the (simulated) operator drives the hand
+   opening; train the hands alone, combined arms + head + hands gesture.
 
-Les données synthétiques vérifient le fonctionnement technique, pas l'expressivité.
+Synthetic data checks that things work technically, not expressiveness.
 """
 from __future__ import annotations
 
@@ -32,8 +32,8 @@ ARM_CONTEXTS = [EventContext.none(), EventContext(True, 0.7, 0.2, source="test",
 
 
 def collect_arms(wb: Workbench, reps=2, intensities=(0.3, 0.7, 1.0), contexts=None, log=print):
-    """Une prise par (émotion, intensité, répétition) ; l'événement change d'une
-    prise à l'autre (sans, à gauche proche, à droite loin...)."""
+    """One take per (emotion, intensity, repetition); the event changes from one
+    take to the next (none, left near, right far...)."""
     contexts = contexts or ARM_CONTEXTS
     arm_ids = []
     for e in wb.cfg.emotions:
@@ -49,13 +49,13 @@ def collect_arms(wb: Workbench, reps=2, intensities=(0.3, 0.7, 1.0), contexts=No
 
 
 def collect_group(wb: Workbench, kind: str, intensities=(0.3, 0.7, 1.0), reps=1, contexts=None, log=print):
-    """Passage tête ou mains INDÉPENDANT : une prise par (émotion, intensité, contexte,
-    répétition), sans aucun geste des bras ni modèle."""
+    """INDEPENDENT head or hands pass: one take per (emotion, intensity, context,
+    repetition), without any arm gesture or model."""
     cfg = wb.cfg
     contexts = contexts or DEFAULT_CONTEXTS
     wb.ctrl.hold(cfg.controlled_joints if kind == "hands" else cfg.all_joints)
     if kind == "hands":
-        wb.ctrl.arm(confirm=True)  # les mains sont pilotées (motorisées)
+        wb.ctrl.arm(confirm=True)  # the hands are driven (motorised)
     ids = []
     for e in cfg.emotions:
         for i in intensities:
@@ -66,7 +66,7 @@ def collect_group(wb: Workbench, kind: str, intensities=(0.3, 0.7, 1.0), reps=1,
                     wb.start_recording(countdown_s=0.3, background=False)
                     ids.append(wb.save_recording(status="accepted", notes="synthétique"))
                     if kind == "head":
-                        wb.ctrl.hold(cfg.head_joints)  # tête raidie sur place (sans déplacement)
+                        wb.ctrl.hold(cfg.head_joints)  # head stiffened in place (no movement)
     wb.event = EventContext.none()
     wb.ctrl.disarm()
     log(f"  {len(ids)} prises de {'tête' if kind == 'head' else 'mains'} enregistrées")
@@ -83,7 +83,7 @@ def collect_hands(wb: Workbench, intensities=(0.3, 0.7, 1.0), reps=1, contexts=N
 
 def collect_synthetic(wb: Workbench, reps=2, intensities=(0.3, 0.7, 1.0), head_contexts=None, log=print,
                       hands: bool = False):
-    """Collecte synthétique des trois passages, chacun indépendant."""
+    """Synthetic collection of the three passes, each independent."""
     arm_ids = collect_arms(wb, reps, intensities, log=log)
     head_ids = collect_heads(wb, intensities, contexts=head_contexts, log=log)
     if not hands:
@@ -92,7 +92,7 @@ def collect_synthetic(wb: Workbench, reps=2, intensities=(0.3, 0.7, 1.0), head_c
 
 
 def simulate_calibration(wb: Workbench, sweep_s: float = 25.0, activate_in=None):
-    """Exerce la procédure de calibration sur le robot simulé (valeurs sans portée réelle)."""
+    """Exercises the calibration procedure on the simulated robot (values with no real-world meaning)."""
     from .calibration import CalibrationSession, load_procedure, sim_sweeper
     cfg = wb.cfg
     sess = CalibrationSession(cfg, wb.adapter, load_procedure(cfg.root))
@@ -102,7 +102,7 @@ def simulate_calibration(wb: Workbench, sweep_s: float = 25.0, activate_in=None)
     wb.adapter.set_demonstrator(None)
     for name in ("rest", "start"):
         for g in cfg.groups:
-            # en simulation, on « place » le robot sur les poses de remplacement avant capture
+            # in simulation, the robot is "placed" on the placeholder poses before capture
             for j, v in cfg.poses[name][g].items():
                 wb.adapter.q[j] = v
             sess.capture_pose(name, g)

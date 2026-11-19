@@ -1,31 +1,30 @@
-"""Export et import du jeu de données (prises, calibrations, derniers modèles).
+"""Dataset export and import (takes, calibrations, latest models).
 
-`export_dataset` produit un dossier autonome, prêt à être poussé tel quel dans un
-dépôt séparé (GitHub, ou plus tard Hugging Face, qui est aussi un dépôt Git) :
+`export_dataset` produces a self-contained folder, ready to be pushed as is to a
+separate repository (GitHub, or later Hugging Face, which is also a Git repository):
 
-    <out>/README.md                fiche du jeu de données (anglais, pour la communauté)
-    <out>/LICENSE                  licence des DONNÉES (CC BY 4.0 par défaut ; le code reste MIT)
-    <out>/dataset.json             manifeste : version, filtres, comptes, sha256 de chaque fichier
-    <out>/index.csv                une ligne par prise (consigne, événement, durée, ...)
-    <out>/takes/<id>/meta.json     copies EXACTES des prises (même format que data/takes/)
+    <out>/README.md                dataset card (English, for the community)
+    <out>/LICENSE                  licence of the DATA (CC BY 4.0 by default; the code stays MIT)
+    <out>/dataset.json             manifest: version, filters, counts, sha256 of every file
+    <out>/index.csv                one line per take (prompt, event, duration, ...)
+    <out>/takes/<id>/meta.json     EXACT copies of the takes (same format as data/takes/)
     <out>/takes/<id>/samples.npz
-    <out>/calibration/*.yaml       calibrations citées par les prises exportées
-    <out>/configs/                 emotions.yaml et joints.yaml (lecture des étiquettes et articulations)
-    <out>/models/<groupe>/         derniers modèles bras / tête / mains (option)
+    <out>/calibration/*.yaml       calibrations referenced by the exported takes
+    <out>/configs/                 emotions.yaml and joints.yaml (to read labels and joints)
+    <out>/models/<group>/          latest arms / head / hands models (optional)
     <out>/generator/               nao_gesture.py + nao_gesture.json, the same models ready to use
-                                   (same files as `nao-motion export-generator`, option)
+                                   (same files as `nao-motion export-generator`, optional)
 
-Par défaut, seules les prises ACCEPTÉES, issues du robot réel (pas `synthetic`) et
-complètes (sans le tag `incomplete`) sont exportées. Ré-exporter dans le même
-dossier le met à jour : prises nouvelles ajoutées, métadonnées modifiées
-réécrites, prises sorties de la sélection retirées (seulement dans takes/, et
-seulement si le dossier est déjà un export : présence de dataset.json). Le
-dossier .git éventuel n'est jamais touché.
+By default, only ACCEPTED takes, from the real robot (not `synthetic`) and complete
+(without the `incomplete` tag) are exported. Re-exporting into the same folder
+updates it: new takes added, changed metadata rewritten, takes no longer selected
+removed (only in takes/, and only if the folder is already an export: dataset.json
+present). Any .git folder is never touched.
 
-`import_dataset` fait l'inverse (reprise sur un autre PC) : il recopie dans
-data/takes/ les prises absentes, vérifie les sha256, ajoute les calibrations
-absentes à configs/calibration/ (sans en activer aucune) et, si demandé, les
-modèles dans runs/. Rien n'est jamais écrasé.
+`import_dataset` does the reverse (restoring on another PC): it copies the missing
+takes into data/takes/, checks the sha256, adds the missing calibrations to
+configs/calibration/ (without activating any) and, if requested, the models into
+runs/. Nothing is ever overwritten.
 """
 from __future__ import annotations
 
@@ -54,8 +53,8 @@ LICENSES = {
     "CC0-1.0": ("Creative Commons Zero v1.0 Universal (public domain dedication)",
                 "https://creativecommons.org/publicdomain/zero/1.0/"),
 }
-# Fichiers dont l'intégrité est vérifiée à l'import ; README.md, LICENSE, index.csv sont de la
-# documentation que l'on peut retoucher à la main (ex. sur GitHub) sans bloquer l'import.
+# Files whose integrity is checked on import; README.md, LICENSE, index.csv are
+# documentation that can be edited by hand (e.g. on GitHub) without blocking the import.
 DATA_PREFIXES = ("takes/", "calibration/", "models/", "configs/")
 INDEX_COLUMNS = ("take_id", "kind", "emotion", "intensity", "intention", "status", "event_present",
                  "azimuth_rad", "elevation_rad", "distance_m", "duration_s", "segment_start_s",
@@ -88,7 +87,7 @@ def _copy_if_changed(src: Path, dst: Path) -> bool:
 
 def select_takes(data_dir, statuses: Sequence[str] = ("accepted",), include_synthetic: bool = False,
                  include_incomplete: bool = False, kinds: Optional[Iterable[str]] = None) -> List[TakeMeta]:
-    """Prises retenues pour l'export, triées par identifiant."""
+    """Takes selected for export, sorted by identifier."""
     kinds = set(kinds or COMPONENTS)
     out = []
     for p in sorted((Path(data_dir) / "takes").glob("*/meta.json")):
@@ -104,7 +103,7 @@ def select_takes(data_dir, statuses: Sequence[str] = ("accepted",), include_synt
 
 
 def _calibration_files(config_root: Path) -> Dict[str, Path]:
-    """{version: fichier} pour les calibrations lisibles de configs/calibration/."""
+    """{version: file} for the readable calibrations in configs/calibration/."""
     from ..calibration import Calibration
     out = {}
     for f in sorted((config_root / "calibration").glob("*.yaml")):
@@ -116,7 +115,7 @@ def _calibration_files(config_root: Path) -> Dict[str, Path]:
 
 
 def _latest_runs(runs_dir: Path) -> Dict[str, Path]:
-    """Même règle que training.latest(), sans importer torch (export possible sans PyTorch)."""
+    """Same rule as training.latest(), without importing torch (export possible without PyTorch)."""
     out = {}
     for c in COMPONENTS:
         p = runs_dir / f"latest_{c}.txt"
@@ -184,7 +183,7 @@ def export_dataset(data_dir, out_dir, config_root=None, runs_dir=None, *, name: 
                    statuses: Sequence[str] = ("accepted",), include_synthetic: bool = False,
                    include_incomplete: bool = False, strip_notes: bool = False,
                    kinds: Optional[Iterable[str]] = None, generator: bool = True) -> dict:
-    """Écrit (ou met à jour) le dossier d'export. Retourne un résumé.
+    """Writes (or updates) the export folder. Returns a summary.
 
     generator: also write generator/ (nao_gesture.py + nao_gesture.json) from the exported models,
     when `runs_dir` is given. If it cannot be built (no active calibration, no numpy model...),
@@ -204,7 +203,7 @@ def export_dataset(data_dir, out_dir, config_root=None, runs_dir=None, *, name: 
     out.mkdir(parents=True, exist_ok=True)
     summary = {"added": 0, "updated": 0, "removed": 0, "unchanged": 0}
 
-    # prises : copies exactes (meta.json éventuellement sans les notes libres)
+    # takes: exact copies (meta.json possibly without the free-text notes)
     keep = set()
     for m in metas:
         src, dst = data_dir / "takes" / m.take_id, out / "takes" / m.take_id
@@ -226,7 +225,7 @@ def export_dataset(data_dir, out_dir, config_root=None, runs_dir=None, *, name: 
             shutil.rmtree(d)
             summary["removed"] += 1
 
-    # calibrations citées, configuration utile à la lecture
+    # referenced calibrations, configuration needed for reading
     cals = _calibration_files(config_root)
     placeholder = _placeholder_version(config_root)
     uncalibrated = sum(1 for m in metas if m.calibration_version == placeholder)
@@ -238,7 +237,7 @@ def export_dataset(data_dir, out_dir, config_root=None, runs_dir=None, *, name: 
     for f in CONFIG_FILES:
         _copy_if_changed(config_root / f, out / "configs" / f)
 
-    # derniers modèles
+    # latest models
     models = {}
     if runs_dir is not None:
         for c, run in _latest_runs(Path(runs_dir)).items():
@@ -284,7 +283,7 @@ def export_dataset(data_dir, out_dir, config_root=None, runs_dir=None, *, name: 
     prev = (json.loads((out / MANIFEST).read_text(encoding="utf-8")).get("files") or {}) \
         if (out / MANIFEST).exists() else {}
     if readme.exists() and prev.get("README.md") and _sha256(readme) != prev["README.md"]:
-        # README retouché à la main depuis le dernier export : on le garde, fiche à jour à côté
+        # README edited by hand since the last export: keep it, updated card next to it
         (out / "README.generated.md").write_text(card, encoding="utf-8")
         summary["readme_kept"] = True
     else:
@@ -420,7 +419,7 @@ def _card(name, version, license_id, author, stats, calibrations, models, filter
 
 
 def import_dataset(src_dir, data_dir, config_root=None, runs_dir=None, *, verify: bool = True) -> dict:
-    """Recopie un export dans data/takes/ (et configs/calibration/, runs/). N'écrase jamais rien."""
+    """Copies an export into data/takes/ (and configs/calibration/, runs/). Never overwrites anything."""
     from ..config import DEFAULT_CONFIG_DIR
     src, data_dir = Path(src_dir), Path(data_dir)
     config_root = Path(config_root) if config_root else DEFAULT_CONFIG_DIR
@@ -440,13 +439,13 @@ def import_dataset(src_dir, data_dir, config_root=None, runs_dir=None, *, verify
     for d in sorted((src / "takes").glob("*")):
         if not (d / "meta.json").exists():
             continue
-        _read_meta(d / "meta.json")  # lève si le format n'est pas lisible
+        _read_meta(d / "meta.json")  # raises if the format cannot be read
         dst = data_dir / "takes" / d.name
         if dst.exists():
             res["takes_skipped"] += 1
             continue
         dst.mkdir(parents=True)
-        for f in ("samples.npz", "meta.json"):  # meta.json en dernier : prise visible une fois complète
+        for f in ("samples.npz", "meta.json"):  # meta.json last: the take is visible once complete
             shutil.copyfile(d / f, dst / f)
         res["takes_added"] += 1
     cal_dir = config_root / "calibration"

@@ -1,32 +1,32 @@
 # -*- coding: utf-8 -*-
-"""Guardian autonome pour NAO : vérifie un mouvement AVANT de l'envoyer au robot.
+"""Standalone guardian for NAO: checks a movement BEFORE sending it to the robot.
 
-Ce fichier est volontairement indépendant : compatible Python 2.7 (NAOqi
-2.1, OpenNAO) ET Python 3, bibliothèque standard uniquement (pas de numpy).
-Il lit un fichier `guardian.json` exporté par nao-emotion-motion
-(`nao-motion export-guardian`) et applique exactement les mêmes règles que le
-guardian du projet :
+This file is deliberately self-contained: compatible with Python 2.7 (NAOqi
+2.1, OpenNAO) AND Python 3, standard library only (no numpy).
+It reads a `guardian.json` file exported by nao-emotion-motion
+(`nao-motion export-guardian`) and applies exactly the same rules as the
+project's guardian:
 
-  - articulations connues uniquement, jambes toujours refusées ;
-  - limites min/max (mesurées par la calibration), moins une marge ;
-  - contraintes couplées linéaires sum(coef * q) <= bound (zones mesurées par
-    la calibration + contraintes manuelles, par ex. bras <-> tête) ;
-  - vitesse et accélération maximales, durée minimale et maximale ;
-  - premier point proche de l'état mesuré (optionnel).
+  - known joints only, legs always refused;
+  - min/max limits (measured by the calibration), minus a margin;
+  - linear coupled constraints sum(coef * q) <= bound (areas measured by
+    the calibration + manual constraints, e.g. arm <-> head);
+  - maximum velocity and acceleration, minimum and maximum duration;
+  - first point close to the measured state (optional).
 
-Mains (LHand, RHand) : leur « angle » est une ouverture entre 0 (fermée) et
-1 (ouverte), bornée par la plage d'usine. Marge et accélération peuvent être
-surchargées par articulation (`per_joint_margin`, `per_joint_acceleration`).
+Hands (LHand, RHand): their "angle" is an opening between 0 (closed) and
+1 (open), bounded by the factory range. Margin and acceleration can be
+overridden per joint (`per_joint_margin`, `per_joint_acceleration`).
 
-Le trajet complet est vérifié (interpolation linéaire, grille fine), pas
-seulement ses extrémités. Le guardian NE MODIFIE JAMAIS un mouvement : il
-l'accepte ou le refuse en listant les violations. Il ne commande rien et ne
-dépend pas de NAOqi.
+The full path is checked (linear interpolation, fine grid), not just its
+end points. The guardian NEVER MODIFIES a movement: it accepts or refuses
+it, listing the violations. It commands nothing and does not depend on
+NAOqi.
 
-Ce qu'il ne garantit pas : l'absence de collision au-delà des contraintes
-configurées, ni la stabilité électrique ou logicielle du robot.
+What it does not guarantee: absence of collision beyond the configured
+constraints, nor the electrical or software stability of the robot.
 
-Utilisation en bibliothèque :
+Library usage:
 
     from nao_guardian import Guardian
     g = Guardian.load("guardian.json")
@@ -34,11 +34,11 @@ Utilisation en bibliothèque :
     rep = g.check_move(current_pose, target_pose, duration_s=1.2)
     rep = g.check_trajectory(times, joints, positions, start_state=current_pose)
     if not rep.ok:
-        print(rep.summary())       # ne pas envoyer
+        print(rep.summary())       # do not send
 
-En ligne de commande :
+Command line:
 
-    python nao_guardian.py guardian.json trajectoire.json   # code retour 0 = acceptée
+    python nao_guardian.py guardian.json trajectory.json   # exit code 0 = accepted
 """
 from __future__ import absolute_import, division, print_function, unicode_literals
 
@@ -55,7 +55,7 @@ LEG_PREFIXES = ("LHip", "RHip", "LKnee", "RKnee", "LAnkle", "RAnkle")
 MAX_LISTED = 50
 
 class GuardianError(ValueError):
-    """Fichier guardian invalide ou usage incorrect."""
+    """Invalid guardian file or incorrect usage."""
 
 
 class Violation(object):
@@ -97,13 +97,13 @@ class Report(object):
     __nonzero__ = __bool__  # Python 2
 
 
-# -- outils numériques (sans numpy) ----------------------------------------------------
+# -- numeric helpers (no numpy) ----------------------------------------------------
 def _finite(x):
     return not (math.isinf(x) or math.isnan(x))
 
 
 def _linspace(a, b, n):
-    """Comme numpy.linspace : a + i * pas, dernier point exactement b."""
+    """Like numpy.linspace: a + i * step, last point exactly b."""
     if n == 1:
         return [float(a)]
     step = (b - a) / (n - 1)
@@ -113,7 +113,7 @@ def _linspace(a, b, n):
 
 
 def _interp(x, xs, ys):
-    """Comme numpy.interp (xs strictement croissant)."""
+    """Like numpy.interp (xs strictly increasing)."""
     if x <= xs[0]:
         return ys[0]
     if x >= xs[-1]:
@@ -125,7 +125,7 @@ def _interp(x, xs, ys):
 
 
 def _sample(ts, cols, tt):
-    """cols : une liste de valeurs par articulation -> lignes échantillonnées."""
+    """cols: one list of values per joint -> sampled rows."""
     return [[_interp(x, ts, c) for c in cols] for x in tt]
 
 
@@ -154,7 +154,7 @@ class Guardian(object):
                 raise GuardianError("Les jambes ne peuvent pas figurer dans le guardian : %s" % j)
             self.limits[j] = (lo, hi)
         self.margin = float(data["limit_margin_rad"])
-        # surcharges optionnelles (mains LHand/RHand : ouverture 0..1, plage entière)
+        # optional overrides (LHand/RHand hands: opening 0..1, full range)
         self.per_joint_margin = dict((k, float(v)) for k, v in (data.get("per_joint_margin") or {}).items())
         self.per_joint_acceleration = dict((k, float(v))
                                            for k, v in (data.get("per_joint_acceleration") or {}).items())
@@ -186,13 +186,13 @@ class Guardian(object):
         with io.open(path, "r", encoding="utf-8") as f:
             return cls(json.load(f), allow_uncalibrated=allow_uncalibrated)
 
-    # -- accès -----------------------------------------------------------------------
+    # -- accessors -----------------------------------------------------------------------
     @property
     def joints(self):
         return sorted(self.limits)
 
     def allowed_range(self, joint):
-        """[min, max] réellement autorisé (marge comprise)."""
+        """[min, max] actually allowed (margin included)."""
         lo, hi = self.limits[joint]
         m = self.per_joint_margin.get(joint, self.margin)
         return lo + m, hi - m
@@ -204,18 +204,18 @@ class Guardian(object):
         return self.per_joint_acceleration.get(joint, self.max_acceleration)
 
     def pose(self, name):
-        """Pose calibrée « rest » ou « start » : {articulation: rad}."""
+        """Calibrated "rest" or "start" pose: {joint: rad}."""
         return dict(self.poses.get(name) or {})
 
     def min_duration(self, start, target):
-        """Durée minimale (s) d'un déplacement linéaire start -> target sous les vitesses permises."""
+        """Minimum duration (s) of a linear move start -> target within the allowed velocities."""
         d = self.min_duration_s
         for j, v in target.items():
             if j in start and j in self.limits:
                 d = max(d, abs(float(v) - float(start[j])) / self.velocity_limit(j))
         return d
 
-    # -- vérifications -----------------------------------------------------------------
+    # -- checks -----------------------------------------------------------------
     def _joint_names(self, joints):
         v = []
         for j in joints:
@@ -247,8 +247,8 @@ class Guardian(object):
                                    limit=c["bound"]))
 
     def check_pose(self, pose, context=None):
-        """Une posture cible {articulation: rad} : limites (marge comprise) et contraintes couplées.
-        `context` : angles des articulations non commandées (ex. tête maintenue)."""
+        """A target posture {joint: rad}: limits (margin included) and coupled constraints.
+        `context`: angles of the joints that are not commanded (e.g. head held)."""
         joints = list(pose)
         if not all(hasattr(j, "startswith") for j in joints):
             return Report(False, [Violation("format", "Noms d'articulations invalides")])
@@ -268,8 +268,8 @@ class Guardian(object):
         return Report(not v, v)
 
     def check_move(self, start, target, duration_s, context=None, check_duration=True):
-        """Déplacement linéaire de `start` vers `target` en `duration_s` secondes
-        (articulations de `target` ; `start` = posture mesurée). Voir min_duration()."""
+        """Linear move from `start` to `target` in `duration_s` seconds
+        (joints of `target`; `start` = measured posture). See min_duration()."""
         joints = list(target)
         missing = [j for j in joints if j not in start]
         if missing:
@@ -280,8 +280,8 @@ class Guardian(object):
 
     def check_trajectory(self, times, joints, positions, start_state=None, context=None, check_duration=True,
                          expected_joints=None):
-        """times : N horodatages (s) strictement croissants ; joints : J noms ;
-        positions : N lignes de J angles (rad). Même vérification que le guardian du projet."""
+        """times: N strictly increasing timestamps (s); joints: J names;
+        positions: N rows of J angles (rad). Same check as the project's guardian."""
         try:
             ts = [float(x) for x in times]
             joints = list(joints)
@@ -318,7 +318,7 @@ class Guardian(object):
             v.append(Violation("duration", "Durée hors bornes", value=dur,
                                limit=self.max_duration_s if dur > self.max_duration_s else self.min_duration_s))
 
-        # trajet complet : échantillons d'origine + grille fine
+        # full path: original samples + fine grid
         n = max(2, int(math.ceil(dur * self.check_rate_hz)) + 1)
         tt = sorted(set(ts) | set(_linspace(ts[0], ts[-1], n)))
         rows = _sample(ts, cols, tt)
@@ -331,7 +331,7 @@ class Guardian(object):
                 v.append(Violation("limit", "Hors limites sur %d points (marge incluse)" % len(bad), joint=j,
                                    time_s=float(tt[i]), value=float(x), limit=lo if x < lo else hi))
 
-        # vitesses et accélérations du trajet linéaire par morceaux exécuté
+        # velocities and accelerations of the executed piecewise-linear path
         dt = [b - a for a, b in zip(ts, ts[1:])]
         vel = [[(qs[i + 1][k] - qs[i][k]) / dt[i] for k in range(J)] for i in range(len(dt))]
         max_v = [max(abs(r[k]) for r in vel) for k in range(J)]
@@ -353,7 +353,7 @@ class Guardian(object):
                     v.append(Violation("acceleration", "Accélération excessive", joint=j, time_s=float(ts[i + 1]),
                                        value=float(max_a[k]), limit=alim))
 
-        # contraintes couplées sur tout le trajet (y compris tête <-> bras via `context`)
+        # coupled constraints over the whole path (including head <-> arm through `context`)
         self._coupled(joints, rows, tt, context, v)
 
         if start_state is not None:
@@ -368,7 +368,7 @@ class Guardian(object):
                  "max_velocity": dict((j, round(max_v[k], 4)) for k, j in enumerate(joints)),
                  "max_acceleration": dict((j, round(max_a[k], 4)) for k, j in enumerate(joints))}
         if any(x.code in ("velocity", "acceleration") for x in v):
-            # facteur de ralentissement qui suffirait (information seulement, jamais appliqué)
+            # slow-down factor that would be enough (information only, never applied)
             sv = max(max_v[k] / self.velocity_limit(j) for k, j in enumerate(joints))
             sa = math.sqrt(max(max_a[k] / self.acceleration_limit(j) for k, j in enumerate(joints))) if max_a else 0.0
             stats["suggested_time_scale"] = round(float(max(sv, sa, 1.0)), 3)
@@ -431,7 +431,7 @@ class Guardian(object):
         return Report(not v, v, {"duration_s": dur, "rest_transition": True})
 
     def check_trajectory_dict(self, d, **kw):
-        """Format des trajectoires de nao-emotion-motion : {"joints", "t", "q", "unit": "rad", "time_unit": "s"}."""
+        """nao-emotion-motion trajectory format: {"joints", "t", "q", "unit": "rad", "time_unit": "s"}."""
         if not isinstance(d, dict):
             return Report(False, [Violation("format", "Trajectoire invalide : dictionnaire attendu")])
         if d.get("unit", "rad") != "rad" or d.get("time_unit", "s") != "s":
@@ -455,7 +455,7 @@ def main(argv=None):
     g = Guardian.load(args[0], allow_uncalibrated=allow)
     with io.open(args[1], "r", encoding="utf-8") as f:
         d = json.load(f)
-    if isinstance(d, dict) and "trajectory" in d:  # fichier produit par nao-motion generate --out
+    if isinstance(d, dict) and "trajectory" in d:  # file produced by nao-motion generate --out
         d = d["trajectory"]
     rep = g.check_trajectory_dict(d)
     out = json.dumps(rep.to_dict(), indent=1, ensure_ascii=False)

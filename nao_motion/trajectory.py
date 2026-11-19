@@ -1,4 +1,4 @@
-"""Trajectoire articulaire horodatée (temps en s, angles en rad)."""
+"""Timestamped joint trajectory (time in s, angles in rad)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -60,7 +60,7 @@ class Trajectory:
 
     @staticmethod
     def merge(a: "Trajectory", b: "Trajectory") -> "Trajectory":
-        """Fusionne deux trajectoires de mêmes horodatages sur des articulations disjointes."""
+        """Merges two trajectories with the same timestamps over disjoint joints."""
         if set(a.joints) & set(b.joints):
             raise TrajectoryError("Articulations en double")
         if a.t.shape != b.t.shape or not np.allclose(a.t, b.t):
@@ -69,7 +69,7 @@ class Trajectory:
 
     @staticmethod
     def concat(parts: Sequence["Trajectory"]) -> "Trajectory":
-        """Enchaîne des segments ; chaque segment commence là où le précédent finit."""
+        """Chains segments; each segment starts where the previous one ends."""
         joints = parts[0].joints
         ts, qs, offset = [], [], 0.0
         for k, p in enumerate(parts):

@@ -1,21 +1,20 @@
-"""Représentation temporelle compacte des trajectoires.
+"""Compact temporal representation of trajectories.
 
-Choix : temps normalisé en phase u ∈ [0, 1] + durée séparée, et K points de
-contrôle B-spline cubique (uniforme, bornée) par articulation.
+Choice: time normalised into a phase u ∈ [0, 1] + a separate duration, and K
+cubic B-spline control points (uniform, clamped) per joint.
 
-Pourquoi : avec peu de démonstrations, il faut peu de paramètres de sortie
-(K×J au lieu de N×J), une courbe lisse par construction (vitesses et
-accélérations continues, bon pour le guardian) et une relation LINÉAIRE entre
-paramètres et trajectoire : interpoler deux jeux de points de contrôle donne
-une trajectoire intermédiaire cohérente, et l'ajustement est un simple
-moindres carrés.
+Why: with few demonstrations, few output parameters are needed (K×J instead of
+N×J), a curve that is smooth by construction (continuous velocities and
+accelerations, good for the guardian) and a LINEAR relation between parameters
+and trajectory: interpolating two sets of control points gives a consistent
+intermediate trajectory, and fitting is a simple least-squares problem.
 
-Durées différentes : chaque prise est ramenée à la phase de son segment utile
-(par défaut toute la prise ; pour une prise de tête, la fenêtre de relecture
-des bras), rééchantillonnée linéairement sur une grille uniforme de phase, puis
-projetée sur la base. La durée réelle est apprise à part. Les données brutes
-ne sont jamais modifiées. Limite connue : cet alignement linéaire ne recale pas
-les sous-phases d'un geste (pas de DTW) ; c'est une évolution possible.
+Different durations: each take is mapped to the phase of its useful segment (by
+default the whole take; for a head take, the arms replay window), linearly
+resampled on a uniform phase grid, then projected onto the basis. The real
+duration is learned separately. The raw data is never modified. Known limitation:
+this linear alignment does not realign the sub-phases of a gesture (no DTW); that
+is a possible improvement.
 """
 from __future__ import annotations
 
@@ -38,15 +37,15 @@ def _knots(n_ctrl: int) -> Tuple[float, ...]:
 
 
 def bspline_basis(n_ctrl: int, u: np.ndarray) -> np.ndarray:
-    """Matrice de base (len(u), n_ctrl), algorithme de Cox–de Boor."""
+    """Basis matrix (len(u), n_ctrl), Cox–de Boor algorithm."""
     k = np.array(_knots(n_ctrl))
     u = np.clip(np.asarray(u, dtype=np.float64), 0.0, 1.0)
-    # degré 0
+    # degree 0
     B = np.zeros((u.size, len(k) - 1))
     for i in range(len(k) - 1):
         B[:, i] = (u >= k[i]) & (u < k[i + 1])
     last_nonzero = np.max(np.nonzero(np.diff(k))[0])
-    B[u >= 1.0, :] = 0.0  # point final inclus dans le dernier intervalle non vide
+    B[u >= 1.0, :] = 0.0  # end point included in the last non-empty interval
     B[u >= 1.0, last_nonzero] = 1.0
     for d in range(1, DEGREE + 1):
         Bn = np.zeros((u.size, len(k) - 1 - d))
@@ -62,9 +61,9 @@ def bspline_basis(n_ctrl: int, u: np.ndarray) -> np.ndarray:
 
 def resample_phase(t: np.ndarray, q: np.ndarray, n: int,
                    segment: Optional[Tuple[float, float]] = None) -> Tuple[np.ndarray, float]:
-    """Rééchantillonne q(t) sur n points uniformes de phase dans `segment`.
+    """Resamples q(t) on n uniform phase points within `segment`.
 
-    Retourne (q_uniforme (n, J), durée du segment en s).
+    Returns (uniform q (n, J), segment duration in s).
     """
     t = np.asarray(t, dtype=np.float64)
     q = np.asarray(q, dtype=np.float64)
@@ -77,18 +76,18 @@ def resample_phase(t: np.ndarray, q: np.ndarray, n: int,
 
 
 def fit_control_points(q_uniform: np.ndarray, n_ctrl: int, ridge: float = 1e-6) -> np.ndarray:
-    """Moindres carrés : q ≈ B · C ; C de forme (n_ctrl, J). Extrémités fixées exactement."""
+    """Least squares: q ≈ B · C; C of shape (n_ctrl, J). End points fixed exactly."""
     n = q_uniform.shape[0]
     B = bspline_basis(n_ctrl, np.linspace(0, 1, n))
     A = B.T @ B + ridge * np.eye(n_ctrl)
     C = np.linalg.solve(A, B.T @ q_uniform)
-    # B-spline bornée : premier et dernier points de contrôle = extrémités de la courbe
+    # clamped B-spline: first and last control points = curve end points
     C[0], C[-1] = q_uniform[0], q_uniform[-1]
     return C
 
 
 def decode(ctrl: np.ndarray, duration: float, joints, rate_hz: float = 50.0) -> Trajectory:
-    """Points de contrôle (K, J) + durée -> trajectoire horodatée commençant à t=0."""
+    """Control points (K, J) + duration -> timestamped trajectory starting at t=0."""
     ctrl = np.asarray(ctrl, dtype=np.float64)
     if not np.all(np.isfinite(ctrl)) or not np.isfinite(duration) or duration <= 0:
         raise TrajectoryError("Paramètres de trajectoire invalides")
@@ -105,10 +104,10 @@ def encode_trajectory(traj: Trajectory, n_ctrl: int, n_samples: int,
 
 
 def suggest_segment(traj: Trajectory, threshold_rad: float = 0.03, pad_s: float = 0.15) -> Tuple[float, float]:
-    """Propose le segment utile d'une prise : du premier au dernier instant où
-    une articulation s'écarte de plus de `threshold_rad` de sa posture initiale
-    (resp. finale), avec une petite marge. Les données brutes ne sont pas
-    modifiées ; seul le segment est mémorisé dans les métadonnées."""
+    """Suggests the useful segment of a take: from the first to the last moment where
+    a joint departs by more than `threshold_rad` from its initial
+    (resp. final) posture, with a small margin. The raw data is not
+    modified; only the segment is stored in the metadata."""
     d0 = np.max(np.abs(traj.q - traj.q[0]), axis=1)
     d1 = np.max(np.abs(traj.q - traj.q[-1]), axis=1)
     moving0 = np.nonzero(d0 > threshold_rad)[0]

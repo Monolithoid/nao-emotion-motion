@@ -1,30 +1,27 @@
-"""Enregistrement des démonstrations : un passage par groupe, INDÉPENDANTS.
+"""Recording demonstrations: one pass per group, INDEPENDENT.
 
-Chaque passage enregistre un seul groupe pour une consigne (émotion, intensité,
-événement) ; aucun ne demande de geste des bras déjà enregistré ni de modèle.
+Each pass records a single group for a prompt (emotion, intensity, event); none
+requires an already recorded arm gesture nor a model.
 
-Passage bras : bras GUIDÉS (relâchés, lus), tête maintenue raide sur sa posture
-mesurée.
+Arms pass: arms GUIDED (relaxed, read), head held stiff at its measured posture.
 
-Passage tête : tête GUIDÉE, bras maintenus raides sur leur posture mesurée.
-Aucun mouvement motorisé : la préparation ne fait que relâcher la tête.
+Head pass: head GUIDED, arms held stiff at their measured posture.
+No motorised movement: the preparation only relaxes the head.
 
-Passage mains : rien n'est relâché, bras et tête restent raides sur place et
-l'opérateur PILOTE l'ouverture des mains depuis l'interface (curseurs, boutons,
-clavier) : une main de NAO ne se guide pas à la main. La consigne de l'opérateur
-est filtrée en ligne (bornes, vitesse, accélération du guardian) avant d'être
-envoyée, et conservée à côté des mesures.
+Hands pass: nothing is relaxed, arms and head stay stiff in place and the operator
+DRIVES the hand opening from the interface (sliders, buttons, keyboard): a NAO hand
+cannot be guided by hand. The operator's target is filtered online (guardian bounds,
+velocity, acceleration) before being sent, and kept next to the measurements.
 
-Chaque enregistrement dure jusqu'à « Arrêter » (ou la durée maximale) ; le
-segment utile est proposé automatiquement à la sauvegarde.
+Each recording lasts until "Arrêter" (stop) is pressed (or the maximum duration); the
+useful segment is suggested automatically when saving.
 
-Aucune articulation n'est à la fois relâchée et commandée.
+No joint is both relaxed and commanded.
 
-Coupure du pont pendant un passage : la boucle s'arrête (jamais d'état
-« enregistrement » orphelin), le contrôleur passe en défaut et désarmé, et les
-mesures déjà reçues sont gardées comme prise INCOMPLÈTE, que l'opérateur peut
-accepter, rejeter ou jeter comme les autres. Côté robot, le pont arrête et
-maintient la posture (chien de garde).
+Bridge drop during a pass: the loop stops (never an orphan "recording" state), the
+controller goes into fault and is disarmed, and the measurements already received are
+kept as an INCOMPLETE take, which the operator can accept, reject or discard like the
+others. On the robot side, the bridge stops and holds the posture (watchdog).
 """
 from __future__ import annotations
 
@@ -63,16 +60,16 @@ class RecordingResult:
     complete: bool
     message: str = ""
     hands_initial: Optional[List[float]] = None
-    reference: Optional[Trajectory] = None   # consignes envoyées (passage mains : ouverture des mains)
+    reference: Optional[Trajectory] = None   # targets sent (hands pass: hand opening)
 
 
 def replay_trajectory(take: Take, joints, ctrl_per_s: float = 6.0, rate_hz: float = 50.0) -> Trajectory:
-    """Version lissée et fidèle d'une prise de bras pour la relecture motorisée.
+    """Smoothed, faithful version of an arms take for motorised replay.
 
-    Les mesures brutes contiennent du bruit capteur qui produirait des
-    accélérations artificielles ; on les projette sur une B-spline assez fine
-    (6 points de contrôle par seconde par défaut). Les données brutes restent
-    intactes sur disque.
+    The raw measurements contain sensor noise that would produce
+    artificial accelerations; they are projected onto a fairly fine B-spline
+    (6 control points per second by default). The raw data stays
+    intact on disk.
     """
     seg = take.segment_trajectory(joints)
     k = max(8, int(np.ceil(seg.duration * ctrl_per_s)) + 4)
@@ -81,7 +78,7 @@ def replay_trajectory(take: Take, joints, ctrl_per_s: float = 6.0, rate_hz: floa
 
 
 class RecordingSession:
-    """Boucle d'enregistrement commune ; exécutable dans un thread (UI) ou en synchrone (tests)."""
+    """Shared recording loop; can run in a thread (UI) or synchronously (tests)."""
 
     def __init__(self, cfg: Config, controller: Controller):
         self.cfg = cfg
@@ -101,8 +98,8 @@ class RecordingSession:
         self._stop.set()
 
     def _interrupted(self, e: Exception, lost: bool):
-        """Fin anormale de la boucle (coupure du pont ou autre erreur) : état cohérent,
-        contrôleur en défaut et désarmé, cause visible dans l'interface."""
+        """Abnormal end of the loop (bridge drop or other error): consistent state,
+        controller in fault and disarmed, cause visible in the interface."""
         what = "Connexion au pont perdue" if lost else "Erreur"
         self.error = f"{what} pendant l'enregistrement : {e}"
         ctrl = self.ctrl
@@ -113,7 +110,7 @@ class RecordingSession:
 
     @staticmethod
     def _partial(ts) -> bool:
-        """Assez de mesures pour garder une prise incomplète ?"""
+        """Enough measurements to keep an incomplete take?"""
         return len(ts) >= 2 and ts[-1] > ts[0]
 
     def _countdown(self, seconds: float):
@@ -131,14 +128,14 @@ class RecordingSession:
 
 
 class GuidedRecording(RecordingSession):
-    """Un groupe GUIDÉ à la main (relâché, lu) pendant que l'autre est maintenu raide."""
+    """One group GUIDED by hand (relaxed, read) while the other is held stiff."""
     kind = "arms"
 
     def _groups(self):
         return self.cfg.arm_joints, self.cfg.head_joints
 
     def prepare(self, confirm: bool = False):
-        """Relâche le groupe guidé (il tombe si personne ne le tient) et maintient l'autre."""
+        """Relaxes the guided group (it drops if nobody holds it) and holds the other."""
         if getattr(self.adapter, "is_real", False) and not confirm:
             what = {"arms": "les bras sont tenus", "head": "la tête est tenue"}[self.kind]
             raise ControllerError(f"Robot réel : confirmer que {what} avant de relâcher")
@@ -164,7 +161,7 @@ class GuidedRecording(RecordingSession):
             k = 0
             while True:
                 t = a.now() - t0
-                q = a.read_angles(joints)  # mesures réelles
+                q = a.read_angles(joints)  # real measurements
                 ts.append(t)
                 qs.append(q)
                 self.elapsed = t
@@ -173,8 +170,8 @@ class GuidedRecording(RecordingSession):
                 k += 1
                 a.sleep(max(0.0, t0 + k / self.rate - a.now()))
         except Exception as e:
-            # jamais d'état « enregistrement » orphelin : sinon l'interface refuse toute
-            # reconnexion (« enregistrement en cours ») jusqu'au redémarrage du serveur
+            # never an orphan "recording" state: otherwise the interface refuses any
+            # reconnection ("recording in progress") until the server restarts
             self._interrupted(e, isinstance(e, ConnectionLost))
             if not self._partial(ts):
                 self.state = RecState.ABORTED
@@ -193,12 +190,12 @@ class GuidedRecording(RecordingSession):
 
 
 class ArmRecording(GuidedRecording):
-    """Passage bras : bras guidés, tête raide sur place."""
+    """Arms pass: arms guided, head stiff in place."""
     kind = "arms"
 
 
 class HeadRecording(GuidedRecording):
-    """Passage tête : tête guidée, bras raides sur place (aucun geste des bras requis)."""
+    """Head pass: head guided, arms stiff in place (no arm gesture required)."""
     kind = "head"
 
     def _groups(self):
@@ -206,12 +203,12 @@ class HeadRecording(GuidedRecording):
 
 
 class HandRecording(RecordingSession):
-    """Passage mains : bras et tête raides sur place, mains PILOTÉES en direct par
-    l'opérateur (`set_target`). Rien n'est relâché.
+    """Hands pass: arms and head stiff in place, hands DRIVEN live by
+    the operator (`set_target`). Nothing is relaxed.
 
-    La cible reçue de l'interface est bornée (limites et marge du guardian) et suivie
-    avec une vitesse et une accélération limitées : c'est cette consigne filtrée qui
-    est envoyée et conservée (`reference`), à côté des mesures."""
+    The target received from the interface is bounded (guardian limits and margin) and followed
+    with limited velocity and acceleration: it is this filtered target that
+    is sent and kept (`reference`), next to the measurements."""
     kind = "hands"
 
     def __init__(self, cfg: Config, controller: Controller):
@@ -226,14 +223,14 @@ class HandRecording(RecordingSession):
         self._vmax = np.array([0.8 * g.velocity_limit(j) for j in hj])
         self._amax = np.array([0.8 * g.acceleration_limit(j) for j in hj])
         self.hand_target: Optional[np.ndarray] = None
-        self.target_fn: Optional[Callable[[float], dict]] = None  # démonstrateur simulé (t -> cible)
+        self.target_fn: Optional[Callable[[float], dict]] = None  # simulated demonstrator (t -> target)
         self.command: Optional[np.ndarray] = None
         self._vel = np.zeros(len(hj))
         self._last_t = 0.0
         self._ref_rows: List[np.ndarray] = []
 
     def prepare(self, confirm: bool = False):
-        """Raidit bras, tête et mains sur leur posture mesurée (aucun déplacement, rien de relâché)."""
+        """Stiffens arms, head and hands at their measured posture (no movement, nothing relaxed)."""
         if self.ctrl.state not in (State.IDLE, State.HOLDING):
             raise ControllerError(f"Préparation impossible dans l'état {self.ctrl.state.value}")
         if not self.ctrl.armed:
@@ -245,7 +242,7 @@ class HandRecording(RecordingSession):
         self.state = RecState.PREPARED
 
     def set_target(self, targets: dict):
-        """Nouvelle cible d'ouverture {LHand|RHand: 0..1} ; les mains absentes gardent la leur."""
+        """New opening target {LHand|RHand: 0..1}; hands not listed keep theirs."""
         hj = self.hand_joints
         unknown = [j for j in targets if j not in hj]
         if unknown:
@@ -270,7 +267,7 @@ class HandRecording(RecordingSession):
         self._last_t = t
         q, v = self.command, self._vel
         err = self.hand_target - q
-        # vitesse visée : bornée, et compatible avec un arrêt sur la cible (freinage)
+        # target velocity: bounded, and compatible with stopping on the target (braking)
         v_des = np.sign(err) * np.minimum(self._vmax, np.sqrt(2 * self._amax * np.abs(err)))
         v = v + np.clip(v_des - v, -self._amax * dt, self._amax * dt)
         q = np.clip(q + v * dt, self._lo, self._hi)
@@ -326,14 +323,14 @@ class HandRecording(RecordingSession):
                 raise
             return self._finish(ts, qs, complete=False,
                                 message=f"Incomplète : {self.error} (après {ts[-1]:.1f} s)")
-        if self.ctrl.state == State.EXECUTING:  # un arrêt global l'a déjà mis en maintien
+        if self.ctrl.state == State.EXECUTING:  # a global stop already put it on hold
             self.ctrl.state = State.IDLE
         return self._finish(ts, qs, complete=True)
 
     def _finish(self, ts, qs, complete: bool, message: str = "") -> RecordingResult:
         hj = self.hand_joints
         traj = Trajectory(hj, np.array(ts), np.array(qs))
-        # consigne envoyée à chaque mesure (même horloge) ; une coupure peut survenir entre les deux
+        # target sent with each measurement (same clock); a drop can happen in between
         ref = Trajectory(hj, traj.t.copy(), np.array(self._ref_rows[:len(ts)]))
         self.result = RecordingResult(traj, (0.0, float(ts[-1])), [], self.driven, None, complete, message,
                                       hands_initial=traj.q[0].tolist(), reference=ref)

@@ -1,10 +1,10 @@
-"""Serveur d'inférence minimal (bibliothèque standard) pour une inférence déportée.
+"""Minimal inference server (standard library) for remote inference.
 
 POST /generate {"emotion": "joie" | {"joie":0.5,...}, "intensity": 0.7,
-                "event": {...optionnel...}, "head_current": {...optionnel...},
-                "hands_current": {...optionnel : ouverture LHand/RHand 0..1...}}
--> trajectoire + rapport du guardian. Le serveur n'exécute RIEN : le client
-(contrôleur) revalide et exécute après confirmation.
+                "event": {...optional...}, "head_current": {...optional...},
+                "hands_current": {...optional: LHand/RHand opening 0..1...}}
+-> trajectory + guardian report. The server executes NOTHING: the client
+(controller) revalidates and executes after confirmation.
 """
 from __future__ import annotations
 

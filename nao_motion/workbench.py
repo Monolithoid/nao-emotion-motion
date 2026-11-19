@@ -1,7 +1,7 @@
-"""Couche de service commune à l'interface, à la CLI et à la démonstration.
+"""Service layer shared by the interface, the CLI and the demo.
 
-Regroupe configuration, stockage, adaptateur, contrôleur, guardian, moteur
-et état de collecte. Rien ici ne déclenche de mouvement sans appel explicite.
+Groups configuration, storage, adapter, controller, guardian, engine
+and collection state. Nothing here triggers a movement without an explicit call.
 """
 from __future__ import annotations
 
@@ -51,13 +51,13 @@ class Workbench:
         self.rng = np.random.default_rng(0)
         self.lock = threading.RLock()
         self.calibration = None  # CalibrationWizard ouvert depuis l'interface
-        self._hands_pending: Optional[dict] = None  # dernière cible d'ouverture des mains (hors enregistrement)
+        self._hands_pending: Optional[dict] = None  # last hand-opening target (outside recording)
         self._hands_thread: Optional[threading.Thread] = None
 
-    # -- connexion au robot (adresse saisie dans l'interface) -------------------
+    # -- robot connection (address entered in the interface) -------------------
     def _recording_active(self) -> bool:
-        """Enregistrement réellement en cours. Un état « enregistrement » sans boucle vivante
-        (fil terminé sur une erreur) est soldé ici : il bloquerait sinon toute reconnexion."""
+        """Recording actually in progress. A "recording" state without a live loop
+        (thread ended on an error) is cleared here: otherwise it would block any reconnection."""
         rec = self.recording
         if rec is None or rec.state not in (RecState.COUNTDOWN, RecState.RECORDING):
             return False
@@ -73,8 +73,8 @@ class Workbench:
         return self.ctrl.state == State.EXECUTING or (cal is not None and cal.sweeping) or self._recording_active()
 
     def _wind_down_after_loss(self):
-        """Pont perdu : la boucle d'enregistrement va échouer au plus tard après le délai du
-        pont ; on lui demande de s'arrêter et on l'attend (borné) avant de reconnecter."""
+        """Bridge lost: the recording loop will fail at the latest after the bridge
+        timeout; we ask it to stop and wait for it (bounded) before reconnecting."""
         ad = self.adapter
         if ad.name != "bridge" or ad.is_connected():
             return
@@ -86,7 +86,7 @@ class Workbench:
         self._recording_active()
 
     def bridge_state(self) -> dict:
-        """État de la liaison avec le pont, affiché par l'interface."""
+        """State of the link with the bridge, shown by the interface."""
         ad = self.adapter
         if ad.name != "bridge":
             return {"used": False}
@@ -94,7 +94,7 @@ class Workbench:
                 "lost": ad.lost_reason, "lost_at": ad.lost_at}
 
     def use_adapter(self, adapter):
-        """Remplace l'adaptateur (simulation <-> pont). Refusé pendant un mouvement ou un enregistrement."""
+        """Replaces the adapter (simulation <-> bridge). Refused during a movement or a recording."""
         self._wind_down_after_loss()
         if self._busy():
             raise ControllerError("Mouvement ou enregistrement en cours : arrêter d'abord")
@@ -105,19 +105,19 @@ class Workbench:
             pass
         self.adapter = adapter
         self.ctrl = Controller(self.cfg, adapter, self.guardian)
-        self.calibration = None  # liée à l'ancien adaptateur
+        self.calibration = None  # tied to the old adapter
         rec = self.recording
-        if rec is None or rec.result is None:  # une prise terminée (même incomplète) reste à sauvegarder
+        if rec is None or rec.result is None:  # a finished take (even incomplete) is still to be saved
             self.recording = None
         self.engine = None
         self.sim_demonstration = adapter.name == "sim"
 
     def connect_robot(self, robot_host: str, robot_port: int = 9559, bridge_host: Optional[str] = None,
                       bridge_port: Optional[int] = None, bridge_on_robot: Optional[bool] = None) -> dict:
-        """Connexion au robot via le pont, à l'adresse (IP ou nom DNS) fournie par l'interface.
-        Pont sur le robot (défaut, `bridge.location: robot`) : l'interface joint le pont à
-        l'adresse du robot, et le pont joint NAOqi en local. Ni mouvement, ni changement de
-        raideur ; le contrôleur reste désarmé."""
+        """Connects to the robot through the bridge, at the address (IP or DNS name) given by the interface.
+        Bridge on the robot (default, `bridge.location: robot`): the interface reaches the bridge at
+        the robot's address, and the bridge reaches NAOqi locally. No movement, no stiffness
+        change; the controller stays disarmed."""
         from .adapters.bridge_client import BridgeAdapter
         from .config.hosts import validate_host
         host = validate_host(robot_host)
@@ -135,16 +135,16 @@ class Workbench:
             raise ControllerError("Mouvement ou enregistrement en cours : arrêter d'abord")
         old = self.adapter
         if old.name == "bridge" and (old.host, old.port) == (ad.host, ad.port):
-            # même pont (ex. après une coupure) : reconnexion en place, la calibration
-            # ouverte et ses explorations sont conservées
+            # same bridge (e.g. after a drop): reconnect in place, the open calibration
+            # and its explorations are kept
             return self._reconnect_bridge(old, naoqi_host, robot_port, bridge_on_robot, host)
         if self.calibration is not None:
             raise ControllerError("Calibration ouverte : la fermer avant de changer de robot ou de pont")
         if old.name == "bridge":
-            old.disconnect()  # toujours : le pont n'accepte qu'un client à la fois
+            old.disconnect()  # always: the bridge accepts only one client at a time
         ad.connect()
         try:
-            # un pont lancé avec --on-robot est déjà connecté à NAOqi : rien à refaire
+            # a bridge started with --on-robot is already connected to NAOqi: nothing to redo
             info = ad.info if (bridge_on_robot and ad.robot_connected) else ad.connect_robot(naoqi_host, int(robot_port or 9559))
         except Exception:
             ad.disconnect()
@@ -160,7 +160,7 @@ class Workbench:
         info = ad.info if (bridge_on_robot and ad.robot_connected) else ad.connect_robot(naoqi_host, int(robot_port or 9559))
         if self.ctrl.state.value in ("disconnected", "fault"):
             self.ctrl.state = State.IDLE
-            self.ctrl.last_error = None  # la coupure reste dans le journal
+            self.ctrl.last_error = None  # the drop stays in the log
         self.ctrl._log(f"reconnecté au robot {host} via le même pont (aucun mouvement envoyé)")
         return info
 
@@ -169,23 +169,23 @@ class Workbench:
         self.use_adapter(SimAdapter(self.cfg))
         self.ctrl.connect()
 
-    # -- calibration du guardian (onglet Calibration) ---------------------------
+    # -- guardian calibration (Calibration tab) ---------------------------------
     def open_calibration(self):
-        """Ouvre une calibration guidée. Aucun mouvement, aucune raideur modifiée."""
+        """Opens a guided calibration. No movement, no stiffness change."""
         from .calibration_wizard import CalibrationWizard
         if self._busy():
             raise ControllerError("Mouvement ou enregistrement en cours : arrêter d'abord")
         if not self.adapter.is_connected():
             raise ControllerError("Robot non connecté (onglet Robot)")
         if self.ctrl.armed:
-            self.ctrl.disarm()  # aucun mouvement motorisé pendant une calibration
+            self.ctrl.disarm()  # no motorised movement during a calibration
         if self.calibration is not None:
             self.calibration.stop()
         self.calibration = CalibrationWizard(self)
         return self.calibration.state()
 
     def close_calibration(self):
-        """Ferme sans rien enregistrer ; les articulations restent dans leur état (pas de retour au repos)."""
+        """Closes without saving anything; the joints stay as they are (no return to rest)."""
         if self.calibration is not None:
             self.calibration.stop()
         self.calibration = None
@@ -204,7 +204,7 @@ class Workbench:
         return list_calibrations(self.cfg.root, allow_simulated=self._sim_adapter())
 
     def _sim_adapter(self) -> bool:
-        # une calibration simulée ne s'active qu'en simulation (essais de l'interface)
+        # a simulated calibration can only be activated in simulation (interface trials)
         return not getattr(self.adapter, "is_real", False)
 
     def extend_calibration(self, file=None, speeds=False, save=False, include_pending=False) -> dict:
@@ -228,9 +228,9 @@ class Workbench:
         return preview
 
     def activate_calibration(self, file) -> dict:
-        """Active un fichier de configs/calibration/ (enregistré lors d'une session précédente
-        ou à l'instant) puis recharge la configuration. Aucun mouvement ; si le rechargement
-        échoue, l'activation précédente est rétablie."""
+        """Activates a file from configs/calibration/ (saved during a previous session
+        or just now), then reloads the configuration. No movement; if reloading
+        fails, the previous activation is restored."""
         from .calibration import activate
         if self._busy():
             raise ControllerError("Mouvement ou enregistrement en cours : arrêter d'abord")
@@ -248,7 +248,7 @@ class Workbench:
         return {"active": self.cfg.calibration_version, "file": Path(str(file)).name}
 
     def reload_config(self):
-        """Recharge configs/ (après activation d'une calibration). Contrôleur désarmé, aucun mouvement."""
+        """Reloads configs/ (after activating a calibration). Controller disarmed, no movement."""
         if self._busy():
             raise ControllerError("Mouvement ou enregistrement en cours : arrêter d'abord")
         cfg = load_config(self.cfg.root)
@@ -262,9 +262,9 @@ class Workbench:
         self.engine = None
         self.plans = {}
 
-    # -- événement extérieur ---------------------------------------------------
+    # -- external event --------------------------------------------------------
     def set_event(self, d: dict, ttl_s: Optional[float] = None) -> EventContext:
-        """Reçoit un événement (composant caméra/micros, ou test manuel)."""
+        """Receives an event (camera/microphone component, or manual test)."""
         if d.get("frame") == "head" and (d.get("head_yaw_rad") is None or d.get("head_pitch_rad") is None):
             try:
                 hy, hp = self.adapter.read_angles(self.cfg.head_joints)
@@ -287,9 +287,9 @@ class Workbench:
 
     # -- collecte ---------------------------------------------------------------
     def prepare_take(self, kind, emotion, intensity, intention=None, confirm=False):
-        """Prépare un passage INDÉPENDANT : kind = "arms" (bras guidés), "head" (tête guidée)
-        ou "hands" (mains pilotées). Consigne : émotion, intensité, événement courant.
-        Aucun geste des bras préalable, aucun modèle requis, aucun mouvement motorisé."""
+        """Prepares an INDEPENDENT pass: kind = "arms" (guided arms), "head" (guided head)
+        or "hands" (driven hands). Prompt: emotion, intensity, current event.
+        No prior arm gesture, no model required, no motorised movement."""
         self.check_no_calibration()
         if self._recording_active():
             raise ControllerError("Un enregistrement est déjà en cours")
@@ -309,26 +309,26 @@ class Workbench:
         return dict(self.rec_info)
 
     def prepare_arm_take(self, emotion, intensity, intention=None, confirm=False):
-        """Passage bras : bras relâchés (guidés), tête raide sur place."""
+        """Arms pass: arms relaxed (guided), head stiff in place."""
         return self.prepare_take("arms", emotion, intensity, intention, confirm)
 
     def prepare_head_take(self, emotion, intensity, intention=None, confirm=False):
-        """Passage tête : tête relâchée (guidée), bras raides sur place."""
+        """Head pass: head relaxed (guided), arms stiff in place."""
         return self.prepare_take("head", emotion, intensity, intention, confirm)
 
     def prepare_hands_take(self, emotion, intensity, intention=None, confirm=False):
-        """Passage mains : tout raide sur place, mains pilotées depuis l'interface (contrôleur armé)."""
+        """Hands pass: everything stiff in place, hands driven from the interface (controller armed)."""
         return self.prepare_take("hands", emotion, intensity, intention, confirm)
 
-    # -- ouverture des mains ------------------------------------------------------
+    # -- hand opening -------------------------------------------------------------
     def set_hands(self, targets: dict, background: bool = True) -> dict:
-        """Ouverture des mains {LHand|RHand: 0 (fermée) .. 1 (ouverte)}.
+        """Hand opening {LHand|RHand: 0 (closed) .. 1 (open)}.
 
-        Pendant le passage mains (compte à rebours ou enregistrement), la cible est suivie en
-        direct par la boucle d'enregistrement. Sinon, c'est un mouvement motorisé court :
-        validé par le guardian et exécuté par le contrôleur, qui doit être armé
-        (« Mouvements autorisés »). Une nouvelle cible reçue pendant le mouvement est
-        jouée juste après (la dernière reçue seulement)."""
+        During the hands pass (countdown or recording), the target is followed
+        live by the recording loop. Otherwise, it is a short motorised movement:
+        validated by the guardian and executed by the controller, which must be armed
+        ("Mouvements autorisés"). A new target received during the movement is
+        played right after (only the last one received)."""
         targets = {str(j): float(v) for j, v in (targets or {}).items()}
         unknown = [j for j in targets if not self.cfg.is_hand(j)]
         if unknown or not targets:
@@ -344,7 +344,7 @@ class Workbench:
             raise ControllerError("Enregistrement en cours : les mains ne sont pilotables que pendant le passage mains")
         with self.lock:
             self._hands_pending = dict(self._hands_pending or {}, **targets)
-            if self._hands_thread is not None:  # le mouvement en cours enchaînera sur cette cible
+            if self._hands_thread is not None:  # the current movement will continue with this target
                 return {"queued": True}
             if self.ctrl.state == State.EXECUTING:
                 self._hands_pending = None
@@ -366,7 +366,7 @@ class Workbench:
                     return
             try:
                 plan = self.ctrl.plan_hands_move(targets)
-                self.ctrl.execute(plan)  # refus du guardian -> GuardianRejection, rien n'est envoyé
+                self.ctrl.execute(plan)  # guardian refusal -> GuardianRejection, nothing is sent
             except Exception as e:
                 self.ctrl.last_error = f"Mains : {e}"
                 with self.lock:
@@ -377,16 +377,16 @@ class Workbench:
                 return
 
     def hands_state(self) -> dict:
-        """Ouverture mesurée et, pendant le passage mains, cible et consigne en cours. Aucune commande."""
+        """Measured opening and, during the hands pass, current target and prompt. No command."""
         hj = self.cfg.hand_joints
         out = {"joints": hj, "limits": {j: list(self.cfg.limits[j]) for j in hj}, "measured": None}
         rec = self.recording
         if isinstance(rec, HandRecording) and rec.state in (RecState.COUNTDOWN, RecState.RECORDING):
             for k, v in (("target", rec.hand_target), ("command", rec.command)):
                 out[k] = None if v is None else dict(zip(hj, np.round(v, 3).tolist()))
-            return out  # pas de lecture supplémentaire pendant la boucle d'enregistrement
+            return out  # no extra read during the recording loop
         if hj and self.adapter.is_connected() and not self._recording_active():
-            # (pendant un passage bras ou tête, la boucle a la priorité sur la liaison)
+            # (during an arms or head pass, the loop has priority over the link)
             try:
                 out["measured"] = dict(zip(hj, np.round(self.adapter.read_angles(hj), 3).tolist()))
             except Exception:
@@ -394,8 +394,8 @@ class Workbench:
         return out
 
     def _sim_demonstrator(self, countdown_s):
-        """En simulation, un démonstrateur synthétique remplace la main de l'opérateur.
-        Retourne la durée du geste simulé (l'enregistrement s'arrête peu après)."""
+        """In simulation, a synthetic demonstrator replaces the operator's hand.
+        Returns the duration of the simulated gesture (recording stops shortly after)."""
         if not self.sim_demonstration:
             return None
         info, rec = self.rec_info, self.recording
@@ -405,11 +405,11 @@ class Workbench:
             self.adapter.set_demonstrator(lambda t: fn(t - countdown_s))
             return dur
         if info["kind"] == "hands":
-            # l'opérateur simulé pilote les mains (aucune articulation guidée)
+            # the simulated operator drives the hands (no guided joint)
             dur = float(self.rng.uniform(2.4, 3.4))
             rec.target_fn = hand_behaviour(self.cfg, info["emotion"], info["intensity"], ev, dur, self.rng)
             return dur
-        # tête : bras raides en position de départ, la tête suit sa propre politique
+        # head: arms stiff in the start position, the head follows its own policy
         start = dict(zip(self.cfg.arm_joints, self.cfg.pose("start", self.cfg.arm_joints)))
         hfn = head_behaviour(self.cfg, info["emotion"], info["intensity"], ev, lambda t: start, self.rng)
         self.adapter.set_demonstrator(lambda t: hfn(t - countdown_s))
@@ -448,14 +448,14 @@ class Workbench:
             self.recording.request_stop()
         if self.rec_thread is not None:
             self.rec_thread.join(timeout=float(getattr(self.adapter, "timeout_s", 3.0)) + 2.0)
-        self._recording_active()  # solde un état orphelin
+        self._recording_active()  # clears an orphan state
 
     def save_recording(self, status="pending", notes="", synthetic=None) -> str:
         rec = self.recording
         if rec is None or rec.result is None:
             raise ControllerError("Aucun enregistrement terminé à sauvegarder")
         r, info = rec.result, self.rec_info
-        # segment utile proposé : là où le groupe bouge (mains : d'après la consigne pilotée)
+        # suggested useful segment: where the group moves (hands: from the driven target)
         seg = suggest_segment(r.reference if r.reference is not None else r.traj)
         take_id = new_id(info["kind"])
         meta = TakeMeta(
@@ -468,7 +468,7 @@ class Workbench:
             synthetic=self.sim_demonstration if synthetic is None else synthetic, status=status,
             annotations={"notes": notes or ("" if r.complete else r.message), "tags": [] if r.complete else ["incomplete"]},
         )
-        self.store.save(meta, r.traj, reference=r.reference)  # consigne des mains, même horloge
+        self.store.save(meta, r.traj, reference=r.reference)  # hand target, same clock
         self.recording = None
         return take_id
 
@@ -476,7 +476,7 @@ class Workbench:
         rec = self.recording
         if rec is None:
             return {"state": "none"}
-        self._recording_active()  # un état orphelin n'est jamais affiché comme « en cours »
+        self._recording_active()  # an orphan state is never shown as "in progress"
         d = {"state": rec.state.value, "countdown_left": round(rec.countdown_left, 2),
              "elapsed": round(rec.elapsed, 2), "error": rec.error, **self.rec_info}
         if rec.result is not None:
@@ -484,11 +484,11 @@ class Workbench:
             d["message"] = rec.result.message
         return d
 
-    # -- entraînement -----------------------------------------------------------
+    # -- training ---------------------------------------------------------------
     def train(self, component, epochs=None, include_pending=False, background=True, overrides=None):
-        """Entraîne UN groupe (bras, tête ou mains), indépendamment des deux autres.
-        `overrides` : réglages de cet entraînement (voir training.OVERRIDABLE)."""
-        overrides = training.check_overrides(overrides)  # erreur immédiate si réglage invalide
+        """Trains ONE group (arms, head or hands), independently of the other two.
+        `overrides`: settings for this training run (see training.OVERRIDABLE)."""
+        overrides = training.check_overrides(overrides)  # immediate error if a setting is invalid
         statuses = ("accepted", "pending") if include_pending else ("accepted",)
         job_id = new_id(f"train-{component}")
         job = {"id": job_id, "component": component, "state": "running", "progress": [], "run": None,
@@ -508,7 +508,7 @@ class Workbench:
                                                epochs, log, overrides)
                 job["run"] = str(run)
                 job["state"] = "done"
-                self.engine = None  # rechargé à la prochaine génération ; AUCUNE exécution
+                self.engine = None  # reloaded on the next generation; NO execution
             except Exception as e:
                 job["state"] = "error"
                 job["error"] = str(e)
@@ -551,7 +551,7 @@ class Workbench:
             return d.get("history", [])
         return {k: d.get(k, [] if k != "final_history" else None) for k in ("history", "fold_histories", "final_history")}
 
-    # -- génération ---------------------------------------------------------------
+    # -- generation ---------------------------------------------------------------
     def get_engine(self) -> MotionEngine:
         if self.engine is None:
             inf = self.cfg.robot.get("inference", {})
@@ -572,9 +572,9 @@ class Workbench:
 
     def generate(self, emotion, intensity, use_event=True, variation=0.0, seed=None, plan_cycle=True,
                  project_zone=None, temperature=None, latent=None, event=None) -> dict:
-        """Génère et valide ; ne bouge rien. Retourne un plan identifié pour exécution explicite.
-        CVAE : `temperature` (0 = geste central), `latent` {groupe: z} ; `event` (dict) remplace
-        l'événement courant (ex. rejouer une prise de la carte des z avec son propre événement)."""
+        """Generates and validates; moves nothing. Returns an identified plan for explicit execution.
+        CVAE: `temperature` (0 = central gesture), `latent` {group: z}; `event` (dict) replaces
+        the current event (e.g. replaying a take from the z map with its own event)."""
         eng = self.get_engine()
         if event is not None:
             ev = EventContext.from_dict(event)
@@ -777,7 +777,7 @@ class Workbench:
         return {"started": True, "duration_s": plan.traj.duration, "segments": plan.segments}
 
     def stop(self):
-        """Arrêt explicite global : enregistrement, relecture et exécution."""
+        """Explicit global stop: recording, replay and execution."""
         if self.recording is not None:
             self.recording.request_stop()
         if self.calibration is not None and self.calibration.sweeping:

@@ -1,23 +1,22 @@
-"""Petits réseaux PyTorch (MLP) et rechargement des checkpoints.
+"""Small PyTorch networks (MLP) and checkpoint loading.
 
-Trois modèles INDÉPENDANTS, de même entrée [émotion, intensité, événement (6)] :
-  bras  -> [points de contrôle (K×Ja), log durée]
-  tête  -> [points de contrôle (K×Jh), log durée]
-  mains -> [ouverture des mains (K×2, 0 fermée .. 1 ouverte), log durée]
-Chacun s'entraîne seul ; le moteur combine leurs sorties en un geste unique.
+Three INDEPENDENT models, with the same input [emotion, intensity, event (6)]:
+  arms  -> [control points (K×Ja), log duration]
+  head  -> [control points (K×Jh), log duration]
+  hands -> [hand opening (K×2, 0 closed .. 1 open), log duration]
+Each is trained on its own; the engine combines their outputs into a single gesture.
 
-Référence déterministe : une régression par moindres carrés produit la MOYENNE
-des gestes portant la même étiquette. Si « joie » a été démontrée de deux
-façons différentes, le modèle peut générer un geste intermédiaire qui n'a été
-montré nulle part.
+Deterministic baseline: a least-squares regression produces the AVERAGE of the
+gestures carrying the same label. If "joie" (joy) was demonstrated in two different
+ways, the model may generate an intermediate gesture that was never shown.
 
-Mode CVAE (model.yaml `cvae.enabled`, désactivé par défaut) : le MLP ci-dessus
-devient le DÉCODEUR et reçoit en plus un code latent z (`latent_dim`). Un petit
-ENCODEUR (sous-module `encoder`, utilisé seulement à l'entraînement et pour la
-carte des z) lit la prise (consigne + points de contrôle + log durée) et donne
-la loi de son z. À la génération, z est tiré d'une loi normale N(0, T²) (T =
-température ; T = 0 donne le geste central z = 0). Sans CVAE (latent_dim = 0),
-le réseau est exactement le MLP d'avant.
+CVAE mode (model.yaml `cvae.enabled`, disabled by default): the MLP above becomes
+the DECODER and also receives a latent code z (`latent_dim`). A small ENCODER
+(sub-module `encoder`, used only for training and for the z map) reads the take
+(prompt + control points + log duration) and gives the distribution of its z. At
+generation time, z is drawn from a normal distribution N(0, T²) (T = temperature;
+T = 0 gives the central gesture z = 0). Without CVAE (latent_dim = 0), the network
+is exactly the former MLP.
 """
 from __future__ import annotations
 
@@ -120,7 +119,7 @@ def file_digest(path) -> str:
 
 
 class LoadedModel:
-    """Modèle rechargé + métadonnées, vérifié contre la configuration courante."""
+    """Loaded model + metadata, checked against the current configuration."""
 
     def __init__(self, path, cfg: Optional[Config] = None, component: Optional[str] = None):
         path = Path(path)
@@ -173,7 +172,7 @@ class LoadedModel:
         return self.model(t, zt).numpy().astype(np.float64)
 
     def export_numpy(self, path):
-        """Export léger (numpy seul) pour une inférence sans PyTorch."""
+        """Lightweight export (numpy only) for inference without PyTorch."""
         arrays = {}
         linears = [m for m in self.model.net if isinstance(m, nn.Linear)]
         for i, lin in enumerate(linears):
@@ -185,7 +184,7 @@ class LoadedModel:
 
 
 class NumpyModel:
-    """Inférence numpy pure d'un export `export_numpy` (même interface que LoadedModel)."""
+    """Pure numpy inference of an `export_numpy` export (same interface as LoadedModel)."""
 
     def __init__(self, path, cfg: Optional[Config] = None, component: Optional[str] = None):
         with np.load(path, allow_pickle=False) as z:

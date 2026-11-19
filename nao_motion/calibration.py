@@ -1,26 +1,24 @@
-"""Calibration du guardian : procédure dédiée qui MESURE les limites sur le robot.
+"""Guardian calibration: a dedicated procedure that MEASURES the limits on the robot.
 
-Le guardian ne s'appuie sur des limites « réelles » que si un fichier de
-calibration est actif. Ce fichier est produit par une procédure à part
-entière, robot par robot :
+The guardian only relies on "real" limits if a calibration file is active. That
+file is produced by a full procedure of its own, robot by robot:
 
-  1. identification du robot (nom, NAOqi, configuration, limites d'usine
-     lues via ALMotion.getLimits quand le pont est connecté) ;
-  2. exploration guidée, groupe par groupe : le groupe est relâché (lecture
-     seule), les autres sont maintenus ; l'opérateur amène lentement chaque
-     articulation jusqu'à ses butées utiles et parcourt les combinaisons
-     (par ex. tête tournée ET baissée). Rien n'est commandé pendant cette étape ;
-  3. capture des poses de repos et de départ (lecture des capteurs) ;
-  4. calcul : limites = amplitude mesurée ∩ limites d'usine, moins une marge ;
-     contraintes couplées = enveloppe convexe des couples explorés, simplifiée
-     de façon conservatrice, moins la marge ;
-  5. relecture par l'opérateur, puis enregistrement versionné et activation.
+  1. robot identification (name, NAOqi, configuration, factory limits read
+     through ALMotion.getLimits when the bridge is connected);
+  2. guided exploration, group by group: the group is relaxed (read-only),
+     the others are held; the operator slowly moves each joint to its useful
+     end stops and goes through the combinations (e.g. head turned AND
+     lowered). Nothing is commanded during this step;
+  3. capture of the rest and start poses (sensor readings);
+  4. computation: limits = measured range ∩ factory limits, minus a margin;
+     coupled constraints = convex hull of the explored pairs, simplified
+     conservatively, minus the margin;
+  5. review by the operator, then versioned saving and activation.
 
-Limites de la méthode : l'enveloppe convexe suppose une zone atteignable
-convexe pour chaque couple ; une zone en forme de L doit être découpée en
-plusieurs couples/contraintes à la main. Les collisions entre membres (bras ↔
-tête, bras ↔ bras) ne sont pas mesurables ainsi et restent des contraintes
-manuelles dans guardian.yaml.
+Limits of the method: the convex hull assumes a convex reachable area for each
+pair; an L-shaped area must be split by hand into several pairs/constraints.
+Collisions between limbs (arm ↔ head, arm ↔ arm) cannot be measured this way
+and remain manual constraints in guardian.yaml.
 """
 from __future__ import annotations
 
@@ -40,9 +38,9 @@ class CalibrationError(ValueError):
     pass
 
 
-# -- géométrie -------------------------------------------------------------------
+# -- geometry -------------------------------------------------------------------
 def convex_hull(points: np.ndarray) -> np.ndarray:
-    """Enveloppe convexe 2D (chaîne monotone), sommets dans le sens trigonométrique."""
+    """2D convex hull (monotone chain), vertices counter-clockwise."""
     pts = np.unique(np.asarray(points, dtype=float), axis=0)
     if len(pts) < 3:
         return pts
@@ -64,8 +62,8 @@ def convex_hull(points: np.ndarray) -> np.ndarray:
 
 
 def simplify_hull(hull: np.ndarray, max_vertices: int) -> np.ndarray:
-    """Retire les sommets de moindre aire (Visvalingam). Retirer un sommet d'un
-    polygone convexe le rétrécit : la simplification reste conservatrice."""
+    """Removes the vertices with the smallest area (Visvalingam). Removing a vertex from a
+    convex polygon shrinks it: the simplification stays conservative."""
     h = list(map(tuple, hull))
     while len(h) > max(3, max_vertices):
         n = len(h)
@@ -78,7 +76,7 @@ def simplify_hull(hull: np.ndarray, max_vertices: int) -> np.ndarray:
 
 
 def hull_constraints(hull: np.ndarray, margin: float) -> List[Tuple[float, float, float]]:
-    """Polygone convexe (sens trigo) -> demi-plans n·q <= b, rétrécis de `margin`."""
+    """Convex polygon (counter-clockwise) -> half-planes n·q <= b, shrunk by `margin`."""
     out = []
     n = len(hull)
     if n < 3:
@@ -89,15 +87,15 @@ def hull_constraints(hull: np.ndarray, margin: float) -> List[Tuple[float, float
         norm = float(np.hypot(*d))
         if norm < 1e-9:
             continue
-        nx, ny = d[1] / norm, -d[0] / norm  # normale extérieure
+        nx, ny = d[1] / norm, -d[0] / norm  # outward normal
         out.append((float(nx), float(ny), float(nx * p[0] + ny * p[1] - margin)))
     return out
 
 
 def zone_polygon(constraints: Sequence[Tuple[float, float, float]],
                  box: Tuple[float, float, float, float]) -> np.ndarray:
-    """Polygone de la zone retenue : demi-plans n·q <= b ∩ boîte (xmin, xmax, ymin, ymax).
-    Affichage seulement (Sutherland-Hodgman) ; vide si la zone est vide."""
+    """Polygon of the retained area: half-planes n·q <= b ∩ box (xmin, xmax, ymin, ymax).
+    Display only (Sutherland-Hodgman); empty if the area is empty."""
     x0, x1, y0, y1 = box
     poly = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
     for nx, ny, b in constraints:
@@ -122,7 +120,7 @@ def in_zone(pt, constraints, box) -> bool:
             and all(nx * x + ny * y <= b + 1e-9 for nx, ny, b in constraints))
 
 
-# -- fichier de calibration --------------------------------------------------------
+# -- calibration file --------------------------------------------------------
 @dataclass
 class Calibration:
     version: str
@@ -205,15 +203,15 @@ def active_calibration_path(config_root) -> Optional[Path]:
 
 
 def is_simulated(cal: "Calibration") -> bool:
-    """Calibration produite en simulation (démonstrateur synthétique) : jamais activable."""
+    """Calibration produced in simulation (synthetic demonstrator): never activatable."""
     r = cal.robot or {}
     return r.get("adapter") == "sim" or r.get("backend") == "sim"
 
 
 def check_compatible(config_root, cal_path, allow_simulated: bool = False) -> "Calibration":
-    """Vérifie qu'un fichier de calibration est utilisable avec la configuration ACTUELLE
-    (format, articulations, poses dans les limites…) sans rien activer. Lève
-    CalibrationError avec le motif sinon."""
+    """Checks that a calibration file is usable with the CURRENT configuration
+    (format, joints, poses within the limits…) without activating anything. Raises
+    CalibrationError with the reason otherwise."""
     from .config import ConfigError, load_config
     cal = Calibration.load(cal_path)
     if is_simulated(cal) and not allow_simulated:
@@ -226,8 +224,8 @@ def check_compatible(config_root, cal_path, allow_simulated: bool = False) -> "C
 
 
 def list_calibrations(config_root, allow_simulated: bool = False) -> List[dict]:
-    """Fichiers de configs/calibration/, du plus récent au plus ancien, avec leur état :
-    active, activable (sinon le motif), groupes calibrés et poses présentes."""
+    """Files in configs/calibration/, newest first, with their state:
+    active, activatable (otherwise the reason), calibrated groups and poses present."""
     d = Path(config_root) / "calibration"
     try:
         active = active_calibration_path(config_root)
@@ -238,7 +236,7 @@ def list_calibrations(config_root, allow_simulated: bool = False) -> List[dict]:
         e = {"file": f.name, "active": bool(active and f.resolve() == active.resolve())}
         try:
             cal = Calibration.load(f)
-        except Exception as ex:  # fichier illisible ou d'un autre type
+        except Exception as ex:  # unreadable file or of another type
             e.update(version=None, valid=False, activable=False, reason=str(ex))
             out.append(e)
             continue
@@ -257,18 +255,18 @@ def list_calibrations(config_root, allow_simulated: bool = False) -> List[dict]:
 
 
 def activate(config_root, cal_path, allow_simulated: bool = False) -> Path:
-    """Désigne un fichier de configs/calibration/ au guardian. Le fichier doit être lisible,
-    compatible avec la configuration actuelle et, sauf `allow_simulated` (essais en
-    simulation), issu du robot réel : sinon rien ne change."""
+    """Points the guardian to a file in configs/calibration/. The file must be readable,
+    compatible with the current configuration and, unless `allow_simulated` (trials in
+    simulation), come from the real robot: otherwise nothing changes."""
     cal_path = Path(cal_path)
     d = Path(config_root) / "calibration"
     if not cal_path.is_absolute() and not cal_path.exists():
-        cal_path = d / cal_path  # nom seul : fichier de configs/calibration/
+        cal_path = d / cal_path  # bare name: file in configs/calibration/
     if cal_path.resolve().parent != d.resolve():
         raise CalibrationError("Le fichier doit se trouver dans configs/calibration/")
     if not cal_path.exists():
         raise CalibrationError(f"Calibration introuvable : {cal_path.name}")
-    check_compatible(config_root, cal_path, allow_simulated)  # valide AVANT d'écrire ACTIVE
+    check_compatible(config_root, cal_path, allow_simulated)  # validate BEFORE writing ACTIVE
     (d / "ACTIVE").write_text(cal_path.name + "\n", encoding="utf-8")
     return d / "ACTIVE"
 
@@ -277,9 +275,9 @@ def activate(config_root, cal_path, allow_simulated: bool = False) -> Path:
 def compute_calibration(sweeps: Dict[str, Dict[str, np.ndarray]], joints: Sequence[str], proc: dict,
                         factory: Optional[Dict[str, Sequence[float]]] = None, poses=None, robot=None,
                         version: Optional[str] = None, imported: Optional[Dict[str, dict]] = None) -> Calibration:
-    """sweeps : {groupe: {"joints": [...], "q": (N, J)}} mesurés pendant l'exploration.
-    imported : {groupe: import_group(...)} groupes repris tels quels d'une calibration
-    enregistrée (limites, mesures, contraintes couplées) au lieu d'être explorés à nouveau."""
+    """sweeps: {group: {"joints": [...], "q": (N, J)}} measured during exploration.
+    imported: {group: import_group(...)} groups taken as is from a saved
+    calibration (limits, measurements, coupled constraints) instead of being explored again."""
     imported = imported or {}
     imp_lim = {j: tuple(v) for g in imported.values() for j, v in g["limits"].items()}
     imp_meas = {j: dict(m, imported_from=g["source"]) for g in imported.values() for j, m in g["measured"].items()}
@@ -310,8 +308,8 @@ def compute_calibration(sweeps: Dict[str, Dict[str, np.ndarray]], joints: Sequen
                                    "Explorer toute l'amplitude utile.")
         flo, fhi = (factory or {}).get(j, (lo, hi))[:2]
         flo, fhi = float(flo), float(fhi)
-        # Exploration au-delà d'une limite d'usine : on ne refuse pas, on garde la limite
-        # d'usine (intersection) et on le signale.
+        # Exploration beyond a factory limit: not refused, the factory limit is kept
+        # (intersection) and it is reported.
         beyond = []
         if lo < flo - tol:
             beyond.append(f"min exploré {lo:.3f} < limite d'usine {flo:.3f}")
@@ -330,18 +328,18 @@ def compute_calibration(sweeps: Dict[str, Dict[str, np.ndarray]], joints: Sequen
         coupled.extend(dict(c) for c in g["coupled"])
     for a, b in proc.get("pairs", []):
         if a in imp_lim or b in imp_lim:
-            continue  # enveloppe reprise avec le groupe
+            continue  # hull taken over with the group
         if a not in samples or b not in samples or len(samples[a]) != len(samples[b]):
-            continue  # couple non exploré ensemble (groupes différents)
+            continue  # pair not explored together (different groups)
         pts = np.stack([samples[a], samples[b]], axis=1)
         hull = simplify_hull(convex_hull(pts), int(proc.get("max_hull_edges", 12)))
         for k, (na, nb, bound) in enumerate(hull_constraints(hull, margin)):
             coupled.append({"name": f"calib:{a}-{b}:{k}", "terms": {a: round(na, 6), b: round(nb, 6)},
                             "bound": round(bound, 6), "description": f"enveloppe mesurée {a}/{b}"})
     if poses:
-        # Le repos peut être hors de la zone de mouvement (ex. bras posés sur les genoux :
-        # contact) : il n'est borné que par les limites d'usine. Que le départ soit
-        # accessible sans heurt depuis le repos est à la charge de qui calibre.
+        # Rest may be outside the movement zone (e.g. arms resting on the knees:
+        # contact): it is only bounded by the factory limits. Making sure the start pose
+        # can be reached smoothly from rest is up to whoever calibrates.
         for name, groups in poses.items():
             for g, jq in groups.items():
                 for j, v in jq.items():
@@ -375,8 +373,8 @@ def compute_calibration(sweeps: Dict[str, Dict[str, np.ndarray]], joints: Sequen
         notes.append(f"groupe {g} repris de la calibration {d['source']}" +
                      (f" (pose{'s' if len(changed) > 1 else ''} {' et '.join(POSE_FR[n] for n in changed)} "
                       "recapturée" + ("s" if len(changed) > 1 else "") + ")" if changed else ""))
-    # Rien d'exploré, tout repris d'une même calibration (ex. seule la pose de repos change) :
-    # on garde sa marge et ses vitesses telles quelles.
+    # Nothing explored, everything taken from the same calibration (e.g. only the rest pose changes):
+    # its margin and velocities are kept as they are.
     if not samples and imported and len({d.get("margin_rad") for d in imported.values()}) == 1:
         m0 = next(iter(imported.values())).get("margin_rad")
         if m0 is not None:
@@ -391,8 +389,8 @@ POSE_FR = {"rest": "de repos", "start": "de départ"}
 
 
 def _merge_kinematics(imported: Dict[str, dict], swept) -> Optional[dict]:
-    """Vitesses des groupes repris (une articulation explorée à nouveau perd les siennes :
-    elles ne valent que pour la zone d'où elles ont été mesurées)."""
+    """Velocities of the imported groups (a joint explored again loses its own:
+    they only hold for the area where they were measured)."""
     out = {"velocity_rad_s": {}, "acceleration_rad_s2": {}}
     sources = []
     for g, d in sorted(imported.items()):
@@ -412,10 +410,10 @@ def _merge_kinematics(imported: Dict[str, dict], swept) -> Optional[dict]:
 
 def import_group(cal: "Calibration", group: str, joints: Sequence[str],
                  other_joints: Optional[Sequence[str]] = None) -> dict:
-    """Extrait d'une calibration enregistrée tout ce qui concerne un groupe : limites,
-    mesures, contraintes couplées portant uniquement sur ses articulations, et poses
-    (si elles y sont). Sert à garder un groupe déjà calibré sans l'explorer à nouveau.
-    other_joints : articulations des AUTRES groupes calibrés (leurs vitesses ne sont pas reprises ici)."""
+    """Extracts from a saved calibration everything about a group: limits,
+    measurements, coupled constraints involving only its joints, and poses
+    (if present). Used to keep an already calibrated group without exploring it again.
+    other_joints: joints of the OTHER calibrated groups (their velocities are not taken here)."""
     if is_simulated(cal):
         raise CalibrationError("Calibration simulée : ses valeurs ne peuvent pas être reprises")
     js = list(joints)
@@ -425,8 +423,8 @@ def import_group(cal: "Calibration", group: str, joints: Sequence[str],
     poses = {n: {j: float(v) for j, v in (cal.poses or {}).get(n, {}).get(group, {}).items()}
              for n in ("rest", "start")}
     poses = {n: p for n, p in poses.items() if set(js) <= set(p)}
-    # vitesses/accélérations mesurées sur les prises (calibration étendue) : celles du groupe,
-    # plus celles des articulations hors groupes calibrés (mains), pour ne pas les perdre
+    # velocities/accelerations measured on the takes (extended calibration): those of the group,
+    # plus those of joints outside the calibrated groups (hands), so they are kept
     kin = None
     if cal.kinematics:
         keep = lambda j: j in js or j not in (other_joints or ())
@@ -441,21 +439,21 @@ def import_group(cal: "Calibration", group: str, joints: Sequence[str],
             "poses": poses}
 
 
-# -- procédure sur le robot ------------------------------------------------------------
+# -- procedure on the robot ------------------------------------------------------------
 class CalibrationSession:
-    """Exploration guidée groupe par groupe. Aucune commande de mouvement :
-    le groupe exploré est relâché, les autres sont raidis sur place."""
+    """Guided exploration group by group. No movement command:
+    the explored group is relaxed, the others are stiffened in place."""
 
     def __init__(self, cfg, adapter, proc: dict):
         self.cfg, self.adapter, self.proc = cfg, adapter, proc
         self.rate = float(proc.get("rate_hz", 50))
         self.sweeps: Dict[str, dict] = {}
         self.poses: Dict[str, Dict[str, Dict[str, float]]] = {}
-        self.imported: Dict[str, dict] = {}   # groupes repris d'une calibration enregistrée
+        self.imported: Dict[str, dict] = {}   # groups taken from a saved calibration
         self._stop = threading.Event()
         self.current: Optional[str] = None
         self.n = 0
-        self.live: List[np.ndarray] = []      # mesures du balayage en cours (lecture par l'interface)
+        self.live: List[np.ndarray] = []      # measurements of the current sweep (read by the interface)
         self.live_joints: List[str] = []
 
     def robot_info(self) -> dict:
@@ -479,7 +477,7 @@ class CalibrationSession:
             raise CalibrationError(f"Confirmer que le groupe {group} est tenu avant de le relâcher")
         joints = self.cfg.groups[group]
         others = [j for j in self.cfg.all_joints if j not in joints]
-        self.imported.pop(group, None)  # explorer un groupe remplace sa reprise
+        self.imported.pop(group, None)  # exploring a group replaces its import
         self.adapter.set_roles(guided=joints, driven=others)
         self._stop.clear()
         self.current = group
@@ -496,7 +494,7 @@ class CalibrationSession:
                 k += 1
                 a.sleep(max(0.0, t0 + k / self.rate - a.now()))
         finally:
-            # même en cas de coupure, les mesures déjà prises sont gardées
+            # even if the link drops, the measurements already taken are kept
             self.current = None
             self._store_sweep(group, joints, qs)
         q = self.sweeps[group]["q"]
@@ -505,7 +503,7 @@ class CalibrationSession:
     def _store_sweep(self, group, joints, qs):
         q = np.array(qs).reshape(-1, len(joints))
         prev = self.sweeps.get(group)
-        if prev is not None and len(prev["q"]):  # une nouvelle exploration complète la précédente
+        if prev is not None and len(prev["q"]):  # a new exploration adds to the previous one
             q = np.vstack([np.asarray(prev["q"]), q])
         self.sweeps[group] = {"joints": joints, "q": q}
 
@@ -513,8 +511,8 @@ class CalibrationSession:
         self.sweeps.pop(group, None)
 
     def import_group(self, cal: "Calibration", group: str) -> dict:
-        """Reprend un groupe d'une calibration enregistrée (remplace son exploration ; ses
-        poses aussi si le fichier les porte, sinon les capturer)."""
+        """Imports a group from a saved calibration (replaces its exploration; its
+        poses too if the file has them, otherwise capture them)."""
         others = [j for j in self.cfg.all_joints if j not in self.cfg.groups[group]]
         imp = import_group(cal, group, self.cfg.groups[group], others)
         self.sweeps.pop(group, None)
@@ -527,7 +525,7 @@ class CalibrationSession:
         self.imported.pop(group, None)
 
     def capture_pose(self, name: str, group: str, samples: int = 5, interval_s: float = 0.02) -> Dict[str, float]:
-        """Moyenne de `samples` lectures capteurs (aucune commande)."""
+        """Average of `samples` sensor readings (no command)."""
         js = self.cfg.groups[group]
         reads = []
         for k in range(max(1, int(samples))):
@@ -554,8 +552,8 @@ def load_procedure(config_root) -> dict:
 
 
 def sim_sweeper(cfg, group: str, duration_s: float = 20.0, rng=None):
-    """Démonstrateur simulé d'exploration : parcourt l'amplitude de remplacement
-    (pour tester la procédure sans robot ; n'a aucune valeur de mesure)."""
+    """Simulated exploration demonstrator: goes through the placeholder range
+    (to test the procedure without a robot; it has no measurement value)."""
     rng = rng or np.random.default_rng(0)
     js = cfg.groups[group]
     freqs = rng.uniform(0.15, 0.6, size=len(js))

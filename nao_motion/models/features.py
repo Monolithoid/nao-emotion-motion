@@ -1,7 +1,7 @@
-"""Construction des entrées/sorties des modèles (indépendante de PyTorch).
+"""Building the model inputs/outputs (independent of PyTorch).
 
-Normalisation des angles : x = (q - pose_de_départ) / demi_plage(limites).
-Les sorties sont des points de contrôle normalisés ; la durée est apprise en log.
+Angle normalisation: x = (q - start_pose) / half_range(limits).
+The outputs are normalised control points; the duration is learned in log.
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ class Norm:
 
 
 def emotion_vector(emotions: List[str], emotion: Union[str, Dict[str, float]]) -> np.ndarray:
-    """One-hot, ou mélange pondéré {émotion: poids} normalisé (interpolation entre émotions)."""
+    """One-hot, or a normalised weighted mix {emotion: weight} (interpolation between emotions)."""
     v = np.zeros(len(emotions), dtype=np.float32)
     if isinstance(emotion, str):
         if emotion not in emotions:
@@ -70,10 +70,10 @@ def check_intensity(x: float) -> float:
 
 
 def motion_input(emotions, emotion, intensity, event: Optional[EventContext] = None) -> np.ndarray:
-    """Entrée COMMUNE aux trois modèles (bras, tête, mains) : [émotion, intensité,
-    événement (6)]. La direction et la distance de l'événement permettent d'apprendre
-    un geste orienté (pointer, regarder, se protéger d'un côté...). Aucun modèle ne
-    reçoit la sortie d'un autre : chacun s'entraîne seul."""
+    """Input SHARED by the three models (arms, head, hands): [emotion, intensity,
+    event (6)]. The event's direction and distance make it possible to learn
+    an oriented gesture (pointing, looking, shielding on one side...). No model
+    receives another's output: each is trained on its own."""
     ev = event if event is not None else EventContext.none()
     return np.concatenate([emotion_vector(emotions, emotion), [check_intensity(intensity)],
                            ev.features()]).astype(np.float32)
@@ -83,6 +83,6 @@ def motion_input_dim(n_emotions) -> int:
     return n_emotions + 1 + EVENT_FEATURES
 
 
-# noms historiques (modèle des bras)
+# historical names (arms model)
 arm_input = motion_input
 arm_input_dim = motion_input_dim
