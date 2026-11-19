@@ -21,7 +21,7 @@ def gwb(trained, cfg, tmp_path):
     return wb
 
 
-def _generate(wb, cfg, emotion="joie"):
+def _generate(wb, cfg, emotion="joy"):
     """Generation through the real path; the gesture to play is then replaced by a fixed one
     known to pass the guardian (the shared test models change from one test to another)."""
     out = wb.generate(emotion, 0.9, use_event=False)
@@ -53,7 +53,7 @@ def test_play_from_current_posture_after_a_recording(gwb, cfg):
 
 
 def test_play_from_rest_and_stay_in_start_pose(gwb, cfg):
-    out = _generate(gwb, cfg, "colere")
+    out = _generate(gwb, cfg, "anger")
     assert out["cycle"]["start"] == "rest"
     gwb.ctrl.arm(confirm=True)
     r = gwb.execute_plan(out["plan_id"], background=False, start="auto", end="start")
@@ -88,7 +88,7 @@ def test_guardian_refusal_sends_nothing(gwb, cfg):
 def test_play_route_without_confirmation(gwb, cfg):
     api = Api(gwb)
     _put_in_start_pose(gwb, cfg)
-    out = api.post_generate({"emotion": "joie", "intensity": 0.8, "use_event": False})
+    out = api.post_generate({"emotion": "joy", "intensity": 0.8, "use_event": False})
     gwb.plans[out["plan_id"]]["played"] = gesture(cfg)
     with pytest.raises(ControllerError):  # motors not armed: nothing moves
         api.post_play({"plan_id": out["plan_id"]})
@@ -148,7 +148,7 @@ def test_guardian_off_still_refuses_beyond_factory_limits(gwb, cfg):
 
 def test_play_route_guardian_flag(gwb, cfg):
     api = Api(gwb)
-    out = api.post_generate({"emotion": "joie", "intensity": 0.8, "use_event": False})
+    out = api.post_generate({"emotion": "joy", "intensity": 0.8, "use_event": False})
     gwb.plans[out["plan_id"]]["played"] = gesture(cfg)
     gwb.plans[out["plan_id"]]["gen"] = type("G", (), {"combined": gesture(cfg)})()
     gwb.ctrl.arm(confirm=True)
@@ -187,7 +187,7 @@ def test_projected_control_points_keep_the_curve_in_the_zone(gwb, cfg):
             inside = [k for k, p in enumerate(raw.arm_ctrl)
                       if (p >= lo).all() and (p <= hi).all() and all(a @ p <= b for a, b in half)]
             np.testing.assert_array_equal(gen.arm_ctrl[inside], raw.arm_ctrl[inside])
-    assert gwb.generate("joie", 0.9, use_event=False, project_zone=False)["generated"]["inputs"]["project_zone"] is False
+    assert gwb.generate("joy", 0.9, use_event=False, project_zone=False)["generated"]["inputs"]["project_zone"] is False
 
 
 def _cfg_wide_factory(j="LShoulderRoll", widen=0.4):

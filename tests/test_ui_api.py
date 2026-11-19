@@ -7,7 +7,7 @@ def test_llm_request_never_executes(trained):
     wb = trained["wb"]
     api = Api(wb)
     n = len(wb.adapter.command_log)
-    out = api.post_request({"emotion": "joie", "intensity": 0.6})
+    out = api.post_request({"emotion": "joy", "intensity": 0.6})
     assert "plan_id" in out and "Proposition" in out["note"]
     assert len(wb.adapter.command_log) == n
     with pytest.raises(ValueError):

@@ -14,7 +14,7 @@ from nao_motion.training import TrainingError, check_overrides
 from .conftest import make_wb
 
 
-def _save_arm_take(wb, cfg, q_fn, emotion="joie", dur=3.0):
+def _save_arm_take(wb, cfg, q_fn, emotion="joy", dur=3.0):
     j = cfg.arm_joints + cfg.head_joints
     t = np.linspace(0, dur, int(dur * 50) + 1)
     q = np.tile(cfg.pose("start", j), (len(t), 1))
@@ -83,7 +83,7 @@ def _wave_takes(wb, cfg, n=8, seed=3):
         env = np.sin(np.pi * t / dur) ** 2
         q[:, j.index("RShoulderPitch")] -= 0.8 * env
         q[:, j.index("RElbowRoll")] += a * env * np.sin(2 * np.pi * f * (t - d0))
-        meta = TakeMeta(take_id=new_id("arms"), session_id="s", kind="arms", emotion="joie", intensity=0.7,
+        meta = TakeMeta(take_id=new_id("arms"), session_id="s", kind="arms", emotion="joy", intensity=0.7,
                         joints=j, guided_joints=cfg.arm_joints, driven_joints=cfg.head_joints,
                         event=EventContext.none().to_dict(), calibration_version=cfg.calibration_version,
                         config_fingerprint="x", adapter="test", sample_rate_hz=50, segment=(0.0, dur),
@@ -103,7 +103,7 @@ def test_motion_energy_keeps_waves_done_at_different_moments(tmp_path, cfg):
         m = load_model(training.latest(wb.runs_dir, "arms"), cfg, "arms")
         assert m.meta["metrics"]["settings"]["motion_energy_weight"] == ew
         kept[ew] = m.meta["metrics"]["train_motion_kept"]
-        q = MotionEngine(cfg, arm_model=m).generate("joie", 0.7).arms.q[:, cfg.arm_joints.index("RElbowRoll")]
+        q = MotionEngine(cfg, arm_model=m).generate("joy", 0.7).arms.q[:, cfg.arm_joints.index("RElbowRoll")]
         ptp[ew] = float(np.ptp(q))
     # the mean of out-of-phase waves is nearly still; the energy term brings the wave back
     # (take ids, hence the order of the examples, vary between runs: margins are loose)

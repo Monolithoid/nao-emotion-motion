@@ -10,7 +10,7 @@ To use it in another project, copy `nao_gesture.py` and `nao_gesture.json`.
 
     from nao_gesture import GestureGenerator
     gen = GestureGenerator.load("nao_gesture.json")
-    g = gen.generate("joie", 0.7,
+    g = gen.generate("joy", 0.7,
                      event={"azimuth_deg": 30, "elevation_deg": 0, "distance_m": 1.2},
                      current_pose=measured_posture)      # recommended, see below
     if g.ok:                                             # accepted by the guardian
@@ -20,7 +20,7 @@ To use it in another project, copy `nao_gesture.py` and `nao_gesture.json`.
         print(g.report.summary())                        # send nothing
 
 Inputs
-  - emotion: a name from `gen.emotions`, or a mix {"joie": 0.7, "surprise": 0.3};
+  - emotion: a name from `gen.emotions`, or a mix {"joy": 0.7, "surprise": 0.3};
   - intensity: between 0 and 1;
   - event (optional): None = no event; otherwise a dictionary
     {"azimuth_deg" | "azimuth_rad", "elevation_deg" | "elevation_rad", "distance_m" (optional)}
@@ -929,7 +929,7 @@ class GestureGenerator(object):
 
 
 def _main(argv=None):
-    """python nao_gesture.py nao_gesture.json joie 0.7 [azimuth_deg elevation_deg [distance_m]]"""
+    """python nao_gesture.py nao_gesture.json joy 0.7 [azimuth_deg elevation_deg [distance_m]]"""
     argv = list(sys.argv[1:] if argv is None else argv)
     allow = "--allow-uncalibrated" in argv
     raw = "--raw" in argv

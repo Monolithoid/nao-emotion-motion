@@ -388,7 +388,7 @@ def _card(name, version, license_id, author, stats, calibrations, models, filter
             "from nao_gesture import GestureGenerator",
             "gen = GestureGenerator.load('generator/nao_gesture.json')",
             "print(gen.emotions)",
-            "g = gen.generate('joie', 0.7,                       # emotion (or a mix {'joie': 0.7, 'surprise': 0.3}), intensity 0..1",
+            "g = gen.generate('joy', 0.7,                       # emotion (or a mix {'joy': 0.7, 'surprise': 0.3}), intensity 0..1",
             "                 event={'azimuth_deg': 30, 'elevation_deg': 0, 'distance_m': 1.2},  # optional, torso frame",
             "                 current_pose=measured_posture)     # {joint: rad}, adds the transitions",
             "if g.ok:                                            # accepted by the guardian",
@@ -400,7 +400,7 @@ def _card(name, version, license_id, author, stats, calibrations, models, filter
             "Azimuth is positive to the robot's left, elevation positive up, 0 = straight ahead. Without "
             "`current_pose`, only the gesture is returned and the robot must be brought to the start position first. "
             "The library never commands the robot itself. Quick check from a shell: "
-            "`python generator/nao_gesture.py generator/nao_gesture.json joie 0.7 30 0 1.2` "
+            "`python generator/nao_gesture.py generator/nao_gesture.json joy 0.7 30 0 1.2` "
             "(exit code 0 accepted, 1 refused). Full documentation: "
             "[Gesture generator library](https://github.com/Monolithoid/nao-emotion-motion#gesture-generator-library-export-for-another-project).", "",
         ]

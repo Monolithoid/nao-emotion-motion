@@ -83,7 +83,7 @@ def test_open_calibration_blocks_motion_and_disarms(ui):
     with pytest.raises(ControllerError, match="Calibration ouverte"):
         api.post_arm({"armed": True, "confirm": True})
     with pytest.raises(ControllerError, match="Calibration ouverte"):
-        wb.prepare_arm_take("joie", 0.5, confirm=True)
+        wb.prepare_arm_take("joy", 0.5, confirm=True)
     with pytest.raises(ValueError, match="Calibration ouverte"):
         api.post_connect({"mode": "sim"})
     api.post_calibration_close({})

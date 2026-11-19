@@ -73,10 +73,10 @@ def exported(tmp_path_factory, cfg):
     return c, models, out, lib, lib.GestureGenerator.load(out["data"])
 
 
-CASES = [("joie", 0.7, None),
-         ("colere", 1.0, EventContext(True, 0.5, 0.2, source="t", distance_m=0.8)),
-         ({"joie": 0.6, "tristesse": 0.4}, 0.3, EventContext(True, -1.2, -0.1, source="t")),
-         ("peur", 0.0, EventContext(True, 2.9, 0.4, source="t", distance_m=3.0))]
+CASES = [("joy", 0.7, None),
+         ("anger", 1.0, EventContext(True, 0.5, 0.2, source="t", distance_m=0.8)),
+         ({"joy": 0.6, "sadness": 0.4}, 0.3, EventContext(True, -1.2, -0.1, source="t")),
+         ("fear", 0.0, EventContext(True, 2.9, 0.4, source="t", distance_m=3.0))]
 
 
 def _event_dict(ev):

@@ -108,7 +108,7 @@ def test_head_pass_releases_only_head_without_motion(wb, cfg):
     wb.event = EventContext(True, 0.5, 0.0, source="test")
     q_arms = wb.adapter.read_angles(cfg.arm_joints)
     n = len(wb.adapter.command_log)
-    wb.prepare_head_take("joie", 0.6)
+    wb.prepare_head_take("joy", 0.6)
     rec = wb.recording
     assert isinstance(rec, HeadRecording)
     assert all(wb.adapter.roles[j] == "guided" for j in cfg.head_joints)

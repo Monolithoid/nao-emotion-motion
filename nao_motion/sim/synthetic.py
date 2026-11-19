@@ -5,7 +5,7 @@ They replace the operator's hand to check that the pipeline works technically
 expressiveness: the shapes below are arbitrary. The takes they produce are marked
 `synthetic: true`.
 
-"surprise" and "colere" (anger) point towards the event when there is one (arm on
+"surprise" and "anger" (anger) point towards the event when there is one (arm on
 the event's side, more extended the closer the event), so that the pipeline can
 learn a gesture oriented by angle and distance.
 
@@ -25,13 +25,13 @@ from ..events import EventContext
 # amplitude (rad) per "generic" joint on the left side; the right side is mirrored
 # keys: sp=ShoulderPitch, sr=ShoulderRoll, ey=ElbowYaw, er=ElbowRoll, wy=WristYaw
 STYLES = {
-    "joie": [dict(sp=-0.8, sr=0.30, er=0.25, freq=1.2, osc=0.05, dur=3.2),
+    "joy": [dict(sp=-0.8, sr=0.30, er=0.25, freq=1.2, osc=0.05, dur=3.2),
              dict(sp=-0.6, sr=0.15, ey=0.4, er=-0.3, freq=1.2, osc=0.08, dur=3.4, one_arm=True)],
-    "tristesse": [dict(sp=0.25, sr=-0.10, er=0.35, freq=0.5, osc=0.0, dur=3.8)],
-    "colere": [dict(sp=-0.5, sr=0.05, er=0.5, freq=1.5, osc=0.04, dur=2.6)],
-    "peur": [dict(sp=-0.4, sr=-0.10, er=-0.4, freq=2.0, osc=0.015, dur=2.8)],
+    "sadness": [dict(sp=0.25, sr=-0.10, er=0.35, freq=0.5, osc=0.0, dur=3.8)],
+    "anger": [dict(sp=-0.5, sr=0.05, er=0.5, freq=1.5, osc=0.04, dur=2.6)],
+    "fear": [dict(sp=-0.4, sr=-0.10, er=-0.4, freq=2.0, osc=0.015, dur=2.8)],
     "surprise": [dict(sp=-0.7, sr=0.40, er=0.35, freq=1.0, osc=0.0, dur=2.6)],
-    "calme": [dict(sp=-0.25, sr=0.20, ey=0.25, freq=0.8, osc=0.03, dur=3.2)],
+    "calm": [dict(sp=-0.25, sr=0.20, ey=0.25, freq=0.8, osc=0.03, dur=3.2)],
 }
 _SIDE_JOINT = {"sp": "ShoulderPitch", "sr": "ShoulderRoll", "ey": "ElbowYaw", "er": "ElbowRoll", "wy": "WristYaw"}
 # signs to get the right-side mirror (NAOqi convention)
@@ -42,7 +42,7 @@ def _env(u):
     return np.sin(np.pi * np.clip(u, 0, 1)) ** 2
 
 
-POINTING = ("surprise", "colere")
+POINTING = ("surprise", "anger")
 
 
 def pointing_pose(cfg: Config, event: EventContext) -> Dict[str, float]:
@@ -66,7 +66,7 @@ def arm_gesture(cfg: Config, emotion: str, intensity: float, rng: np.random.Gene
     """Returns (function t -> {joint: rad}, duration) for an arm gesture."""
     if event is not None and event.present and emotion in POINTING:
         return _pointing_gesture(cfg, emotion, intensity, rng, event)
-    styles = STYLES.get(emotion, STYLES["calme"])
+    styles = STYLES.get(emotion, STYLES["calm"])
     s = dict(styles[rng.integers(len(styles)) if style is None else style % len(styles)])
     amp = (0.35 + 0.65 * intensity) * rng.uniform(0.85, 1.15)
     dur = s["dur"] * (1.2 - 0.25 * intensity) * rng.uniform(0.9, 1.1)
@@ -129,10 +129,10 @@ def head_behaviour(cfg: Config, emotion: str, intensity: float, event: EventCont
     faster reaction and a stronger avoidance. Arbitrary, for tests."""
     start = dict(zip(cfg.head_joints, cfg.pose("start", cfg.head_joints)))
     lag = rng.uniform(0.1, 0.35)
-    mode = {"joie": "event", "surprise": "event", "colere": "event",
-            "tristesse": "avert", "peur": "avert", "calme": "hands"}.get(emotion, "event")
+    mode = {"joy": "event", "surprise": "event", "anger": "event",
+            "sadness": "avert", "fear": "avert", "calm": "hands"}.get(emotion, "event")
     if mode == "event" and not event.present:
-        mode = "hands" if emotion == "joie" else "front"
+        mode = "hands" if emotion == "joy" else "front"
     m = cfg.guardian.limit_margin_rad + 0.02
     close = 1.0 / (1.0 + event.distance_m) if event.present and event.distance_m else 0.4  # proximity
     T = 1.6 - 1.2 * close  # about 1.2 s at 1 m; faster if close
@@ -182,7 +182,7 @@ def head_behaviour(cfg: Config, emotion: str, intensity: float, event: EventCont
 
 
 # hand opening (0 closed, 1 open) targeted at the core of the gesture, per emotion
-HAND_OPENING = {"joie": 0.85, "surprise": 1.0, "colere": 0.05, "peur": 0.6, "tristesse": 0.15, "calme": 0.5}
+HAND_OPENING = {"joy": 0.85, "surprise": 1.0, "anger": 0.05, "fear": 0.6, "sadness": 0.15, "calm": 0.5}
 
 
 def hand_behaviour(cfg: Config, emotion: str, intensity: float, event: EventContext, duration: float,

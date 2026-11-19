@@ -15,7 +15,7 @@ The motion component is not an LLM. It is a small supervised neural model (PyTor
 
 > **LLM or coding agent integrating the gesture generator into another project?** Read [docs/generator-integration.md](docs/generator-integration.md) first: the two exported files (`nao_gesture.py`, `nao_gesture.json`), the API, emotions and event encoding, motor stiffness at the start and end of a gesture, rest and start poses, guardian refusals and failure handling.
 
-> **Note on language:** the web interface and the emotion/intention identifiers are in French. Labels from the interface are quoted as they appear, with an English gloss. Emotion IDs: `joie` (joy), `tristesse` (sadness), `colere` (anger), `peur` (fear), `surprise` (surprise), `calme` (calm).
+> **Note on language:** the web interface and the intention identifiers are in French. Labels from the interface are quoted as they appear, with an English gloss. Emotion IDs are English: `joy`, `sadness`, `anger`, `fear`, `surprise`, `calm` (shown in the interface as joie, tristesse, colère, peur, surprise, calme).
 
 ---
 
@@ -80,7 +80,7 @@ In simulation, a synthetic demonstrator replaces your hand. The takes it produce
 | Route | Purpose |
 |---|---|
 | `POST /api/event` | Event from the camera/microphone component: `{"present": true, "azimuth": 30, "elevation": 5, "distance_m": 1.2, "unit": "deg", "frame": "torso" \| "head", "source": "camera"}` (`distance_m` in metres, optional). With `frame: "head"`, include `head_yaw_rad` and `head_pitch_rad` at measurement time; otherwise the angles read on reception are used. `{"present": false}` signals that there is no event. `ttl_s` is optional (past it, the event is treated as absent). |
-| `POST /api/request` | For an LLM: `{"emotion": "joie", "intensity": 0.7}` or `{"mix": {"joie": 0.5, "surprise": 0.5}, ...}`. The response contains the trajectory, the guardian report and a `plan_id`. **Nothing is executed.** |
+| `POST /api/request` | For an LLM: `{"emotion": "joy", "intensity": 0.7}` or `{"mix": {"joy": 0.5, "surprise": 0.5}, ...}`. The response contains the trajectory, the guardian report and a `plan_id`. **Nothing is executed.** |
 | `POST /api/execute` | `{"plan_id": ..., "confirm": true}`, with the controller armed: operator action. |
 
 ## Command line
@@ -91,9 +91,9 @@ nao-motion takes --stats                # list and distribution of takes
 nao-motion train arms                   # trains the arms ("accepted" takes)
 nao-motion train head                   # trains the head on its own (no arm model needed)
 nao-motion train hands                  # trains the hands on its own
-nao-motion generate --emotion joie --intensity 0.7 --event-az 30 --event-dist 1.2 --out gesture.json
-nao-motion generate --mix '{"joie":0.6,"calme":0.4}' --intensity 0.5 --variation 0.03 --seed 1
-nao-motion generate --emotion peur --intensity 0.9 --simulate     # execution on the SIMULATED robot
+nao-motion generate --emotion joy --intensity 0.7 --event-az 30 --event-dist 1.2 --out gesture.json
+nao-motion generate --mix '{"joy":0.6,"calm":0.4}' --intensity 0.5 --variation 0.03 --seed 1
+nao-motion generate --emotion fear --intensity 0.9 --simulate     # execution on the SIMULATED robot
 nao-motion execute gesture.json --adapter bridge --confirm        # the only CLI path to a real robot
 nao-motion robot-info                   # identity, NAOqi, factory limits, measured posture (read-only, via the bridge)
 nao-motion calibrate                    # guardian calibration procedure (see "Calibration")
@@ -162,7 +162,7 @@ Why this choice: with little data, you need few output parameters. The resulting
 
 ### Averaging of gestures and variants
 
-The first model is a **deterministic regression**. If “joie” (joy) has been demonstrated in two different ways, it learns the **average** of the two, which may be a gesture never shown. The synthetic demonstrator deliberately contains such a case. For the first prototype, variants are obtained as follows:
+The first model is a **deterministic regression**. If “joy” has been demonstrated in two different ways, it learns the **average** of the two, which may be a gesture never shown. The synthetic demonstrator deliberately contains such a case. For the first prototype, variants are obtained as follows:
 
 - **interpolation**: continuous intensity and weighted blend of emotions (`--mix`);
 - **variation**: smooth, reproducible noise (`--variation`, `--seed`) on the inner control points, not learned.
@@ -339,8 +339,8 @@ The weights come from the numpy export written by every training run (`model_num
 ```python
 from nao_gesture import GestureGenerator
 gen = GestureGenerator.load("nao_gesture.json")
-print(gen.emotions)                       # e.g. ['joie', 'tristesse', 'colere', 'peur', 'surprise', 'calme']
-g = gen.generate("joie", 0.7,                                   # emotion (or a mix {"joie": 0.7, "surprise": 0.3}), intensity 0..1
+print(gen.emotions)                       # e.g. ['joy', 'sadness', 'anger', 'fear', 'surprise', 'calm']
+g = gen.generate("joy", 0.7,                                   # emotion (or a mix {"joy": 0.7, "surprise": 0.3}), intensity 0..1
                  event={"azimuth_deg": 30, "elevation_deg": 0, "distance_m": 1.2},   # optional; None = no event
                  current_pose=measured_posture)                 # recommended: adds the transitions
 if g.ok:                                                        # accepted by the guardian
@@ -354,7 +354,7 @@ else:
 - **Output**: `g.joints`, `g.times` (s, from 0), `g.positions` (one row per time step, radians; LHand / RHand are openings 0..1), `g.report` (guardian verdict on everything returned), `g.segments`, `g.notes`, `g.to_dict()`. `angle_interpolation()` drops the t = 0 point (NAOqi starts from the current posture), can thin out the points (`rate_hz=10`), and refuses a rejected movement.
 - **Transitions**: the learned gesture starts from the calibrated start position. With `current_pose` (measured `{joint: value}`), the generator builds and validates the whole movement like the project UI: current posture → start → gesture → start (`return_to="rest"` goes back to rest). `from_rest=True` when the robot is at rest, which may be outside the movement zone (contact): that segment then follows the rest rules (factory limits, reduced velocity). Without `current_pose`, only the gesture is returned and the caller must bring the robot to the start position first.
 - `variation=0.05, seed=...` adds a small random variation (0 = the learned gesture). Its random generator differs from the project's numpy one: same seed, different variant.
-- `nao_gesture.py` contains the same guardian as `nao_guardian.py` (`Guardian`, `Report`, `check_rest_transition`...), so a separate guardian export is not needed. Command line: `python nao_gesture.py nao_gesture.json joie 0.7 30 0 1.2` prints the verdict (code 0 accepted, 1 rejected, 2 usage).
+- `nao_gesture.py` contains the same guardian as `nao_guardian.py` (`Guardian`, `Report`, `check_rest_transition`...), so a separate guardian export is not needed. Command line: `python nao_gesture.py nao_gesture.json joy 0.7 30 0 1.2` prints the verdict (code 0 accepted, 1 rejected, 2 usage).
 
 The tests compare the exported library with the project: same gestures as `MotionEngine` (numpy backend), same transitions and verdicts as the controller's `plan_cycle`. Python 2.7 compatibility is checked statically (syntax and imports) only; it has not been run on a real Python 2.7 yet. Nothing is ever sent to the robot by the library: executing the gesture is the integrating project's job.
 
@@ -396,7 +396,9 @@ Things to check on NAOqi 2.1.4 that this repository does not assume: the behavio
 
 ## Emotions and intentions
 
-`configs/emotions.yaml` provides a **short, editable** list: `joie` (joy), `tristesse` (sadness), `colere` (anger), `peur` (fear), `surprise`, `calme` (calm). These are not fixed scientific categories, just working labels. **Intentions** (`accueillir` welcome, `refuser` refuse, `saluer` greet, `montrer` show) are separate from emotions: you can welcome with joy or with calm. They are recorded as take annotations but do not condition the models yet. Changing the emotion list makes old checkpoints incompatible, and they are explicitly rejected.
+`configs/emotions.yaml` provides a **short, editable** list: `joy`, `sadness`, `anger`, `fear`, `surprise`, `calm` (English ids, French labels in the interface). These are not fixed scientific categories, just working labels. **Intentions** (`accueillir` welcome, `refuser` refuse, `saluer` greet, `montrer` show) are separate from emotions: you can welcome with joy or with calm. They are recorded as take annotations but do not condition the models yet. Changing the emotion list makes old checkpoints incompatible, and they are explicitly rejected.
+
+Takes recorded before the ids became English (`joie`, `tristesse`, `colere`, `peur`, `calme`) are migrated in place with `nao-motion --data data rename-emotions` (trashed takes included; add `--dry-run` to only count). Then retrain every group and export the generator again, since old checkpoints use the former list and are rejected. Re-exporting the dataset into its folder (`export-dataset`) rewrites the changed `meta.json` files, `index.csv` and `configs/emotions.yaml`; a dataset imported later from an export made before the rename is migrated the same way after `import-dataset`.
 
 ## Known limitations of this foundation
 

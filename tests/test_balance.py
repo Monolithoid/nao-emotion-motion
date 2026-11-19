@@ -61,7 +61,7 @@ def test_empty_cell_is_preferred(cfg):
     g = Grid.from_config(cfg)
     rng = np.random.default_rng(2)
     metas = []
-    target = ("peur", 2, (0, 1, 0))
+    target = ("fear", 2, (0, 1, 0))
     for e in g.emotions:
         for i in range(g.n_int):
             for z in g.zones(False):

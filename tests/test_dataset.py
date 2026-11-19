@@ -14,7 +14,7 @@ def setup(tmp_path, cfg):
     """Takes: 2 real accepted, 1 rejected, 1 simulated, 1 incomplete; one calibration; one model."""
     st = TakeStore(tmp_path / "data", cfg)
     ids = {}
-    for name, kw, status in [("ok1", {}, "accepted"), ("ok2", {"emotion": "peur"}, "accepted"),
+    for name, kw, status in [("ok1", {}, "accepted"), ("ok2", {"emotion": "fear"}, "accepted"),
                              ("rej", {}, "rejected"), ("sim", {"synthetic": True}, "accepted"),
                              ("inc", {"annotations": {"notes": "coupée", "tags": ["incomplete"]}}, "accepted")]:
         meta, tr = arm_take(cfg, **kw)
@@ -175,7 +175,7 @@ def test_generator_included_and_import_still_works(tmp_path, setup, cfg):
     assert gen["models"] == {"arms": "arms-1", "head": "head-1"} and gen["missing"] == ["hands"]
     assert gen["calibration_version"] == c.calibration_version
     lib = _load_lib(out / "generator" / "nao_gesture.py")
-    g = lib.GestureGenerator.load(str(out / "generator" / "nao_gesture.json")).generate("joie", 0.7)
+    g = lib.GestureGenerator.load(str(out / "generator" / "nao_gesture.json")).generate("joy", 0.7)
     assert g.joints
     man = json.loads((out / "dataset.json").read_text())
     assert "generator/nao_gesture.json" in man["files"] and man["generator"]["models"]["arms"] == "arms-1"

@@ -19,7 +19,7 @@ from nao_motion.models.nets import CheckpointError, LoadedModel, NumpyModel, loa
 def test_checkpoint_reload_identical_predictions(trained, cfg):
     p = Path(trained["arm_run"]) / "model.pt"
     m1, m2 = LoadedModel(p, cfg, "arms"), LoadedModel(p, cfg, "arms")
-    x = arm_input(cfg.emotions, "joie", 0.6)
+    x = arm_input(cfg.emotions, "joy", 0.6)
     np.testing.assert_array_equal(m1.predict(x), m2.predict(x))
     meta = m1.meta
     for k in ("joints", "emotions", "norm", "representation", "calibration_version", "train_take_ids",
@@ -79,7 +79,7 @@ def test_head_trains_without_any_arm_model(trained, cfg, tmp_path):
     assert job["state"] == "done", job["error"]
     eng = wb.get_engine()
     assert eng.arm_model is None and eng.head_model is not None
-    g = eng.generate("joie", 0.7, EventContext(True, 0.5, 0.0))
+    g = eng.generate("joy", 0.7, EventContext(True, 0.5, 0.0))
     # arms held in the start position, head generated
     np.testing.assert_allclose(g.arms.q, np.tile(cfg.pose("start", cfg.arm_joints), (len(g.arms.t), 1)))
     assert any("bras maintenus" in n for n in g.notes)
@@ -98,7 +98,7 @@ def test_no_leakage_between_train_and_val(trained, cfg):
 
 def test_engine_generates_valid_shapes_and_interpolates(trained, cfg):
     eng = MotionEngine.from_paths(cfg, Path(trained["arm_run"]) / "model.pt", Path(trained["head_run"]) / "model.pt")
-    g = eng.generate("joie", 0.7, EventContext(True, 0.5, 0.0))
+    g = eng.generate("joy", 0.7, EventContext(True, 0.5, 0.0))
     assert g.combined.joints == cfg.arm_joints + cfg.head_joints
     assert np.array_equal(g.arms.t, g.head.t)  # common time base for merging
     # each group keeps its learned duration; the gesture lasts as long as the longest
@@ -109,34 +109,34 @@ def test_engine_generates_valid_shapes_and_interpolates(trained, cfg):
     after = tr.t >= g.durations[short] + 0.01
     if after.any():  # the shortest group holds its final pose
         np.testing.assert_allclose(tr.q[after], np.tile(tr.q[after][0], (after.sum(), 1)), atol=1e-9)
-    a = eng.generate("joie", 0.7).arm_ctrl
-    b = eng.generate("tristesse", 0.7).arm_ctrl
-    mid = eng.generate({"joie": 0.5, "tristesse": 0.5}, 0.7).arm_ctrl
+    a = eng.generate("joy", 0.7).arm_ctrl
+    b = eng.generate("sadness", 0.7).arm_ctrl
+    mid = eng.generate({"joy": 0.5, "sadness": 0.5}, 0.7).arm_ctrl
     assert not np.allclose(mid, a) and not np.allclose(mid, b)
-    v1 = eng.generate("joie", 0.7, variation=0.05, seed=1).arm_ctrl
-    v2 = eng.generate("joie", 0.7, variation=0.05, seed=1).arm_ctrl
-    v3 = eng.generate("joie", 0.7, variation=0.05, seed=2).arm_ctrl
+    v1 = eng.generate("joy", 0.7, variation=0.05, seed=1).arm_ctrl
+    v2 = eng.generate("joy", 0.7, variation=0.05, seed=1).arm_ctrl
+    v3 = eng.generate("joy", 0.7, variation=0.05, seed=2).arm_ctrl
     np.testing.assert_array_equal(v1, v2)
     assert not np.allclose(v1, v3)
     with pytest.raises(ValueError):
-        eng.generate("joie", 1.5)
+        eng.generate("joy", 1.5)
     with pytest.raises(ValueError):
         eng.generate("inconnue", 0.5)
     # no event and an event in front give different inputs
-    h_none = eng.generate("joie", 0.7, EventContext.none()).head_ctrl
-    h_front = eng.generate("joie", 0.7, EventContext(True, 0.0, 0.0)).head_ctrl
+    h_none = eng.generate("joy", 0.7, EventContext.none()).head_ctrl
+    h_front = eng.generate("joy", 0.7, EventContext(True, 0.0, 0.0)).head_ctrl
     assert not np.allclose(h_none, h_front)
 
 
 def test_engine_stretch_timing_and_no_model(trained, cfg):
     eng = MotionEngine.from_paths(cfg, Path(trained["arm_run"]) / "model.pt", Path(trained["head_run"]) / "model.pt")
     eng.timing = "stretch"
-    g = eng.generate("joie", 0.7)
+    g = eng.generate("joy", 0.7)
     # stretched: no group holds its pose before the end
     for tr in (g.arms, g.head):
         assert np.abs(np.diff(tr.q[-6:-1], axis=0)).max() > 0 or np.ptp(tr.q, axis=0).max() < 1e-6
     with pytest.raises(CheckpointError):
-        MotionEngine(cfg).generate("joie", 0.5)
+        MotionEngine(cfg).generate("joy", 0.5)
 
 
 def test_training_triggers_no_motion(trained):
@@ -194,7 +194,7 @@ def test_legacy_head_takes_on_replayed_arms_still_train(trained, cfg, tmp_path):
     t = np.linspace(0, 2, 101)
     q = np.tile(cfg.pose("start", j), (101, 1))
     q[:, -2] += 0.4 * np.sin(np.pi * t / 2) ** 2  # HeadYaw
-    meta = TakeMeta(take_id=new_id("head"), session_id="s", kind="head", emotion="joie", intensity=0.5, joints=j,
+    meta = TakeMeta(take_id=new_id("head"), session_id="s", kind="head", emotion="joy", intensity=0.5, joints=j,
                     guided_joints=cfg.head_joints, driven_joints=cfg.arm_joints, event=EventContext.none().to_dict(),
                     calibration_version=cfg.calibration_version, config_fingerprint="x", adapter="test",
                     sample_rate_hz=50, segment=(0.0, 2.0), arm_take_id=am.take_id, arm_source="take",
@@ -223,8 +223,8 @@ def test_head_model_with_old_event_encoding_is_refused(trained, cfg, tmp_path):
 
 def test_distance_changes_generated_head(trained, cfg):
     eng = MotionEngine.from_paths(cfg, Path(trained["arm_run"]) / "model.pt", Path(trained["head_run"]) / "model.pt")
-    near = eng.generate("peur", 0.9, EventContext(True, 0.5, 0.0, distance_m=0.3), None, 0.0, 0)
-    far = eng.generate("peur", 0.9, EventContext(True, 0.5, 0.0, distance_m=3.0), None, 0.0, 0)
+    near = eng.generate("fear", 0.9, EventContext(True, 0.5, 0.0, distance_m=0.3), None, 0.0, 0)
+    far = eng.generate("fear", 0.9, EventContext(True, 0.5, 0.0, distance_m=3.0), None, 0.0, 0)
     assert not np.allclose(near.head_ctrl, far.head_ctrl)
 
 
