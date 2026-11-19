@@ -14,6 +14,7 @@ from nao_motion.engine import MotionEngine
 from nao_motion.events import EVENT_FEATURES, EventContext
 from nao_motion.gesture_export import ExportError, build_library_source, export_generator
 from nao_motion.guardian import Guardian
+from nao_motion.trajectory import Trajectory
 
 from .conftest import make_wb
 
@@ -247,3 +248,66 @@ def test_models_with_different_control_points(tmp_path, cfg):
     joints, tt, rows, _ = gen.gesture(cfg.emotions[0], 0.6, None)
     assert joints == ref.combined.joints
     np.testing.assert_allclose(np.array(rows), ref.combined.q, atol=1e-9)
+
+
+def _fast_npz(path, cfg, comp, seed):
+    """A gesture too wide and too fast for the guardian: ample bump, short duration."""
+    _fake_npz(path, cfg, comp, seed)
+    z = dict(np.load(path))
+    last = max(int(k[1:]) for k in z if k.startswith("b"))
+    b = z[f"b{last}"].astype(np.float64)
+    b[:-1] *= 25.0           # control points far from the start pose (some outside the zone)
+    b[-1] = np.log(0.6)      # 0.6 s: velocity and acceleration above the limits
+    z[f"b{last}"] = b.astype(np.float32)
+    np.savez(path, **z)
+    return path
+
+
+@pytest.fixture(scope="module")
+def exported_fast(tmp_path_factory, exported):
+    c = exported[0]
+    tmp = tmp_path_factory.mktemp("gesture_fast")
+    models = {comp: _fast_npz(tmp / "runs" / f"r_{comp}" / "model_numpy.npz", c, comp, k)
+              for k, comp in enumerate(("arms", "head"))}
+    out = export_generator(c, tmp / "out", models=models)
+    lib = _load_lib(out["library"])
+    return c, models, out, lib, lib.GestureGenerator.load(out["data"])
+
+
+@pytest.mark.parametrize("case", range(len(CASES)))
+def test_adapted_gesture_matches_project(exported_fast, case):
+    """generate() makes the gesture playable exactly like the project UI (projection of the
+    control points, then playable.make_playable), so a raw-refused gesture can be played."""
+    from nao_motion.guardian.playable import make_playable
+    c, models, _, _, gen = exported_fast
+    emo, inten, ev = CASES[case]
+    eng = MotionEngine.from_paths(c, models["arms"], models["head"])
+    ref = eng.generate(emo, inten, ev, project_zone=True)
+    # 1. same projection of the control points as the project
+    joints, tt, rows, _ = gen.gesture(emo, inten, _event_dict(ev), project=True)
+    assert joints == list(ref.combined.joints)
+    np.testing.assert_allclose(np.array(rows), ref.combined.q, atol=1e-9)
+    # 2. same make_playable, fed with the library's own samples.  Projected control points
+    # sit exactly on a bound, so whether a joint "goes past" it (and gets the soft saturation
+    # over its whole band) can flip on a 1e-16 rounding difference, in the project's own
+    # numpy version too: positions are compared within that band (SOFT_BAND_RAD), the timing
+    # and the verdict exactly.
+    played = make_playable(c, Trajectory(joints, np.array(tt), np.array(rows))).traj
+    raw = gen.generate(emo, inten, _event_dict(ev), adapt=False)
+    g = gen.generate(emo, inten, _event_dict(ev))
+    assert not raw.ok  # the raw gesture is refused...
+    assert g.adaptation["changed"] and g.raw_report is not None and not g.raw_report.ok
+    np.testing.assert_allclose(g.times, played.t, atol=1e-7)
+    np.testing.assert_allclose(np.array(g.positions), played.q, atol=0.06)
+    assert g.ok == Guardian(c).validate(played).ok
+    assert g.ok, [v.to_dict() for v in g.report.violations][:8]  # ...the adapted one is played
+
+
+def test_playback_settings_exported(exported_fast):
+    _, _, out, lib, gen = exported_fast
+    data = json.loads(open(out["data"], encoding="utf-8").read())
+    assert data["playback"] == {"project_control_points": True, "adapt_generated": True, "slow_down": "local"}
+    old = dict(data)
+    old.pop("playback")  # files exported before this setting: adaptation on by default
+    g2 = lib.GestureGenerator(old)
+    assert g2.adapt_generated and g2.project_control_points and g2.slow_down == "local"
