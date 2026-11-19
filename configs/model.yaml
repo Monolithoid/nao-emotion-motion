@@ -3,20 +3,20 @@ representation:
   n_control_points: 12      # cubic B-spline control points per joint (was 8: flattened beats, waves and quick
                             # peaks, see `nao-motion fidelity`). Each model stores its own value, so models
                             # trained with 8 keep working. Per training: Network tab or --control-points
-  n_eval_samples: 100       # échantillons de phase utilisés pour l'ajustement et les métriques
+  n_eval_samples: 100       # phase samples used for fitting and metrics
 arm_model:
   hidden: [64, 64]
   dropout: 0.0
-head_model:                 # indépendant des bras : mêmes entrées (émotion, intensité, événement)
+head_model:                 # independent of the arms: same inputs (emotion, intensity, event)
   hidden: [64, 64]
   dropout: 0.0
-hands_model:                # ouverture des mains, indépendante des bras
+hands_model:                # hand opening, independent of the arms
   hidden: [64, 64]
   dropout: 0.0
-  target: command           # command (consigne donnée par l'opérateur) | measured (capteur de la main)
-combine:                    # assemblage bras + tête + mains à la génération
-  timing: hold              # hold : chaque groupe garde sa durée apprise, les plus courts tiennent leur pose finale
-                            # stretch : tous les groupes étirés sur la durée la plus longue
+  target: command           # command (target given by the operator) | measured (hand sensor)
+combine:                    # arms + head + hands assembly at generation
+  timing: hold              # hold: each group keeps its learned duration, shorter ones hold their final pose
+                            # stretch: all groups stretched over the longest duration
 training:
   epochs: 800
   lr: 0.01
@@ -32,11 +32,11 @@ training:
   motion_energy_weight: 0.1 # each joint must move as much as in its take (RMS speed), whatever the timing. Without
                             # it the model learns the MEAN of the takes: waves done at different moments cancel
                             # out and a wave becomes a still arm. 0 = former behaviour (pointwise error only)
-  duration_weight: 0.05     # poids de l erreur sur log(durée)
+  duration_weight: 0.05     # weight of the error on log(duration)
   mirror: true              # add left/right mirrors of the training takes WITHOUT an event (in memory only;
-                            # validation stays on real takes ; unfeasible mirrors are dropped, see data/mirror.py)
+                            # validation stays on real takes; unfeasible mirrors are dropped, see data/mirror.py)
 cvae:                       # CVAE mode: the MLP above becomes a DECODER that also receives a latent code z,
-                            # and a small encoder reads each take to give its z. One consigne (emotion,
+                            # and a small encoder reads each take to give its z. One prompt (emotion,
                             # intensity, event) can then give several whole gestures instead of their mean.
                             # Off = the plain MLP, unchanged. Per training: Network tab or --cvae
   enabled: false

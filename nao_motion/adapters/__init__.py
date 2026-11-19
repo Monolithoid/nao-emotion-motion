@@ -2,7 +2,7 @@ from .base import AdapterError, ConnectionLost, RobotAdapter, RoleError  # noqa:
 
 
 def make_adapter(cfg, kind=None, **kw):
-    """Crée l'adaptateur demandé. Aucun ne bouge le robot à la création ni à la connexion."""
+    """Creates the requested adapter. None moves the robot on creation or connection."""
     kind = kind or cfg.robot.get("adapter", "sim")
     if kind == "sim":
         from .sim import SimAdapter

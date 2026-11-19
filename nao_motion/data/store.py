@@ -1,30 +1,28 @@
-"""Stockage des prises (démonstrations).
+"""Take (demonstration) storage.
 
-Organisation sur disque :
-    <data_dir>/takes/<take_id>/meta.json     métadonnées (JSON lisible)
-    <data_dir>/takes/<take_id>/samples.npz   t (N,) en s ; q (N, J) en rad, MESURÉS
+Layout on disk:
+    <data_dir>/takes/<take_id>/meta.json     metadata (readable JSON)
+    <data_dir>/takes/<take_id>/samples.npz   t (N,) in s; q (N, J) in rad, MEASURED
 
-Les échantillons bruts ne sont jamais réécrits après enregistrement ; seules
-les métadonnées (statut, annotations, segment utile) peuvent évoluer.
+Raw samples are never rewritten after recording; only the metadata (status,
+annotations, useful segment) can change.
 
-Les trois passages sont INDÉPENDANTS : chaque prise porte une consigne
-(émotion, intensité, événement) et les mesures d'un seul groupe.
+The three passes are INDEPENDENT: each take carries a prompt (emotion, intensity,
+event) and the measurements of a single group.
 
-- kind="arms" : bras guidés à la main, tête raide sur place.
-- kind="head" : tête guidée à la main, bras raides sur place.
-- kind="hands" : mains PILOTÉES par l'opérateur depuis l'interface (rien n'est
-  guidé), bras et tête raides sur place. LHand / RHand valent une ouverture entre
-  0 (fermée) et 1 (ouverte), pas un angle. La consigne envoyée (mêmes horodatages
-  que les mesures) est conservée dans samples.npz (`ref_*`) : c'est l'intention
-  de l'opérateur, qui sert de cible à l'apprentissage par défaut
-  (`hands_model.target`).
+- kind="arms": arms guided by hand, head stiff in place.
+- kind="head": head guided by hand, arms stiff in place.
+- kind="hands": hands DRIVEN by the operator from the interface (nothing is
+  guided), arms and head stiff in place. LHand / RHand are an opening between
+  0 (closed) and 1 (open), not an angle. The target sent (same timestamps as the
+  measurements) is kept in samples.npz (`ref_*`): it is the operator's intent,
+  used as the default learning target (`hands_model.target`).
 
-Anciennes prises (format accepté en lecture) : prises de tête ou de mains
-enregistrées pendant que les bras rejouaient une démonstration
-(`arm_source="take"`, `arm_take_id`) ou un geste généré (`arm_source="generated"`,
-`arm_generation`). Elles restent utilisables : l'apprentissage ne lit que les
-articulations du groupe. `arm_gesture_id` les regroupe pour le découpage
-entraînement/validation.
+Old takes (format accepted for reading): head or hands takes recorded while the
+arms replayed a demonstration (`arm_source="take"`, `arm_take_id`) or a generated
+gesture (`arm_source="generated"`, `arm_generation`). They remain usable: learning
+only reads the group's joints. `arm_gesture_id` groups them for the
+training/validation split.
 """
 from __future__ import annotations
 
@@ -44,7 +42,7 @@ from ..trajectory import Trajectory, TrajectoryError, check_samples
 
 FORMAT_VERSION = 1
 KINDS = ("arms", "head", "hands")
-FOLLOWER_KINDS = ("head", "hands")   # prises enregistrées sur une relecture des bras
+FOLLOWER_KINDS = ("head", "hands")   # takes recorded during an arms replay
 STATUSES = ("pending", "accepted", "rejected")
 
 
@@ -72,10 +70,10 @@ class TakeMeta:
     adapter: str
     sample_rate_hz: float
     segment: Tuple[float, float]
-    head_initial: Optional[List[float]] = None   # [HeadYaw, HeadPitch] au début du segment
-    hands_initial: Optional[List[float]] = None  # [LHand, RHand] mesurées au début du segment (passage mains)
+    head_initial: Optional[List[float]] = None   # [HeadYaw, HeadPitch] at the start of the segment
+    hands_initial: Optional[List[float]] = None  # [LHand, RHand] measured at the start of the segment (hands pass)
     arm_take_id: Optional[str] = None
-    arm_source: Optional[str] = None          # ancien format : "take" | "generated" ; None = prise indépendante
+    arm_source: Optional[str] = None          # old format: "take" | "generated"; None = independent take
     arm_gesture_id: Optional[str] = None
     arm_generation: Optional[dict] = None
     intention: Optional[str] = None
@@ -157,7 +155,7 @@ class TakeStore:
         t0, t1 = meta.segment
         if not (traj.t[0] - 1e-9 <= t0 < t1 <= traj.t[-1] + 1e-9):
             raise TakeError("Segment utile hors de l'enregistrement")
-        EventContext.from_dict(meta.event)  # lève si invalide
+        EventContext.from_dict(meta.event)  # raises if invalid
         if meta.kind == "arms":
             if set(c.arm_joints) - set(meta.joints):
                 raise TakeError("Une prise de bras doit contenir toutes les articulations des bras")
@@ -175,12 +173,12 @@ class TakeStore:
             src = meta.arm_source
             if src is None and meta.arm_take_id is not None:
                 src = "take"
-            if src == "take":  # ancien format : bras rejoués
+            if src == "take":  # old format: arms replayed
                 if not meta.arm_take_id or not self.exists(meta.arm_take_id):
                     raise TakeError("Prise sur bras rejoués : arm_take_id manquant ou introuvable")
                 if self.load_meta(meta.arm_take_id).kind != "arms":
                     raise TakeError("arm_take_id doit désigner une prise de bras")
-            elif src == "generated":  # ancien format : geste des bras généré
+            elif src == "generated":  # old format: generated arm gesture
                 g = meta.arm_generation or {}
                 if g.get("emotion") not in c.emotions or not g.get("arm_checkpoint_digest"):
                     raise TakeError("Prise sur geste généré : arm_generation incomplet")
@@ -192,8 +190,8 @@ class TakeStore:
         return (self.dir / take_id / "meta.json").exists()
 
     def group_id(self, meta: TakeMeta) -> str:
-        """Groupe de découpage entraînement/validation : la prise elle-même, ou pour les anciennes
-        prises tête/mains, le geste des bras rejoué pendant l'enregistrement."""
+        """Training/validation split group: the take itself, or for old
+        head/hands takes, the arm gesture replayed during the recording."""
         if meta.kind == "arms":
             return meta.take_id
         return meta.arm_gesture_id or meta.arm_take_id or meta.take_id
@@ -266,14 +264,14 @@ class TakeStore:
         return [m for m in self.list(kind=kind) if m.arm_take_id == arm_take_id]
 
     def load_reference(self, take_id: str) -> Optional[Trajectory]:
-        """Consigne envoyée pendant une prise (mains ; anciennes prises : bras rejoués). None si absente."""
+        """Target sent during a take (hands; old takes: replayed arms). None if absent."""
         with np.load(self.dir / take_id / "samples.npz", allow_pickle=False) as z:
             if "ref_t" not in z.files:
                 return None
             return Trajectory([str(j) for j in z["ref_joints"]], z["ref_t"], z["ref_q"])
 
     def stats(self, bins=(0.0, 0.34, 0.67, 1.0001)) -> dict:
-        """Répartition des prises par type, émotion, tranche d'intensité et statut."""
+        """Distribution of takes by type, emotion, intensity band and status."""
         labels = [f"{bins[i]:.2f}-{min(bins[i+1], 1.0):.2f}" for i in range(len(bins) - 1)]
         table = {k: {e: {l: Counter() for l in labels} for e in self.cfg.emotions} for k in KINDS}
         contexts = defaultdict(Counter)

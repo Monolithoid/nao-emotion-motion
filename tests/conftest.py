@@ -25,7 +25,7 @@ def wb(tmp_path, cfg):
 
 @pytest.fixture(scope="session")
 def trained(tmp_path_factory, cfg):
-    """Petit jeu synthétique + modèles bras et tête entraînés indépendamment (rapide)."""
+    """Small synthetic dataset + arms and head models trained independently (fast)."""
     from nao_motion.demo import collect_synthetic
     tmp = tmp_path_factory.mktemp("trained")
     wb = make_wb(tmp, cfg, sensor_noise_rad=0.002)

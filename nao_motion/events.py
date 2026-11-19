@@ -1,24 +1,24 @@
-"""Contexte événementiel (direction d'un événement extérieur) et repères.
+"""Event context (direction of an external event) and frames.
 
-Repère commun : FRAME_TORSO de NAOqi
-  - origine au torse, x vers l'avant, y vers la gauche du robot, z vers le haut ;
-  - azimut   = atan2(y, x), en radians, positif vers la GAUCHE du robot ;
-  - élévation = atan2(z, sqrt(x²+y²)), en radians, positive vers le HAUT.
+Common frame: NAOqi FRAME_TORSO
+  - origin at the torso, x forward, y to the robot's left, z up;
+  - azimuth   = atan2(y, x), in radians, positive to the robot's LEFT;
+  - elevation = atan2(z, sqrt(x²+y²)), in radians, positive UP.
 
-Un azimut de 0 signifie « devant le robot ». L'ABSENCE d'événement est
-représentée explicitement par `present=False`, jamais par un angle nul.
+An azimuth of 0 means "in front of the robot". The ABSENCE of an event is
+represented explicitly by `present=False`, never by a zero angle.
 
-Distance (optionnelle) : distance en mètres entre le torse et l'événement.
-Inconnue -> `distance_m=None`, encodée explicitement (jamais par une valeur
-arbitraire). Le modèle reçoit la proximité 1 / (1 + d), entre 0 (très loin)
-et 1 (au contact), qui ne dépend d'aucune plage choisie à l'avance.
+Distance (optional): distance in metres between the torso and the event.
+Unknown -> `distance_m=None`, encoded explicitly (never by an arbitrary value).
+The model receives the proximity 1 / (1 + d), between 0 (very far) and 1 (in
+contact), which does not depend on any range chosen in advance.
 
-Conventions articulaires NAOqi utiles : HeadYaw > 0 tourne la tête vers la
-gauche ; HeadPitch > 0 baisse la tête. Regarder une élévation e demande donc
-approximativement HeadPitch = -e (la translation du cou est négligée).
+Useful NAOqi joint conventions: HeadYaw > 0 turns the head to the left;
+HeadPitch > 0 lowers the head. Looking at an elevation e therefore requires
+approximately HeadPitch = -e (the neck translation is ignored).
 
-Ce module ne fait aucune perception : il convertit ce que fournit un
-composant caméra/microphones existant vers le repère commun.
+This module does no perception: it converts what an existing camera/microphone
+component provides into the common frame.
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ import numpy as np
 
 COMMON_FRAME = "torso"
 SUPPORTED_FRAMES = ("torso", "head")
-EVENT_FEATURES = 6  # [présent, sin(az), cos(az), élévation, distance connue, proximité 1/(1+d)]
+EVENT_FEATURES = 6  # [present, sin(az), cos(az), elevation, distance known, proximity 1/(1+d)]
 
 
 class EventError(ValueError):
@@ -78,10 +78,10 @@ class EventContext:
                     head_pitch_rad: Optional[float] = None, source: str = "external",
                     timestamp: Optional[float] = None, confidence: Optional[float] = None,
                     distance=None) -> "EventContext":
-        """Convertit une direction fournie par une source vers le repère commun.
+        """Converts a direction provided by a source into the common frame.
 
-        frame="head" : direction relative à la tête (caméra) ; il faut alors les
-        angles HeadYaw/HeadPitch mesurés au moment de la détection.
+        frame="head": direction relative to the head (camera); the HeadYaw/HeadPitch
+        angles measured at detection time are then required.
         """
         ts = time.time() if timestamp is None else float(timestamp)
         if not present:
@@ -106,11 +106,11 @@ class EventContext:
                    confidence=confidence, distance_m=dist)
 
     def features(self) -> np.ndarray:
-        """Encodage pour le modèle :
-        [présent, sin(az), cos(az), élévation, distance connue, proximité 1/(1+d)].
+        """Encoding for the model:
+        [present, sin(az), cos(az), elevation, distance known, proximity 1/(1+d)].
 
-        Absent -> que des zéros ; devant, distance inconnue -> [1, 0, 1, 0, 0, 0] ;
-        devant à 1 m -> [1, 0, 1, 0, 1, 0.5]. Tous distincts.
+        Absent -> all zeros; in front, unknown distance -> [1, 0, 1, 0, 0, 0];
+        in front at 1 m -> [1, 0, 1, 0, 1, 0.5]. All distinct.
         """
         if not self.present:
             return np.zeros(EVENT_FEATURES, dtype=np.float32)
@@ -144,11 +144,11 @@ def _dir(az: float, el: float) -> np.ndarray:
 
 
 def head_to_torso(az_h: float, el_h: float, head_yaw: float, head_pitch: float):
-    """Direction exprimée dans le repère tête -> repère torse (rotation pure).
+    """Direction expressed in the head frame -> torso frame (pure rotation).
 
-    R = Rz(HeadYaw) · Ry(HeadPitch) ; HeadPitch > 0 incline l'axe x vers le bas,
-    cohérent avec la convention NAOqi. La translation du cou est négligée
-    (acceptable pour des événements à plus de ~50 cm).
+    R = Rz(HeadYaw) · Ry(HeadPitch); HeadPitch > 0 tilts the x axis down,
+    consistent with the NAOqi convention. The neck translation is ignored
+    (acceptable for events more than ~50 cm away).
     """
     cy, sy = math.cos(head_yaw), math.sin(head_yaw)
     cp, sp = math.cos(head_pitch), math.sin(head_pitch)
@@ -159,7 +159,7 @@ def head_to_torso(az_h: float, el_h: float, head_yaw: float, head_pitch: float):
 
 
 def gaze_angles(event: EventContext):
-    """Angles (HeadYaw, HeadPitch) approximatifs pour regarder l'événement."""
+    """Approximate (HeadYaw, HeadPitch) angles to look at the event."""
     if not event.present:
         raise EventError("Pas d'événement")
     return event.azimuth_rad, -event.elevation_rad

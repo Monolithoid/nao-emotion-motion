@@ -1,27 +1,27 @@
 "use strict";
-// Raccourcis clavier de la prise de posture (onglets 1 · Bras et 2 · Tête) :
-//   Espace     relâche les membres concernés, partout dans l'interface
-//              (bras dans l'onglet Bras, tête dans l'onglet Tête, groupe choisi pendant
-//              une calibration ouverte, bras + tête ailleurs) ;
-//   1 2 3 4    déclenchent directement les étapes Préparer / Démarrer / Arrêter / Raidir ;
-//   →          déclenche l'étape suivante, déduite de l'état de l'enregistrement ;
-//   Entrée     valide (« Accepter ») la prise affichée en aperçu, y compris depuis le champ
-//              Annotation de la prise (on tape la note puis Entrée) ;
-//   Suppr      rejette (« Rejeter ») la prise affichée en aperçu (hors champ de saisie,
-//              où Suppr garde son sens habituel) ;
-//   0          lance le « Tirage aléatoire » équilibré (émotion, intensité, angle, distance) des
-//              onglets Bras, Tête, Mains et Génération. Le tirage ne fait que remplir la
-//              consigne et l'événement : aucun mouvement.
-//   1 2 3 4    onglet Génération : « Générer et valider » / « Play on the robot » /
-//              « Repos puis relâcher » / « Raidir sur place » (sans confirmation, moteurs
-//              armés requis pour 2 et 3 ; avertissement permanent #g-alert). Espace y relâche
-//              tous les moteurs (bras, tête, mains), même pendant un mouvement.
-//   V          inverse gauche/droite du champ de vision (vue robot de dos <-> vue observateur
-//              de face), mêmes onglets ; affichage seul, l'événement ne change pas.
-// Les touches sont ignorées quand le focus est dans un champ de saisie (texte, nombre,
-// liste) et quand Ctrl, Alt ou Cmd sont enfoncés. Chaque étape passe par le bouton de
-// l'interface : mêmes garde-fous côté serveur. Relâcher n'est pas
-// un mouvement commandé : aucune raideur n'est ajoutée, rien n'est déplacé.
+// Keyboard shortcuts for posture takes (tabs 1 · Bras and 2 · Tête):
+//   Space      relaxes the relevant limbs, anywhere in the interface
+//              (arms in the Bras tab, head in the Tête tab, the chosen group during
+//              an open calibration, arms + head elsewhere);
+//   1 2 3 4    directly trigger the Préparer / Démarrer / Arrêter / Raidir steps;
+//   →          triggers the next step, deduced from the recording state;
+//   Enter      validates ("Accepter") the take shown in the preview, including from the
+//              take's Annotation field (type the note, then Enter);
+//   Delete     rejects ("Rejeter") the take shown in the preview (outside input fields,
+//              where Delete keeps its usual meaning);
+//   0          starts the balanced "Tirage aléatoire" (emotion, intensity, angle, distance) in
+//              the Bras, Tête, Mains and Génération tabs. The draw only fills in the
+//              prompt and the event: no movement.
+//   1 2 3 4    Génération tab: "Générer et valider" / "Play on the robot" /
+//              "Repos puis relâcher" / "Raidir sur place" (no confirmation, armed motors
+//              required for 2 and 3; permanent warning #g-alert). Space there relaxes
+//              all motors (arms, head, hands), even during a movement.
+//   V          flips left/right in the field of view (robot view from behind <-> observer
+//              view from the front), same tabs; display only, the event does not change.
+// Keys are ignored when the focus is in an input field (text, number, list) and when
+// Ctrl, Alt or Cmd is held. Each step goes through the interface button: same
+// server-side safeguards. Relaxing is not a commanded movement: no stiffness is
+// added, nothing is moved.
 (function () {
   const STEPS = {
     arms: ["a-prepare", "a-start", "a-stop", "a-hold"],
@@ -29,13 +29,13 @@
     hands: ["m-prepare", "m-start", "m-stop", "m-hold"],
   };
   const STEP_LABEL = ["Préparer", "Démarrer", "Arrêter", "Raidir"];
-  // aperçu de la prise, son bouton Accepter et son champ Annotation, par onglet
+  // take preview, its Accepter button and its Annotation field, per tab
   const DRAFT = {
     arms: {box: "a-draft", accept: "a-accept", reject: "a-reject", notes: "a-notes"},
     head: {box: "h-draft", accept: "h-accept", reject: "h-reject", notes: "h-notes"},
     hands: {box: "m-draft", accept: "m-accept", reject: "m-reject", notes: "m-notes"},
   };
-  // bouton « Tirage aléatoire » par onglet
+  // "Tirage aléatoire" button per tab
   const RANDOM = {arms: "a-random", head: "h-random", hands: "m-random", gen: "g-random"};
   // Generation tab: 1 = generate and validate, 2 = play the last generated gesture,
   // 3 = back to rest then relax, 4 = stiffen everything in place
@@ -56,8 +56,8 @@
     return r.kind === kind ? r.state : "none";
   };
 
-  // Champ de saisie : les touches y gardent leur sens habituel. Cases à cocher, boutons
-  // radio et curseurs n'en sont pas : sinon le dernier curseur touché avalerait la flèche.
+  // Input field: keys keep their usual meaning there. Checkboxes, radio
+  // buttons and sliders are not: otherwise the last slider touched would swallow the arrow.
   function isEntry(el) {
     if (!el || el === document.body) return false;
     if (el.isContentEditable) return true;
@@ -67,7 +67,7 @@
     return !["checkbox", "radio", "range", "button", "submit", "reset", "color"].includes((el.type || "").toLowerCase());
   }
 
-  // étape suivante (0..3) pour l'onglet Bras ou Tête
+  // next step (0..3) for the Bras or Tête tab
   function nextStep(kind) {
     const s = recState(kind);
     if (s === "prepared") return 1;
@@ -76,7 +76,7 @@
     return 0;
   }
 
-  // ce que relâche Espace dans le contexte courant
+  // what Space relaxes in the current context
   function releaseTarget() {
     const tab = activeTab();
     if (tab === "arms") return {label: "les bras", groups: ARMS};
@@ -101,7 +101,7 @@
     btn.click();
   }
 
-  // prise en aperçu (enregistrement terminé, pas encore classée) dans l'onglet courant
+  // take in preview (recording finished, not yet classified) in the current tab
   function draftReady(kind) {
     const d = kind && DRAFT[kind], box = d && document.getElementById(d.box);
     const btn = d && document.getElementById(d.accept);
@@ -112,7 +112,7 @@
   function accept(kind) {
     const btn = draftReady(kind);
     if (!btn) { flash("Entrée : aucune prise en aperçu à valider."); return; }
-    if (accepting) return; // évite un double enregistrement si Entrée est frappée deux fois
+    if (accepting) return; // avoids a double save if Enter is pressed twice
     accepting = true;
     flash("Entrée · prise acceptée");
     Promise.resolve(btn.onclick ? btn.onclick() : btn.click())
@@ -120,11 +120,11 @@
       .finally(() => { accepting = false; });
   }
 
-  // Suppr : rejette la prise en aperçu, par son bouton « Rejeter » (mêmes garde-fous)
+  // Delete: rejects the take in preview, through its "Rejeter" button (same safeguards)
   function reject(kind) {
     const d = draftReady(kind) && document.getElementById(DRAFT[kind].reject);
     if (!d || d.disabled) { flash("Suppr : aucune prise en aperçu à rejeter."); return; }
-    if (accepting) return; // une seule décision par prise
+    if (accepting) return; // a single decision per take
     accepting = true;
     flash("Suppr · prise rejetée");
     Promise.resolve(d.onclick ? d.onclick() : d.click())
@@ -176,17 +176,17 @@
     if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
     const tab = activeTab(), kind = tab in STEPS ? tab : null;
     const isEnter = e.key === "Enter" || e.code === "NumpadEnter";
-    // Entrée dans le champ Annotation de la prise : on garde la note et on valide.
+    // Enter in the take's Annotation field: keep the note and validate.
     if (isEnter && kind && e.target && e.target.id === DRAFT[kind].notes) {
       e.preventDefault(); if (!e.repeat) accept(kind); return;
     }
     if (isEntry(e.target)) return;
     if (e.key === " " || e.code === "Space") {
-      e.preventDefault(); // pas de défilement ni de clic sur le bouton qui a le focus
+      e.preventDefault(); // no scrolling and no click on the focused button
       if (!e.repeat) release();
       return;
     }
-    // 0 : e.code couvre la rangée du haut AZERTY (où « 0 » demande Maj) et le pavé numérique
+    // 0: e.code covers the AZERTY top row (where "0" needs Shift) and the numeric keypad
     if (RANDOM[tab] && (e.code === "Digit0" || e.code === "Numpad0" || e.key === "0")) {
       e.preventDefault(); if (!e.repeat) randomDraw(tab); return;
     }
@@ -207,18 +207,18 @@
       return;
     }
     if (!kind) return;
-    // Entrée : jamais le clic natif sur le bouton qui a gardé le focus (ex. « Arrêter »).
+    // Enter: never the native click on the button that kept the focus (e.g. "Arrêter").
     if (isEnter) { e.preventDefault(); if (!e.repeat) accept(kind); return; }
     if (e.key === "Delete" || e.code === "Delete") {
       e.preventDefault(); if (!e.repeat) reject(kind); return;
     }
-    // chiffres : e.code couvre la rangée du haut AZERTY (où « 1 » demande Maj) et le pavé numérique
+    // digits: e.code covers the AZERTY top row (where "1" needs Shift) and the numeric keypad
     const m = /^(?:Digit|Numpad)([1-4])$/.exec(e.code) || /^([1-4])$/.exec(e.key);
     if (m) { e.preventDefault(); if (!e.repeat) runStep(kind, +m[1] - 1); return; }
     if (e.key === "ArrowRight") { e.preventDefault(); if (!e.repeat) runStep(kind, nextStep(kind)); }
   });
 
-  // « Raidir » (au clavier ou à la souris) clôt le cycle : la flèche repart sur Préparer.
+  // "Raidir" (keyboard or mouse) closes the cycle: the arrow goes back to Préparer.
   for (const kind of Object.keys(STEPS)) {
     const [prep, , , hold] = STEPS[kind].map((id) => document.getElementById(id));
     if (hold) hold.addEventListener("click", () => { lastHold[kind] = true; });

@@ -1,14 +1,13 @@
-"""Adaptateur vers le pont NAOqi (bridge/naoqi_bridge.py) via TCP/JSON.
+"""Adapter to the NAOqi bridge (bridge/naoqi_bridge.py) over TCP/JSON.
 
-Toutes les contraintes de version NAOqi/SDK restent dans le pont. Ce client
-envoie un battement périodique ; si le pont ne l'entend plus pendant un
-mouvement, il arrête et maintient la posture mesurée.
+All NAOqi/SDK version constraints stay in the bridge. This client sends a
+periodic heartbeat; if the bridge stops hearing it during a movement, it stops
+and holds the measured posture.
 
-Coupure : aucun appel ne bloque plus de `timeout_s` (socket ET verrou partagé
-entre la boucle d'enregistrement, le battement et les requêtes de l'interface).
-Toute erreur d'entrée-sortie ferme la connexion et lève `ConnectionLost` ; la
-cause est gardée dans `lost_reason` (affichée par l'interface) jusqu'à la
-reconnexion, qui se fait sans relancer le serveur.
+Drops: no call blocks for more than `timeout_s` (socket AND the lock shared by the
+recording loop, the heartbeat and the interface requests). Any I/O error closes the
+connection and raises `ConnectionLost`; the cause is kept in `lost_reason` (shown by
+the interface) until the reconnection, which happens without restarting the server.
 """
 from __future__ import annotations
 
@@ -34,17 +33,17 @@ class BridgeAdapter(RobotAdapter):
         self.host = host or b.get("host", "127.0.0.1")
         self.port = int(port or b.get("port", 9600))
         self.heartbeat_s = float(b.get("heartbeat_s", 0.2))
-        # délai de réponse du pont : le Wi-Fi du NAO a des pointes de latence ; une réponse
-        # en retard désynchroniserait le flux, la connexion est alors fermée proprement
+        # bridge response timeout: the NAO's Wi-Fi has latency spikes; a late response
+        # would desynchronise the stream, so the connection is then closed cleanly
         self.timeout_s = float(timeout_s if timeout_s is not None else b.get("timeout_s", 3.0))
         self._sock = None
         self._file = None
         self._lock = threading.Lock()
         self._hb_thread = None
         self._alive = False
-        self._gen = 0              # numéro de connexion : un ancien battement s'arrête seul
+        self._gen = 0              # connection number: an old heartbeat stops by itself
         self.info = {}
-        self.lost_reason: Optional[str] = None  # cause de la dernière coupure (None si connecté)
+        self.lost_reason: Optional[str] = None  # cause of the last drop (None if connected)
         self.lost_at: Optional[float] = None
 
     @property
@@ -52,7 +51,7 @@ class BridgeAdapter(RobotAdapter):
         return bool(self.info.get("real", True))
 
     def connect(self):
-        self._close()  # libère une ancienne connexion : le pont ne sert qu'un client à la fois
+        self._close()  # releases an old connection: the bridge serves only one client at a time
         try:
             self._sock = socket.create_connection((self.host, self.port), timeout=self.timeout_s)
         except OSError as e:
@@ -63,8 +62,8 @@ class BridgeAdapter(RobotAdapter):
         try:
             self.info = self._call("hello")
         except ConnectionLost as e:
-            # le pont accepte la connexion mais ne répond pas (ex. encore occupé par une
-            # connexion morte, version antérieure du pont)
+            # the bridge accepts the connection but does not answer (e.g. still busy with a
+            # dead connection, older bridge version)
             raise ConnectionLost(f"Le pont {self.host}:{self.port} ne répond pas : {e}") from e
         if self.info.get("protocol") != PROTOCOL_VERSION:
             self.disconnect()
@@ -81,16 +80,16 @@ class BridgeAdapter(RobotAdapter):
             try:
                 self._call("heartbeat")
             except Exception:
-                # ConnectionLost : la connexion est déjà fermée et la cause notée ;
-                # autre erreur : on arrête aussi le battement (le pont arrêtera le mouvement)
+                # ConnectionLost: the connection is already closed and the cause recorded;
+                # other error: also stop the heartbeat (the bridge will stop the movement)
                 return
 
     def disconnect(self):
         self._close()
-        self.lost_reason = self.lost_at = None  # déconnexion volontaire : pas une coupure
+        self.lost_reason = self.lost_at = None  # deliberate disconnection: not a drop
 
     def _lost(self, reason: str) -> ConnectionLost:
-        """Ferme la connexion morte (le pont, qui ne sert qu'un client, se libère) et note la cause."""
+        """Closes the dead connection (the bridge, which serves one client, is freed) and records the cause."""
         self._close()
         if self.lost_reason is None:
             self.lost_reason = reason
@@ -101,7 +100,7 @@ class BridgeAdapter(RobotAdapter):
         self._alive = False
         try:
             if self._file:
-                self._file.close()  # sinon la socket reste ouverte tant que le fichier existe
+                self._file.close()  # otherwise the socket stays open as long as the file exists
             if self._sock:
                 self._sock.shutdown(socket.SHUT_RDWR)
                 self._sock.close()
@@ -118,23 +117,23 @@ class BridgeAdapter(RobotAdapter):
         if not self.is_connected():
             raise ConnectionLost("Pont non connecté")
         msg = (json.dumps(dict(cmd=cmd, **kw)) + "\n").encode()
-        # verrou borné : sans réponse du pont, celui qui le tient abandonne au bout de
-        # timeout_s ; attendre plus longtemps ne servirait à rien
+        # bounded lock: without a bridge response, the holder gives up after
+        # timeout_s; waiting longer would be pointless
         if not self._lock.acquire(timeout=self.timeout_s + 1.0):
             raise self._lost(f"Le pont ne répond plus ({self.host}:{self.port}, plus de {self.timeout_s:.0f} s)")
         try:
             f = self._file
-            if f is None or not self._alive:  # fermée pendant l'attente du verrou
+            if f is None or not self._alive:  # closed while waiting for the lock
                 raise ConnectionLost(self.lost_reason or "Pont non connecté")
             try:
                 f.write(msg)
                 f.flush()
                 line = f.readline()
             except socket.timeout as e:
-                # réponse en retard : le flux serait désynchronisé, on ferme
+                # late response: the stream would be desynchronised, close it
                 raise self._lost(f"Le pont ne répond plus ({self.host}:{self.port}, délai de "
                                  f"{self.timeout_s:.0f} s dépassé)") from e
-            except (OSError, ValueError) as e:  # ValueError : fichier fermé par un autre fil
+            except (OSError, ValueError) as e:  # ValueError: file closed by another thread
                 raise self._lost(f"Connexion au pont perdue : {e}") from e
             if not line:
                 raise self._lost("Connexion au pont fermée par le pont")
@@ -155,7 +154,7 @@ class BridgeAdapter(RobotAdapter):
         return {"adapter": "bridge", **self.info}
 
     def connect_robot(self, host: str, port: int = 9559) -> dict:
-        """Demande au pont de se connecter à NAOqi (IP ou nom DNS). Aucun mouvement."""
+        """Asks the bridge to connect to NAOqi (IP or DNS name). No movement."""
         from ..config.hosts import validate_host
         info = self._call("connect_robot", host=validate_host(host), port=int(port))
         self.info = self._call("hello")

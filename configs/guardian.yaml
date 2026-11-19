@@ -1,47 +1,47 @@
-# Contrôleur de sécurité indépendant des modèles.
-# Toutes les valeurs sont à ajuster sur le robot réel ; elles sont prudentes par défaut.
+# Safety checker independent of the models.
+# All values are to be tuned on the real robot; they are cautious by default.
 schema_version: 1
-# Zone de mouvement = ce que la calibration a exploré (bras guidés à la main), moins
-# zone_margin_rad. Cette marge REMPLACE celle de la calibration (0,05) pour le guardian :
-# auparavant 0,05 + 0,03 = 0,08 rad étaient retirés de chaque côté de ce que le robot a
-# réellement atteint, alors que la pose de départ est souvent à 0,1 rad d'un bord.
-# Supprimer la ligne pour revenir à l'ancienne règle.
+# Movement zone = what the calibration explored (arms guided by hand), minus
+# zone_margin_rad. This margin REPLACES the calibration's (0.05) for the guardian:
+# previously 0.05 + 0.03 = 0.08 rad were removed on each side of what the robot
+# actually reached, while the start pose is often 0.1 rad from an edge.
+# Remove the line to go back to the old rule.
 zone_margin_rad: 0.02
-limit_margin_rad: 0.03          # marge devant les BUTÉES D'USINE (pas devant la zone calibrée)
-# Vitesse par articulation. Ordre de priorité :
-#   1. per_joint_velocity_rad_s ci-dessous (choix explicite) ;
-#   2. sinon velocity_fraction_of_factory x vitesse d'usine (factory_velocity_rad_s) ;
-#   3. sinon max_velocity_rad_s.
-# Les vitesses mesurées sur les prises (section kinematics d'une calibration étendue avec
-# les prises, si elle est active) remplacent ensuite ces valeurs. Plafond dans tous les cas :
-# robot.yaml max_fraction_speed x vitesse d'usine, la vitesse que setAngles laisse au moteur.
-max_velocity_rad_s: 1.5         # articulations sans vitesse d'usine connue
-# Vitesses à vide en sortie de réducteur (rad/s), calculées depuis la documentation
-# Aldebaran « NAO - Motors » (V3.3, identique V4 à V6) : moteur type 1 (RE-Max 17,
-# 11 900 tr/min) divisé par le rapport de réduction de l'articulation. Ce sont aussi les
-# valeurs que renvoie ALMotion.getLimits. Clés sans le préfixe L/R.
+limit_margin_rad: 0.03          # margin before the FACTORY STOPS (not before the calibrated zone)
+# Velocity per joint. Priority order:
+#   1. per_joint_velocity_rad_s below (explicit choice);
+#   2. otherwise velocity_fraction_of_factory x factory velocity (factory_velocity_rad_s);
+#   3. otherwise max_velocity_rad_s.
+# Velocities measured on the takes (kinematics section of a calibration extended with
+# the takes, if it is active) then replace these values. Cap in every case:
+# robot.yaml max_fraction_speed x factory velocity, the velocity setAngles leaves to the motor.
+max_velocity_rad_s: 1.5         # joints without a known factory velocity
+# No-load velocities at the gearbox output (rad/s), computed from the Aldebaran
+# "NAO - Motors" documentation (V3.3, identical for V4 to V6): motor type 1 (RE-Max 17,
+# 11,900 rpm) divided by the joint's reduction ratio. These are also the
+# values returned by ALMotion.getLimits. Keys without the L/R prefix.
 factory_velocity_rad_s:
-  HeadYaw: 8.29                 # réduction 150.27
+  HeadYaw: 8.29                 # reduction 150.27
   HeadPitch: 7.19               # 173.22
   ShoulderPitch: 8.29           # 150.27
   ShoulderRoll: 7.19            # 173.22
   ElbowYaw: 8.29                # 150.27
   ElbowRoll: 7.19               # 173.22
   WristYaw: 24.62               # 50.61
-# Fraction de la vitesse d'usine prise comme limite (1 = limites d'usine, choix de
-# l'opérateur 2026-11-18). Ce sont des vitesses À VIDE : en charge, le moteur va un peu
-# moins vite, le suivi (robot.yaml, tracking_*) arrête le geste si le robot décroche.
+# Fraction of the factory velocity used as the limit (1 = factory limits, operator's
+# choice 2026-11-18). These are NO-LOAD velocities: under load, the motor is a little
+# slower; tracking (robot.yaml, tracking_*) stops the gesture if the robot falls behind.
 velocity_fraction_of_factory: 1.0
-# Accélération : pas de valeur d'usine. 30 rad/s² permet d'atteindre 4 rad/s en ~0,13 s
-# (pic d'un geste humain de 1 rad en 0,4 s : ~36 rad/s² ; l'ancienne valeur, 8, ralentissait
-# un tel geste x2 à elle seule). Tête : plus prudent, voir per_joint_acceleration.
+# Acceleration: no factory value. 30 rad/s² reaches 4 rad/s in ~0.13 s
+# (peak of a human gesture of 1 rad in 0.4 s: ~36 rad/s²; the old value, 8, slowed
+# such a gesture down x2 on its own). Head: more cautious, see per_joint_acceleration.
 max_acceleration_rad_s2: 30.0
-per_joint_velocity_rad_s:       # surcharges explicites (prioritaires)
-  HeadPitch: 1.0                # butée et câbles de la nuque
-  LHand: 2.0                    # mains : fraction d'ouverture par seconde (0 = fermée, 1 = ouverte)
+per_joint_velocity_rad_s:       # explicit overrides (take priority)
+  HeadPitch: 1.0                # neck end stop and cables
+  LHand: 2.0                    # hands: opening fraction per second (0 = closed, 1 = open)
   RHand: 2.0
-# Surcharges par articulation de la marge et de l'accélération. Mains : plage d'usine
-# entière (0 à 1, butées gérées par le moteur de la main) et mouvement plus vif qu'un bras.
+# Per-joint overrides of the margin and the acceleration. Hands: full factory range
+# (0 to 1, end stops handled by the hand motor) and faster movement than an arm.
 per_joint_margin:
   LHand: 0.0
   RHand: 0.0
@@ -50,23 +50,23 @@ per_joint_acceleration:
   HeadPitch: 8.0
   LHand: 20.0
   RHand: 20.0
-check_rate_hz: 100              # le trajet complet est vérifié à cette fréquence
+check_rate_hz: 100              # the full path is checked at this rate
 min_duration_s: 0.3
 max_duration_s: 15.0
-start_tolerance_rad: 0.05       # écart toléré entre l'état mesuré et le début d'un segment
-transition_velocity_rad_s: 0.5  # vitesse max des transitions repos <-> départ <-> geste
-# Le repos peut être hors de la zone de mouvement calibrée (bras posés sur les genoux :
-# contact). Les segments repos <-> départ sont donc vérifiés sur les limites d'usine,
-# la vitesse ci-dessous et l'accélération, sans marge ni contraintes couplées. Que le
-# départ soit accessible sans heurt depuis le repos reste à la charge de qui calibre.
+start_tolerance_rad: 0.05       # tolerated gap between the measured state and the start of a segment
+transition_velocity_rad_s: 0.5  # max velocity of the rest <-> start <-> gesture transitions
+# Rest may be outside the calibrated movement zone (arms resting on the knees:
+# contact). The rest <-> start segments are therefore checked against the factory limits,
+# the velocity below and the acceleration, without margin or coupled constraints. Making sure
+# the start pose can be reached smoothly from rest is up to whoever calibrates.
 rest_velocity_rad_s: 0.3
 
-# Contraintes couplées linéaires : sum(coef_i * q_i) <= bound (radians), en plus des
-# enveloppes mesurées par la calibration. Aucune par défaut : les cinq exemples livrés ici
-# (jamais mesurés) refusaient à eux seuls un geste sur dix, dont tout bras levé haut
-# (bras_gauche_vers_tete). Format :
+# Linear coupled constraints: sum(coef_i * q_i) <= bound (radians), on top of the
+# hulls measured by the calibration. None by default: the five examples shipped here
+# (never measured) refused one gesture in ten on their own, including any arm raised high
+# (bras_gauche_vers_tete). Format:
 #   - name: tete_baissee_tournee
-#     description: "Limiter la flexion de la tête quand elle est très tournée."
+#     description: "Limit head flexion when it is turned a lot."
 #     terms: {HeadPitch: 1.0, HeadYaw: 0.25}
 #     bound: 0.50
 coupled_constraints: []

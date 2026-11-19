@@ -46,7 +46,7 @@ def test_wizard_end_to_end_in_simulation(ui):
     st = api.post_calibration_save({})
     path = wb.cfg.root / "calibration" / st["saved"]
     assert Calibration.load(path).version == "ui-test"
-    with pytest.raises(CalibrationError, match="simulée"):  # simulation : jamais activée
+    with pytest.raises(CalibrationError, match="simulée"):  # simulation: never activated
         api.post_calibration_activate({"confirm": True})
     assert active_calibration_path(wb.cfg.root) is None
 
@@ -57,9 +57,9 @@ def test_activation_reloads_guardian(ui):
     _full_procedure(wb, api)
     api.post_calibration_save({})
     cal = wb.calibration
-    cal.sim = False  # comme sur un robot réel
+    cal.sim = False  # as on a real robot
     with pytest.raises(ValueError):
-        api.post_calibration_activate({})  # sans confirmation
+        api.post_calibration_activate({})  # without confirmation
     st = api.post_calibration_activate({"confirm": True})
     assert st["activated"]
     assert wb.cfg.calibrated and wb.cfg.calibration_version == "ui-test"
@@ -92,19 +92,19 @@ def test_open_calibration_blocks_motion_and_disarms(ui):
 
 
 def test_no_motion_command_during_calibration(ui):
-    """Seules les consignes « raidir sur place » (position mesurée) sont envoyées."""
+    """Only "stiffen in place" targets (measured position) are sent."""
     wb, api = ui
     api.post_calibration_open({})
     sent, orig = [], wb.adapter._send
 
-    def spy(joints, angles, speed):  # consigne comparée à la position mesurée au même instant
+    def spy(joints, angles, speed):  # target compared with the position measured at the same moment
         sent.append(np.allclose(angles, [wb.adapter.q[j] for j in joints], atol=1e-9))
         orig(joints, angles, speed)
     wb.adapter._send = spy
     _full_procedure(wb, api)
     api.post_calibration_hold({"group": "head"})
     assert sent and all(sent)
-    # aucun mouvement exécuté par le contrôleur, aucune pose « repos » imposée à la fermeture
+    # no movement executed by the controller, no "rest" pose imposed on closing
     q_before = dict(wb.adapter.q)
     api.post_calibration_close({})
     assert dict(wb.adapter.q) == q_before
@@ -125,11 +125,11 @@ def test_real_robot_release_requires_confirmation(ui):
 
 
 def test_factory_limits_shown_during_calibration(ui, monkeypatch):
-    """Limites d'usine lues une fois à l'ouverture (lecture seule) et affichées
-    pendant l'exploration ; cadre des nuages = limites d'usine."""
+    """Factory limits read once on opening (read-only) and shown
+    during exploration; point cloud frame = factory limits."""
     wb, api = ui
     st = api.post_calibration_open({})
-    assert st["factory"] is None  # simulation : pas de getLimits
+    assert st["factory"] is None  # simulation: no getLimits
     fac = {j: [lo - 0.1, hi + 0.1, 5.0, 1.0] for j, (lo, hi) in wb.cfg.limits.items()}
     monkeypatch.setattr(wb.adapter, "factory_limits", lambda joints: {j: fac[j] for j in joints}, raising=False)
     st = api.post_calibration_open({})
@@ -141,8 +141,8 @@ def test_factory_limits_shown_during_calibration(ui, monkeypatch):
 
 
 def test_pairs_show_zone_and_poses_and_sweep_accumulates(ui):
-    """Graphes des couples : zone retenue, poses capturées (départ dans / hors zone),
-    position actuelle ; une nouvelle exploration complète la précédente."""
+    """Pair plots: retained zone, captured poses (start inside / outside the zone),
+    current position; a new exploration adds to the previous one."""
     wb, api = ui
     api.post_calibration_open({})
     cal = wb.require_calibration()
@@ -155,7 +155,7 @@ def test_pairs_show_zone_and_poses_and_sweep_accumulates(ui):
     pair = next(p for p in st["pairs"] if p["joints"] == ["HeadYaw", "HeadPitch"])
     assert len(pair["zone"]) >= 3 and pair["current"] is not None
     assert "start" in pair["poses"] and isinstance(pair["poses"]["start"]["inside"], bool)
-    # un départ hors zone est signalé avant même le calcul
+    # a start pose outside the zone is flagged even before computing
     cal.session.poses["start"]["head"] = {"HeadYaw": 5.0, "HeadPitch": 5.0}
     pair = next(p for p in api.get_calibration({})["pairs"] if p["joints"] == ["HeadYaw", "HeadPitch"])
     assert pair["poses"]["start"]["inside"] is False
@@ -163,7 +163,7 @@ def test_pairs_show_zone_and_poses_and_sweep_accumulates(ui):
     assert "head" not in api.get_calibration({})["swept"]
 
 
-# -- calibrations enregistrées : liste, activation après coup, reprise de progression ----
+# -- saved calibrations: list, later activation, progress restore ----
 from pathlib import Path
 
 import yaml
@@ -174,7 +174,7 @@ OLD_FILE = Path(__file__).parent / "data" / "calibration-v1-5104ddf.yaml"
 
 
 def _as_real(src: Path, dst: Path, version: str):
-    """Copie d'une calibration simulée présentée comme venant du robot réel (pour l'activation)."""
+    """Copy of a simulated calibration presented as coming from the real robot (for activation)."""
     d = yaml.safe_load(src.read_text(encoding="utf-8"))
     d["robot"] = {"robot_name": "nao", "name": "nao", "adapter": "bridge"}
     d["version"] = version
@@ -183,8 +183,8 @@ def _as_real(src: Path, dst: Path, version: str):
 
 
 def test_old_calibration_files_still_load_and_activate(ui):
-    """Un fichier produit par une version antérieure (avant mains, distance, etc.) reste
-    utilisable : listé comme activable et activable depuis l'onglet, sans séance ouverte."""
+    """A file produced by an earlier version (before hands, distance, etc.) remains
+    usable: listed as activatable and activatable from the tab, without an open session."""
     wb, api = ui
     d = wb.cfg.root / "calibration"
     _as_real(OLD_FILE, d / "ancienne.yaml", "ancienne")
@@ -244,7 +244,7 @@ def test_progress_survives_close_and_can_be_discarded(ui, monkeypatch):
     n = len(cal.session.sweeps["left_arm"]["q"])
     assert cal.draft_path.exists()
     api.post_calibration_close({})
-    st = api.post_calibration_open({})  # nouvelle séance (ou serveur relancé)
+    st = api.post_calibration_open({})  # new session (or server restarted)
     assert st["swept"] == ["left_arm"] and st["restored"] == ["left_arm"]
     assert "left_arm" in st["poses"]["rest"]
     assert len(wb.calibration.session.sweeps["left_arm"]["q"]) == n
@@ -253,7 +253,7 @@ def test_progress_survives_close_and_can_be_discarded(ui, monkeypatch):
 
 
 def test_reuse_groups_from_saved_calibration(ui, monkeypatch):
-    """Garder les bras d'une calibration enregistrée et refaire seulement la tête."""
+    """Keep the arms of a saved calibration and redo only the head."""
     wb, api = ui
     d = wb.cfg.root / "calibration"
     old = Calibration.load(_as_real(OLD_FILE, d / "bras-ok.yaml", "bras-ok"))
@@ -263,7 +263,7 @@ def test_reuse_groups_from_saved_calibration(ui, monkeypatch):
         api.post_calibration_import({"file": "bras-ok.yaml", "group": g})
     st = api.get_calibration({})
     assert set(st["imported"]) == {"left_arm", "right_arm"}
-    assert st["missing_poses"] == ["rest/head", "start/head"]  # poses des bras reprises aussi
+    assert st["missing_poses"] == ["rest/head", "start/head"]  # arm poses imported too
     cal.sweep_start("head", max_duration_s=20, background=False)
     for pose in ("rest", "start"):
         api.post_calibration_capture({"pose": pose, "group": "head"})
@@ -275,14 +275,14 @@ def test_reuse_groups_from_saved_calibration(ui, monkeypatch):
     arm_cc = [c for c in old.coupled if set(c["terms"]) <= set(wb.cfg.arm_joints)]
     assert all(c in res.coupled for c in arm_cc) and len(res.coupled) > len(arm_cc)
     assert "repris" in res.notes
-    # explorer un groupe repris annule la reprise
+    # exploring an imported group cancels the import
     cal.sweep_start("left_arm", max_duration_s=20, background=False)
     assert "left_arm" not in api.get_calibration({})["imported"]
 
 
 def test_change_only_rest_pose_of_saved_calibration(ui, monkeypatch):
-    """Reprendre une calibration enregistrée, ne recapturer que le repos d'un groupe et
-    enregistrer : tout le reste (limites, enveloppes, départ, marge, vitesses) est gardé."""
+    """Import a saved calibration, recapture only one group's rest pose and
+    save: everything else (limits, hulls, start, margin, velocities) is kept."""
     wb, api = ui
     d = wb.cfg.root / "calibration"
     src = _as_real(OLD_FILE, d / "base.yaml", "base")
@@ -295,11 +295,11 @@ def test_change_only_rest_pose_of_saved_calibration(ui, monkeypatch):
     cal = wb.require_calibration()
     st = api.post_calibration_import_all({"file": "base.yaml"})
     assert set(st["imported"]) == set(wb.cfg.groups) and st["missing_poses"] == []
-    # nouveau repos du bras gauche : placé à la main puis capturé
+    # new left-arm rest: placed by hand, then captured
     new_rest = {j: v + 0.05 for j, v in old.poses["rest"]["left_arm"].items()}
     for j, v in new_rest.items():
         wb.adapter.q[j] = wb.adapter.target[j] = v
-    monkeypatch.setattr(cal, "sim", False)  # sinon la simulation « place » la pose de remplacement
+    monkeypatch.setattr(cal, "sim", False)  # otherwise the simulation "places" the placeholder pose
     api.post_calibration_capture({"pose": "rest", "group": "left_arm"})
     api.post_calibration_compute({"version": "base-repos"})
     api.post_calibration_save({})
@@ -315,4 +315,4 @@ def test_change_only_rest_pose_of_saved_calibration(ui, monkeypatch):
     assert new.kinematics["velocity_rad_s"] == {"LShoulderPitch": 3.1, "LHand": 2.0}
     assert new.kinematics["acceleration_rad_s2"] == {"LShoulderPitch": 20.0}
     assert "repos recapturée" in new.notes and src.exists()
-    assert Calibration.load(src).poses == old.poses  # l'original n'est pas touché
+    assert Calibration.load(src).poses == old.poses  # the original is not touched

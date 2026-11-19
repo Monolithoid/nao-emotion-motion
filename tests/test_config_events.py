@@ -14,7 +14,7 @@ from nao_motion.trajectory import Trajectory
 def test_config_loads_without_legs(cfg):
     assert not any(j.startswith(("LHip", "LKnee", "LAnkle")) for j in cfg.all_joints)
     assert set(cfg.intentions).isdisjoint(cfg.emotions)
-    assert cfg.calibrated is False  # valeurs de remplacement signalées
+    assert cfg.calibrated is False  # placeholder values flagged
 
 
 def test_rest_and_start_poses_pass_guardian(cfg):
@@ -56,9 +56,9 @@ def test_event_validation():
 def test_degrees_and_head_frame_conversion():
     e = EventContext.from_source(present=True, azimuth=90, elevation=0, unit="deg")
     assert math.isclose(e.azimuth_rad, math.pi / 2)
-    az, el = head_to_torso(0.0, 0.0, 0.5, 0.0)  # tête tournée de 0.5 rad à gauche
+    az, el = head_to_torso(0.0, 0.0, 0.5, 0.0)  # head turned 0.5 rad to the left
     assert math.isclose(az, 0.5, abs_tol=1e-9) and math.isclose(el, 0.0, abs_tol=1e-9)
-    az, el = head_to_torso(0.0, 0.0, 0.0, 0.3)  # HeadPitch > 0 : tête baissée
+    az, el = head_to_torso(0.0, 0.0, 0.0, 0.3)  # HeadPitch > 0: head lowered
     assert math.isclose(el, -0.3, abs_tol=1e-9)
     e2 = EventContext.from_source(present=True, azimuth=0, elevation=0, frame="head", head_yaw_rad=0.4,
                                   head_pitch_rad=0.0)

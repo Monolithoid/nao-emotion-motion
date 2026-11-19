@@ -30,7 +30,7 @@ def test_bridge_protocol_and_roles(bridge, cfg):
     a = BridgeAdapter(cfg, host="127.0.0.1", port=port)
     a.connect()
     assert a.is_real is False and a.info["protocol"] == 1
-    assert backend.q == {} and backend.stiff == {}  # aucun mouvement ni raideur à la connexion
+    assert backend.q == {} and backend.stiff == {}  # no movement or stiffness on connection
     backend.q.update({"HeadYaw": 0.1, "HeadPitch": -0.1})
     np.testing.assert_allclose(a.read_angles(["HeadYaw", "HeadPitch"]), [0.1, -0.1])
     a.set_roles(driven=["HeadYaw", "HeadPitch"])
@@ -47,13 +47,13 @@ def test_bridge_watchdog_stops_when_client_silent(bridge, cfg):
     a.connect()
     a.set_roles(driven=["HeadYaw"])
     a.send_angles(["HeadYaw"], [0.2], 0.1)
-    a._alive = False  # le battement s'interrompt (PC planté / réseau coupé), socket encore ouverte
+    a._alive = False  # the heartbeat stops (PC crashed / network down), socket still open
     time.sleep(1.0)
     assert br.watchdog_trips >= 1 and backend.killed >= 1
 
 
 def test_robot_address_given_by_interface(cfg, tmp_path):
-    """Le pont démarre sans adresse ; l'interface fournit IP ou nom DNS, sans aucun mouvement."""
+    """The bridge starts without an address; the interface provides an IP or DNS name, without any movement."""
     spec = importlib.util.spec_from_file_location("naoqi_bridge", BRIDGE)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -96,8 +96,8 @@ def _load_bridge_module():
 
 
 def test_bridge_on_robot_mode(cfg, tmp_path):
-    """Pont lancé sur le NAO (--on-robot) : déjà relié à NAOqi local ; l'interface joint
-    le pont à l'adresse du robot et ne redemande pas de connexion NAOqi."""
+    """Bridge started on the NAO (--on-robot): already linked to the local NAOqi; the interface reaches
+    the bridge at the robot's address and does not ask for a NAOqi connection again."""
     mod = _load_bridge_module()
     created = []
 
@@ -106,14 +106,14 @@ def test_bridge_on_robot_mode(cfg, tmp_path):
         return mod.FakeBackend()
 
     br = mod.Bridge(None, 0.3, factory)
-    br.handle({"cmd": "connect_robot", "host": "127.0.0.1", "port": 9559})  # comme --on-robot
+    br.handle({"cmd": "connect_robot", "host": "127.0.0.1", "port": 9559})  # like --on-robot
     ready = threading.Event()
     threading.Thread(target=mod.serve, args=(br, "127.0.0.1", 0, ready), daemon=True).start()
     assert ready.wait(5)
     from nao_motion.workbench import Workbench
     wb = Workbench(tmp_path / "d", tmp_path / "r", cfg=cfg, adapter_kind="sim", virtual_time=True)
     assert cfg.robot["bridge"]["location"] == "robot"
-    # l'« adresse du robot » est ici 127.0.0.1 car le pont factice tourne en local
+    # the "robot address" is 127.0.0.1 here because the fake bridge runs locally
     wb.connect_robot("127.0.0.1", 9559, None, ready.port)
     assert created == [("127.0.0.1", 9559)]  # aucune reconnexion NAOqi
     assert wb.status()["adapter"] == "bridge" and not wb.status()["armed"] and br.motion_active is False
@@ -121,7 +121,7 @@ def test_bridge_on_robot_mode(cfg, tmp_path):
 
 
 def test_backend_prefers_naoqi_module(monkeypatch):
-    """Sur le robot (NAOqi 2.1), le module `naoqi` est utilisé avant `qi`."""
+    """On the robot (NAOqi 2.1), the `naoqi` module is used before `qi`."""
     import sys
     import types
     mod = _load_bridge_module()
@@ -138,7 +138,7 @@ def test_backend_prefers_naoqi_module(monkeypatch):
 
 
 def test_bridge_is_python27_compatible():
-    """Le pont doit tourner sur le Python 2.7.3 du NAO : contrôle statique (pas de Python 2 ici)."""
+    """The bridge must run on the NAO's Python 2.7.3: static check (no Python 2 here)."""
     import ast
     src = BRIDGE.read_text(encoding="utf-8")
     tree = ast.parse(src)
@@ -159,20 +159,20 @@ def test_bridge_is_python27_compatible():
 
 
 def test_joint_names_are_native_str_on_python2(monkeypatch):
-    """NAOqi 2.1 (ALProxy, Python 2) refuse l'unicode pour getLimits(String) :
-    le pont convertit les chaînes JSON en str. Relevé sur le robot le 2026-11-04."""
+    """NAOqi 2.1 (ALProxy, Python 2) refuses unicode for getLimits(String):
+    the bridge converts JSON strings to str. Observed on the robot on 2026-11-04."""
     import types
     mod = _load_bridge_module()
-    assert mod.native_str("HeadYaw") == "HeadYaw"  # Python 3 : inchangé
+    assert mod.native_str("HeadYaw") == "HeadYaw"  # Python 3: unchanged
     monkeypatch.setattr(mod, "sys", types.SimpleNamespace(version_info=(2, 7, 3)))
     assert mod.native_str(u"HeadYaw") == b"HeadYaw"
     assert mod.native_str(1.5) == 1.5
 
 
 def test_reconnect_same_bridge_keeps_calibration(cfg, tmp_path):
-    """Coupure pendant une calibration : la socket morte est fermée (le pont, qui ne sert
-    qu'un client, se libère) et « Connecter au robot » sur le même pont reconnecte en
-    place sans perdre la calibration ouverte ni ses explorations."""
+    """Drop during a calibration: the dead socket is closed (the bridge, which serves only
+    one client, is freed) and "Connecter au robot" on the same bridge reconnects in
+    place without losing the open calibration or its explorations."""
     from nao_motion.adapters.base import ConnectionLost
     from nao_motion.workbench import Workbench
     mod = _load_bridge_module()
@@ -186,10 +186,10 @@ def test_reconnect_same_bridge_keeps_calibration(cfg, tmp_path):
     ad = wb.adapter
     wb.open_calibration()
     wb.calibration.session.sweeps["head"] = {"joints": cfg.groups["head"], "q": np.zeros((60, 2))}
-    ad._sock.shutdown(__import__("socket").SHUT_RDWR)  # coupure réseau simulée
+    ad._sock.shutdown(__import__("socket").SHUT_RDWR)  # simulated network drop
     with pytest.raises(ConnectionLost):
         ad.read_angles(["HeadYaw"])
-    assert ad._sock is None  # socket morte fermée
+    assert ad._sock is None  # dead socket closed
     wb.connect_robot("127.0.0.1", 9559, None, ready.port)
     assert wb.adapter is ad and wb.calibration is not None and "head" in wb.calibration.session.sweeps
     assert ad.read_angles(["HeadYaw"]) == [0.0]

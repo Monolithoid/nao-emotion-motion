@@ -1,18 +1,18 @@
-"""Avancement de la collecte : prises ACCEPTÉES par groupe, paliers, couverture.
+"""Collection progress: ACCEPTED takes per group, milestones, coverage.
 
-Sert à l'onglet « Prises » : pour chaque groupe (bras, tête, mains, entraînés
-indépendamment), combien de prises acceptées, quel palier est atteint, combien
-il en manque avant le suivant, et quelle part des cases du tirage équilibré
-(voir balance.py) a déjà reçu au moins une prise acceptée.
+Used by the « Prises » (takes) tab: for each group (arms, head, hands, trained
+independently), how many accepted takes, which milestone is reached, how many are
+missing before the next one, and what share of the balanced-draw cells (see
+balance.py) has already received at least one accepted take.
 
-Seules les prises ACCEPTÉES comptent (c'est ce que l'entraînement utilise par
-défaut). Les prises simulées (`synthetic`) sont comptées à part et n'avancent
-pas la barre : elles ne remplacent pas une démonstration sur le robot.
+Only ACCEPTED takes count (that is what training uses by default). Simulated takes
+(`synthetic`) are counted separately and do not move the bar: they do not replace a
+demonstration on the robot.
 
-Paliers : section `progress` de robot.yaml, une liste par groupe, chaque palier
-étant un nombre ou {takes: N, label: "..."} ; le dernier palier est l'objectif.
+Milestones: `progress` section of robot.yaml, one list per group, each milestone
+being a number or {takes: N, label: "..."}; the last milestone is the goal.
 
-Ce module ne commande aucun mouvement.
+This module commands no movement.
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ DEFAULT_MILESTONES = {
 
 
 def milestones(cfg) -> Dict[str, List[dict]]:
-    """Paliers par groupe (robot.yaml `progress`, sinon valeurs par défaut), triés et vérifiés."""
+    """Milestones per group (robot.yaml `progress`, otherwise defaults), sorted and checked."""
     conf = (cfg.robot.get("progress") or {}) if hasattr(cfg, "robot") else {}
     out = {}
     for kind, default in DEFAULT_MILESTONES.items():
@@ -56,7 +56,7 @@ def milestones(cfg) -> Dict[str, List[dict]]:
 
 
 def progress(cfg, metas: Sequence) -> dict:
-    """Avancement par groupe : statuts, paliers, prochain palier, couverture des cases."""
+    """Progress per group: statuses, milestones, next milestone, cell coverage."""
     grid = Grid.from_config(cfg)
     ms_all = milestones(cfg)
     metas = list(metas)

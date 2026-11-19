@@ -1,4 +1,4 @@
-"""Chargement et validation des configurations versionnées (dossier configs/)."""
+"""Loading and validation of the versioned configurations (configs/ folder)."""
 from __future__ import annotations
 
 import hashlib
@@ -14,7 +14,7 @@ DEFAULT_CONFIG_DIR = Path(os.environ.get("NAO_MOTION_CONFIG", Path(__file__).res
 
 ARM_GROUPS = ("left_arm", "right_arm")
 HEAD_GROUP = "head"
-HANDS_GROUP = "hands"   # LHand / RHand : ouverture 0..1, pilotée (jamais guidée), hors calibration
+HANDS_GROUP = "hands"   # LHand / RHand: opening 0..1, driven (never guided), outside calibration
 
 
 class ConfigError(ValueError):
@@ -41,7 +41,7 @@ class GuardianConfig:
     start_tolerance_rad: float
     transition_velocity_rad_s: float
     coupled_constraints: List[CoupledConstraint]
-    rest_velocity_rad_s: float = 0.3  # segments repos <-> départ (repos hors zone de mouvement)
+    rest_velocity_rad_s: float = 0.3  # rest <-> start segments (rest outside the movement zone)
     per_joint_margin: Dict[str, float] = field(default_factory=dict)
     per_joint_acceleration: Dict[str, float] = field(default_factory=dict)
     # where each per-joint velocity limit comes from (guardian.yaml, factory speed, takes, ceiling)
@@ -76,21 +76,21 @@ class Config:
     robot: dict
     model: dict
     raw: dict = field(default_factory=dict, repr=False)
-    calibration: Optional[object] = None  # nao_motion.calibration.Calibration si une calibration est active
-    # Le repos peut être hors de la zone de mouvement (ex. bras posés sur les genoux :
-    # contact). Il est borné par rest_limits (limites d'usine si connues), et seuls les
-    # segments repos <-> départ peuvent quitter la zone. Que le départ soit accessible
-    # sans heurt depuis le repos est à la charge de l'opérateur qui calibre.
+    calibration: Optional[object] = None  # nao_motion.calibration.Calibration if a calibration is active
+    # Rest may be outside the movement zone (e.g. arms resting on the knees:
+    # contact). It is bounded by rest_limits (factory limits if known), and only the
+    # rest <-> start segments may leave the zone. Making sure the start pose can be
+    # reached smoothly from rest is up to the operator who calibrates.
     rest_limits: Dict[str, Tuple[float, float]] = field(default_factory=dict)
-    # Mains (LHand, RHand) : hors des groupes calibrés (on ne les guide pas à la main),
-    # bornées par leur plage d'usine 0..1 et pilotées depuis l'interface.
+    # Hands (LHand, RHand): outside the calibrated groups (they are not guided by hand),
+    # bounded by their factory range 0..1 and driven from the interface.
     hand_joints: List[str] = field(default_factory=list)
-    # Plage AUTORISÉE par le guardian pour chaque articulation, marges comprises (voir
-    # _guardian_bounds). `limits` reste la zone calibrée telle qu'enregistrée (normalisation
-    # des modèles, calibration, simulation).
+    # Range ALLOWED by the guardian for each joint, margins included (see
+    # _guardian_bounds). `limits` stays the calibrated zone as saved (normalisation
+    # of the models, calibration, simulation).
     guardian_bounds: Dict[str, Tuple[float, float]] = field(default_factory=dict)
 
-    # -- accès pratiques -------------------------------------------------
+    # -- convenience accessors -------------------------------------------------
     @property
     def arm_joints(self) -> List[str]:
         return [j for g in ARM_GROUPS for j in self.groups[g]]
@@ -101,12 +101,12 @@ class Config:
 
     @property
     def all_joints(self) -> List[str]:
-        """Articulations calibrées (bras + tête). Les mains n'en font pas partie."""
+        """Calibrated joints (arms + head). The hands are not included."""
         return self.arm_joints + self.head_joints
 
     @property
     def controlled_joints(self) -> List[str]:
-        """Tout ce que le logiciel peut lire ou commander : bras, tête et mains."""
+        """Everything the software can read or command: arms, head and hands."""
         return self.all_joints + self.hand_joints
 
     def is_hand(self, joint: str) -> bool:
@@ -124,7 +124,7 @@ class Config:
         return self.emotions.index(emotion)
 
     def fingerprint(self) -> str:
-        """Empreinte des éléments qui conditionnent la compatibilité d'un modèle."""
+        """Fingerprint of the elements that determine a model's compatibility."""
         payload = json.dumps(
             {"groups": self.groups, "emotions": self.emotions, "calibration": self.calibration_version},
             sort_keys=True,
@@ -142,9 +142,9 @@ def _load(path: Path) -> dict:
 
 def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Optional[os.PathLike] = None,
                 use_calibration: bool = True) -> Config:
-    """Charge configs/. Si une calibration est active (configs/calibration/ACTIVE)
-    ou fournie, ses limites, poses et contraintes couplées mesurées REMPLACENT
-    les valeurs de remplacement de joints.yaml / poses.yaml."""
+    """Loads configs/. If a calibration is active (configs/calibration/ACTIVE)
+    or given, its measured limits, poses and coupled constraints REPLACE
+    the placeholder values of joints.yaml / poses.yaml."""
     from ..calibration import Calibration, CalibrationError, active_calibration_path
     root = Path(config_dir) if config_dir else DEFAULT_CONFIG_DIR
     joints = _load(root / "joints.yaml")
@@ -207,15 +207,15 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
             poses = dict(poses, rest=cal_poses["rest"], start=cal_poses["start"])
             poses_from_cal = True
 
-    # limites du repos et des segments repos <-> départ : limites d'usine mesurées si
-    # connues, sinon limites de la configuration
+    # limits of rest and of the rest <-> start segments: measured factory limits if
+    # known, otherwise the configuration limits
     rest_limits = dict(limits)
     if calibration is not None:
         for j, m in (calibration.measured or {}).items():
             f = (m or {}).get("factory")
             if j in rest_limits and f:
                 rest_limits[j] = (min(float(f[0]), limits[j][0]), max(float(f[1]), limits[j][1]))
-    # mains : plage d'usine, que la calibration ne remplace pas
+    # hands: factory range, which the calibration does not replace
     limits.update(hand_limits)
     rest_limits.update(hand_limits)
 
@@ -234,11 +234,11 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
     pose_d = {"rest": {}, "start": {}}
     for g in groups:
         pose_d["start"][g] = _check("start", g, poses["start"].get(g) or {}, limits, hint)
-        # le repos peut sortir de la zone de mouvement (contact), pas des limites d'usine
+        # rest may leave the movement zone (contact), not the factory limits
         pose_d["rest"][g] = _check("rest", g, poses["rest"].get(g) or {}, rest_limits, " (limites d'usine)")
     for n in ("rest", "start"):
         if hand_joints:
-            # poses des mains : celles de la calibration si elle en porte, sinon poses.yaml
+            # hand poses: those of the calibration if it has them, otherwise poses.yaml
             src = (poses.get(n) or {}).get(HANDS_GROUP) or (poses_file.get(n) or {}).get(HANDS_GROUP) or {}
             pose_d[n][HANDS_GROUP] = _check(n, HANDS_GROUP, src, limits, js=hand_joints)
 

@@ -1,12 +1,12 @@
-# Positions de repos et de départ, par groupe. Radians, mêmes noms que joints.yaml.
-# VALEURS DE REMPLACEMENT pour la simulation. Sur le robot réel, les poses sont
-# capturées pendant la calibration (`nao-motion calibrate`) et remplacent celles-ci.
+# Rest and start positions, per group. Radians, same names as joints.yaml.
+# PLACEHOLDER VALUES for the simulation. On the real robot, the poses are
+# captured during calibration (`nao-motion calibrate`) and replace these.
 schema_version: 1
 rest:
   left_arm:  {LShoulderPitch: 1.45, LShoulderRoll: 0.15, LElbowYaw: -1.20, LElbowRoll: -0.50, LWristYaw: 0.0}
   right_arm: {RShoulderPitch: 1.45, RShoulderRoll: -0.15, RElbowYaw: 1.20, RElbowRoll: 0.50, RWristYaw: 0.0}
   head:      {HeadYaw: 0.0, HeadPitch: 0.0}
-  hands:     {LHand: 0.3, RHand: 0.3}   # ouverture 0..1 ; la calibration ne capture pas les mains
+  hands:     {LHand: 0.3, RHand: 0.3}   # opening 0..1; the calibration does not capture the hands
 start:
   left_arm:  {LShoulderPitch: 1.10, LShoulderRoll: 0.20, LElbowYaw: -1.00, LElbowRoll: -0.80, LWristYaw: 0.0}
   right_arm: {RShoulderPitch: 1.10, RShoulderRoll: -0.20, RElbowYaw: 1.00, RElbowRoll: 0.80, RWristYaw: 0.0}

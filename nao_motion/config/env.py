@@ -1,6 +1,6 @@
-"""Lecture de `.env` (sans dépendance) et surcharge de robot.yaml.
+"""Reads `.env` (no dependency) and overrides robot.yaml.
 
-Ordre de priorité : variables d'environnement > fichier .env > robot.yaml.
+Priority order: environment variables > .env file > robot.yaml.
 """
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from typing import Dict, Optional
 
-# variable -> (chemin dans robot.yaml, conversion)
+# variable -> (path in robot.yaml, conversion)
 MAPPING = {
     "NAO_ADAPTER": (("adapter",), str),
     "NAO_IP": (("robot", "ip"), str),
@@ -42,7 +42,7 @@ def parse_env_file(path) -> Dict[str, str]:
 
 
 def apply_env(robot: dict, env_file: Optional[Path] = None, environ=None) -> dict:
-    """Retourne une copie de robot.yaml surchargée ; robot['_env_sources'] liste ce qui vient du .env."""
+    """Returns an overridden copy of robot.yaml; robot['_env_sources'] lists what comes from the .env."""
     environ = os.environ if environ is None else environ
     values = parse_env_file(env_file) if env_file else {}
     values.update({k: v for k, v in environ.items() if k in MAPPING})

@@ -1,7 +1,7 @@
-"""Ligne de commande `nao-motion`.
+"""`nao-motion` command line.
 
-Aucune commande ne met le robot en mouvement sans option explicite
-(`--execute` + `--confirm`), et jamais à la fin d'un entraînement.
+No command moves the robot without an explicit option
+(`--execute` + `--confirm`), and never at the end of a training run.
 """
 from __future__ import annotations
 
@@ -33,13 +33,13 @@ def _bridge_on_robot(cfg):
 
 
 def _target_bridge(ad, cfg, a):
-    """Pont sur le robot : l'adresse du pont est celle du robot."""
+    """Bridge on the robot: the bridge address is the robot's address."""
     if ad.name == "bridge" and _bridge_on_robot(cfg) and not ad.is_connected():
         ad.host = _robot_host(cfg, a)
 
 
 def _connect(ad, cfg, a):
-    """Connecte l'adaptateur ; pour le pont, transmet l'adresse du robot (IP ou DNS)."""
+    """Connects the adapter; for the bridge, passes on the robot address (IP or DNS)."""
     _target_bridge(ad, cfg, a)
     ad.connect()
     _connect_robot(ad, cfg, a)
@@ -66,7 +66,7 @@ def cmd_check_config(a):
     for name in ("rest", "start"):
         q = np.array(cfg.pose(name, cfg.all_joints))
         tr = Trajectory(cfg.all_joints, [0, 1], [q, q])
-        # le repos peut être hors zone de mouvement (contact) : limites d'usine seulement
+        # rest may be outside the movement zone (contact): factory limits only
         rep = g.validate_rest_transition(tr) if name == "rest" else g.validate(tr, check_duration=False)
         print(f"  pose {name} : {rep.summary()}" + (" (repos : limites d'usine)" if name == "rest" else ""))
         for v in rep.violations:
@@ -189,7 +189,7 @@ def cmd_generate(a):
 
 
 def cmd_execute(a):
-    """Exécute une trajectoire sauvegardée : seul chemin vers un robot réel en CLI."""
+    """Executes a saved trajectory: the only path to a real robot from the CLI."""
     from .trajectory import Trajectory
     if not a.confirm:
         print("Refus : ajouter --confirm pour autoriser un mouvement.", file=sys.stderr)
@@ -216,7 +216,7 @@ def cmd_execute(a):
 
 
 def cmd_capture_pose(a):
-    """Lit la posture mesurée (aucune commande) et affiche un extrait YAML pour poses.yaml."""
+    """Reads the measured posture (no command) and prints a YAML snippet for poses.yaml."""
     wb = _wb(a, adapter=a.adapter)
     _connect(wb.adapter, wb.cfg, a)
     js = wb.cfg.groups[a.group]
@@ -226,7 +226,7 @@ def cmd_capture_pose(a):
 
 
 def cmd_robot_info(a):
-    """Identité et limites d'usine du robot via le pont : lecture seule, aucun mouvement."""
+    """Robot identity and factory limits through the bridge: read-only, no movement."""
     from .adapters import make_adapter
     from .config import load_config
     cfg = load_config(a.config)
@@ -249,12 +249,12 @@ def _ask(msg):
 
 
 def cmd_calibrate(a):
-    """Procédure de calibration du guardian (voir nao_motion/calibration.py)."""
+    """Guardian calibration procedure (see nao_motion/calibration.py)."""
     import threading
     from .adapters import make_adapter
     from .calibration import CalibrationSession, activate, load_procedure
     from .config import load_config
-    cfg = load_config(a.config, use_calibration=False)  # on mesure sans s'appuyer sur une calibration existante
+    cfg = load_config(a.config, use_calibration=False)  # measure without relying on an existing calibration
     proc = load_procedure(cfg.root)
     if a.adapter == "sim":
         from .demo import simulate_calibration
@@ -286,7 +286,7 @@ def cmd_calibrate(a):
         q = sess.sweeps[g]["q"]
         for i, j in enumerate(cfg.groups[g]):
             print(f"  {j:15s} min {q[:, i].min():+.3f}  max {q[:, i].max():+.3f} rad ({len(q)} mesures)")
-        ad.set_roles(driven=cfg.groups[g])  # raidi sur place, sans déplacement
+        ad.set_roles(driven=cfg.groups[g])  # stiffened in place, without moving
     for name in ("rest", "start"):
         for g in cfg.groups:
             input(f"\n[{name}/{g}] Entrée pour relâcher {g} et le placer en position « {name} » ")
@@ -312,7 +312,7 @@ def cmd_calibrate(a):
 
 
 def cmd_export_guardian(a):
-    """Guardian autonome (guardian.json + nao_guardian.py) pour un autre projet, ex. ia-agent."""
+    """Standalone guardian (guardian.json + nao_guardian.py) for another project, e.g. ia-agent."""
     from .config import load_config
     from .guardian.export import ExportError, export_guardian
     cfg = load_config(a.config)
@@ -348,11 +348,11 @@ def cmd_calibration_activate(a):
     from .calibration import activate
     from .config import load_config
     cfg = load_config(a.config, use_calibration=False)
-    print("Active :", activate(cfg.root, a.file, allow_simulated=a.allow_simulated))  # vérifie avant d'écrire
+    print("Active :", activate(cfg.root, a.file, allow_simulated=a.allow_simulated))  # check before writing
 
 
 def cmd_export_dataset(a):
-    """Jeu de données à publier dans un dépôt séparé (prises réelles acceptées, calibrations, modèles)."""
+    """Dataset to publish in a separate repository (accepted real takes, calibrations, models)."""
     from .data.dataset import DatasetError, export_dataset
     try:
         r = export_dataset(a.data, a.out, a.config, None if a.no_models else a.runs, name=a.name,
@@ -379,7 +379,7 @@ def cmd_export_dataset(a):
 
 
 def cmd_import_dataset(a):
-    """Reprise d'un export (autre PC, jeu partagé) : n'écrase jamais rien, n'active aucune calibration."""
+    """Imports an export (another PC, shared dataset): never overwrites anything, activates no calibration."""
     from .data.dataset import DatasetError, import_dataset
     try:
         r = import_dataset(a.src, a.data, a.config, None if a.no_models else a.runs)

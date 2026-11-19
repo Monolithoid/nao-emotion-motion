@@ -1,15 +1,15 @@
-# Procédure de calibration du guardian (voir README, section Calibration).
-# Ce fichier décrit COMMENT calibrer ; le résultat (limites mesurées sur un robot
-# donné) est écrit dans configs/calibration/<robot>-<date>.yaml, et le fichier
-# actif est désigné par configs/calibration/ACTIVE.
+# Guardian calibration procedure (see README, Calibration section).
+# This file describes HOW to calibrate; the result (limits measured on a given
+# robot) is written to configs/calibration/<robot>-<date>.yaml, and the active
+# file is designated by configs/calibration/ACTIVE.
 schema_version: 1
-margin_rad: 0.05            # marge retirée de l'amplitude mesurée (en plus de celle du guardian)
+margin_rad: 0.05            # margin removed from the measured range (on top of the guardian's)
 rate_hz: 50
-min_samples: 50             # en dessous, l'exploration d'un groupe est refusée
-min_range_rad: 0.2          # amplitude minimale explorée par articulation (sinon refus)
-max_hull_edges: 32          # simplification des enveloppes couplées (retirer un sommet RÉTRÉCIT la zone)
-# Couples d'articulations dont l'enveloppe réellement atteignable est mesurée
-# pendant l'exploration (contraintes couplées dérivées de la calibration).
+min_samples: 50             # below this, a group's exploration is refused
+min_range_rad: 0.2          # minimum explored range per joint (otherwise refused)
+max_hull_edges: 32          # simplification of the coupled hulls (removing a vertex SHRINKS the zone)
+# Joint pairs whose actually reachable hull is measured
+# during exploration (coupled constraints derived from the calibration).
 pairs:
   - [HeadYaw, HeadPitch]
   - [LShoulderPitch, LShoulderRoll]

@@ -15,7 +15,7 @@ function violationsText(vs) {
 
 async function api(path, body, {quiet = false, timeoutMs = 0} = {}) {
   const opt = body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)};
-  // délai côté page : une requête bloquée ne fige jamais l'interface
+  // page-side timeout: a stuck request never freezes the interface
   const ctl = timeoutMs ? new AbortController() : null;
   if (ctl) { opt.signal = ctl.signal; setTimeout(() => ctl.abort(), timeoutMs); }
   const r = await fetch("/api/" + path, opt);
@@ -24,12 +24,12 @@ async function api(path, body, {quiet = false, timeoutMs = 0} = {}) {
   return d;
 }
 const real = () => STATUS && STATUS.real_robot;
-const PFX = {arms: "a", head: "h", hands: "m"};  // préfixe des éléments de chaque passage
+const PFX = {arms: "a", head: "h", hands: "m"};  // element prefix for each pass
 const pid = (kind, name) => $(`${PFX[kind] || "a"}-${name}`);
 const fmtInt = (x) => String(Math.round(Number(x) * 100) / 100).replace(".", ",");  // 0,7 · 0,25 (slider step 0.05)
 const label = (id) => (CFG.emotions.find((e) => e.id === id) || {label: id}).label;
 
-// ---- tracé SVG minimal -------------------------------------------------------
+// ---- minimal SVG plot --------------------------------------------------------
 function plot(el, t, series, names, opts = {}) {
   const W = 1000, H = 260, P = 34;
   if (!t || !t.length) { el.innerHTML = ""; return; }
@@ -54,10 +54,10 @@ function plot(el, t, series, names, opts = {}) {
 }
 const cols = (q) => q[0].map((_, j) => q.map((r) => r[j]));
 
-// ---- état ----------------------------------------------------------------------
+// ---- state ----------------------------------------------------------------------
 let statusPending = false, statusFails = 0;
 async function refreshStatus() {
-  if (statusPending) return;  // pas d'empilement de requêtes si le serveur tarde
+  if (statusPending) return;  // no request pile-up if the server is slow
   statusPending = true;
   try { STATUS = await api("status", undefined, {quiet: true, timeoutMs: 4000}); statusFails = 0; }
   catch (e) { if (++statusFails >= 3) $("status").textContent = "Serveur de l'interface injoignable…"; return; }
@@ -94,7 +94,7 @@ function showDraft(kind) {
   pid(kind, "draft").classList.remove("hidden");
   const plotEl = pid(kind, "plot");
   api("record/draft").then((d) => {
-    if (kind === "hands") {  // aperçu lisible : ouverture des mains seulement (0 fermée .. 1 ouverte)
+    if (kind === "hands") {  // readable preview: hand opening only (0 closed .. 1 open)
       const idx = d.joints.map((j, i) => (j.endsWith("Hand") ? i : -1)).filter((i) => i >= 0);
       d.q = d.q.map((row) => idx.map((i) => row[i])); d.joints = idx.map((i) => d.joints[i]);
     }
@@ -121,7 +121,7 @@ function updateConsigne() {
   const ev = window.FOV && window.FOV.current();
   $("a-consigne").textContent = `${label($("a-emotion").value)} — ${fmtInt($("a-intensity").value)}` + ($("a-intention").value ? ` (${$("a-intention").value})` : "") +
     (ev ? ` · ${window.FOV.describe(ev)}` : "");
-  // tête et mains : même consigne (émotion, intensité, événement), passages indépendants
+  // head and hands: same prompt (emotion, intensity, event), independent passes
   for (const p of ["h", "m"]) {
     $(p + "-int-val").textContent = fmtInt($(p + "-intensity").value);
     $(p + "-consigne").textContent = `${label($(p + "-emotion").value)} — ${fmtInt($(p + "-intensity").value)}` +
@@ -240,7 +240,7 @@ function initTakeTrash() {
   $("t-empty").onclick = () => purge(undefined);
 }
 
-// barre de progression à paliers par groupe (prises acceptées) -------------------
+// milestone progress bar per group (accepted takes) -------------------
 function renderProgress(pr) {
   const box = $("progress");
   if (!pr || !pr.kinds) { box.innerHTML = pr && pr.error ? `<div class="alert"><b>Avancement indisponible :</b> ${pr.error}</div>` : ""; return; }
@@ -287,8 +287,8 @@ function animate(el, t0, t1) {
   requestAnimationFrame(step);
 }
 
-// ---- entraînement ---------------------------------------------------------------
-// réécrit le bloc seulement si son contenu change : une sélection en cours (copier-coller) n'est pas perdue
+// ---- training ---------------------------------------------------------------
+// rewrites the block only if its content changes: an ongoing selection (copy-paste) is not lost
 function setHTML(el, html) {
   if (el._html === html) return;
   el._html = html;
@@ -297,7 +297,7 @@ function setHTML(el, html) {
 
 async function copyText(text, btn) {
   try { await navigator.clipboard.writeText(text); }
-  catch (e) {  // repli sans API presse-papiers
+  catch (e) {  // fallback without the clipboard API
     const ta = document.createElement("textarea");
     ta.value = text; document.body.appendChild(ta); ta.select();
     document.execCommand("copy"); ta.remove();
@@ -308,7 +308,7 @@ async function copyText(text, btn) {
 // training tab and network tab: mlp.js (window.MLP)
 const refreshTrain = () => window.MLP && window.MLP.refresh();
 
-// ---- génération -----------------------------------------------------------------
+// ---- generation -----------------------------------------------------------------
 // consigne of the Generation tab (also used by the latent space view, latent.js)
 function genConsigne() {
   const e1 = $("g-emotion").value, e2 = $("g-emotion2").value, w = parseFloat($("g-mix").value);
@@ -436,14 +436,14 @@ async function init() {
     if (window.NAOFIG) window.NAOFIG.update();
   });
   $("stop").onclick = () => api("stop", {});
-  // sans confirmation (préférence de l'opérateur) : avertissement permanent en haut de page
+  // no confirmation (operator's preference): permanent warning at the top of the page
   $("armed").onchange = async (e) => {
     const on = e.target.checked;
     if (on && !window.confirm("Autoriser les mouvements motorisés ? Chaque mouvement restera déclenché par un bouton explicite.")) { e.target.checked = false; return; }
     await api("arm", {armed: on, confirm: on}).catch(() => (e.target.checked = false));
   };
   // bras
-  // pas de confirmation (souhait de Monolithoid) : l'avertissement de la page (#a-alert) la remplace
+  // no confirmation (Monolithoid's wish): the page warning (#a-alert) replaces it
   $("a-prepare").onclick = () =>
     api("record/prepare", {kind: "arms", emotion: $("a-emotion").value, intensity: parseFloat($("a-intensity").value), intention: $("a-intention").value, confirm: true}).then(() => { draftShown = null; });
   $("a-start").onclick = () => api("record/start", {});
@@ -453,7 +453,7 @@ async function init() {
   $("a-pending").onclick = () => saveDraft("arms", "pending");
   $("a-reject").onclick = () => saveDraft("arms", "rejected");
   $("a-retry").onclick = async () => { await saveDraft("arms", "rejected"); $("a-prepare").onclick(); };
-  // tête (indépendante des bras) ; pas de confirmation : l'avertissement de la page (#h-alert) la remplace
+  // head (independent of the arms); no confirmation: the page warning (#h-alert) replaces it
   $("h-prepare").onclick = () =>
     api("record/prepare", {kind: "head", emotion: $("h-emotion").value, intensity: parseFloat($("h-intensity").value), confirm: true})
       .then(() => { draftShown = null; });
@@ -464,8 +464,8 @@ async function init() {
   $("h-pending").onclick = () => saveDraft("head", "pending");
   $("h-reject").onclick = () => saveDraft("head", "rejected");
   $("h-retry").onclick = async () => { await saveDraft("head", "rejected"); $("h-prepare").onclick(); };
-  // mains (indépendantes des bras) : curseurs et clavier dans hands.js
-  // pas de confirmation : l'avertissement de la page (#m-alert) la remplace
+  // hands (independent of the arms): sliders and keyboard in hands.js
+  // no confirmation: the page warning (#m-alert) replaces it
   $("m-prepare").onclick = () =>
     api("record/prepare", {kind: "hands", emotion: $("m-emotion").value, intensity: parseFloat($("m-intensity").value), confirm: true})
       .then(() => { draftShown = null; });
@@ -479,8 +479,8 @@ async function init() {
   // prises
   $("t-kind").onchange = loadTakes; $("t-refresh").onclick = loadTakes; initTakeTrash();
   initTakeView();  // takeview.js
-  // entraînement et réseau : mlp.js
-  // génération
+  // training and network: mlp.js
+  // generation
   $("g-go").onclick = () => generate();
   $("g-temp").placeholder = (CFG.cvae || {}).temperature ?? 1;
   // no confirmation (operator preference): the permanent warning #g-alert replaces it
@@ -543,7 +543,7 @@ async function init() {
   $("r-bloc").value = stored.bloc || (CFG.bridge && CFG.bridge.location) || "robot";
   const syncBloc = () => { $("r-bhost-l").classList.toggle("hidden", $("r-bloc").value === "robot"); $("r-bport-l").classList.toggle("hidden", $("r-bloc").value !== "robot"); };
   $("r-bloc").onchange = syncBloc; syncBloc();
-  // bandeau « Pont perdu » : reconnexion au même pont, sans boîte de dialogue ni mouvement
+  // "Pont perdu" banner: reconnects to the same bridge, without a dialog or movement
   $("bridge-reconnect").onclick = async () => {
     const msg = $("bridge-reconnect-msg");
     let v = {};

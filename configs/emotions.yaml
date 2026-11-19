@@ -1,7 +1,7 @@
-# Liste initiale, courte et MODIFIABLE. Ce n'est pas une taxonomie scientifique :
-# ce sont des étiquettes de travail pour organiser les démonstrations.
-# Ajouter/retirer une émotion change la dimension d'entrée des modèles :
-# les checkpoints mémorisent la liste utilisée et refusent une liste différente.
+# Initial list, short and EDITABLE. It is not a scientific taxonomy:
+# these are working labels to organise the demonstrations.
+# Adding/removing an emotion changes the models' input dimension:
+# checkpoints store the list used and refuse a different list.
 schema_version: 1
 emotions:
   - {id: joie,      label: "joie"}
@@ -11,9 +11,9 @@ emotions:
   - {id: surprise,  label: "surprise"}
   - {id: calme,     label: "calme"}
 
-# Intentions expressives : distinctes des émotions (on peut accueillir avec joie
-# ou avec calme). Elles sont enregistrées comme annotation optionnelle des prises
-# mais ne conditionnent pas encore les modèles.
+# Expressive intentions: distinct from emotions (one can welcome with joy
+# or calmly). They are recorded as an optional annotation of the takes
+# but do not condition the models yet.
 intentions:
   - {id: accueillir, label: "accueillir"}
   - {id: refuser,    label: "refuser"}

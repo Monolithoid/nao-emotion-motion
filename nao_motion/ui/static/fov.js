@@ -1,26 +1,26 @@
 "use strict";
-// Champ de vision : l'événement vu par le robot (repère torse).
-// Abscisse = azimut, ordonnée = élévation (haut en haut), taille du point = proximité
-// (plus gros = plus proche). Un clic place le point.
-// Deux vues, AFFICHAGE SEUL (l'événement enregistré ne change pas, azimut > 0 = gauche
-// du robot) : « vue robot » (on regarde dans le même sens que lui, on voit le dos de sa
-// tête : gauche du robot à gauche de l'écran) et « vue observateur » (on lui fait face,
-// on voit sa face : gauche du robot à droite de l'écran, comme en miroir). Le choix est
-// commun à tous les champs et gardé dans le navigateur.
-// Le serveur garde UN événement courant : chaque champ l'affiche et le modifie.
+// Field of view: the event as seen by the robot (torso frame).
+// X axis = azimuth, Y axis = elevation (up is up), dot size = proximity
+// (bigger = closer). A click places the dot.
+// Two views, DISPLAY ONLY (the recorded event does not change, azimuth > 0 = robot's
+// left): "robot view" (looking in the same direction as the robot, seeing the back of its
+// head: robot's left on the left of the screen) and "observer view" (facing it,
+// seeing its face: robot's left on the right of the screen, mirrored). The choice is
+// shared by all fields and kept in the browser.
+// The server keeps ONE current event: each field shows and edits it.
 (function () {
   const DEG = 180 / Math.PI;
-  const W = 640, H = 360, P = 34, B = H - 80;  // B : bas du champ ; dessous, la légende des tailles
-  const PL = 58;          // marge gauche : graduations + repères haut/bas de l'ordonnée
+  const W = 640, H = 360, P = 34, B = H - 80;  // B: bottom of the field; below it, the size legend
+  const PL = 58;          // left margin: ticks + up/down markers of the Y axis
   const widgets = [];
   let R = null;           // plages (config)
-  let lastEdit = 0;       // évite d'écraser une saisie en cours par la synchronisation
+  let lastEdit = 0;       // avoids overwriting an ongoing input with the sync
   const VIEW_KEY = "nao-fov-view";
-  let view = "robot";     // "robot" (dos de la tête) ou "observer" (face)
+  let view = "robot";     // "robot" (back of the head) or "observer" (face)
   try { if (localStorage.getItem(VIEW_KEY) === "observer") view = "observer"; } catch (e) { /* stockage indisponible */ }
   const mirrored = () => view === "observer";
 
-  // Tête de NAO au centre : PNG fournis dans static/ s'ils existent, sinon dessin SVG de repli.
+  // NAO head in the centre: PNGs provided in static/ if they exist, otherwise a fallback SVG drawing.
   const HEAD = {
     robot: {png: "nao-head-back.png", svg: "nao-head-back.svg", src: "nao-head-back.svg"},
     observer: {png: "nao-head-front.png", svg: "nao-head-front.svg", src: "nao-head-front.svg"},
@@ -62,7 +62,7 @@
       </div>
       <svg id="${id}-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Champ de vision du robot"></svg>`;
     const w = {el, id, ev: {present: false}};
-    // vue robot : gauche du robot (azimut > 0) à gauche ; vue observateur : en miroir
+    // robot view: robot's left (azimuth > 0) on the left; observer view: mirrored
     const X = (az) => PL + (mirrored() ? az - R.az[0] : R.az[1] - az) / (R.az[1] - R.az[0]) * (W - PL - P);
     const Y = (e) => P + (R.el[1] - e) / (R.el[1] - R.el[0]) * (B - P);
     w.X = X; w.Y = Y;
@@ -96,7 +96,7 @@
   function grid(w) {
     const {X, Y} = w;
     let s = `<rect x="${PL}" y="${P}" width="${W - PL - P}" height="${B - P}" rx="8" fill="var(--card)" stroke="var(--line)"/>`;
-    // zone du tirage aléatoire
+    // random draw area
     const a = R.draw.azimuth_deg, e = R.draw.elevation_deg;
     s += `<rect x="${Math.min(X(a[0]), X(a[1]))}" y="${Y(e[1])}" width="${Math.abs(X(a[0]) - X(a[1]))}" height="${Y(e[0]) - Y(e[1])}" fill="var(--accent)" fill-opacity=".06" stroke="var(--accent)" stroke-opacity=".35" stroke-dasharray="4 4"/>`;
     for (let az = Math.ceil(R.az[0] / 30) * 30; az <= R.az[1]; az += 30)
@@ -105,7 +105,7 @@
     for (let el = Math.ceil(R.el[0] / 15) * 15; el <= R.el[1]; el += 15)
       s += `<line x1="${PL}" x2="${W - P}" y1="${Y(el)}" y2="${Y(el)}" stroke="var(--line)"${el === 0 ? ' stroke-width="1.5"' : ""}/>` +
         `<text x="${PL - 4}" y="${Y(el) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${el}°</text>`;
-    // ordonnée : élévation, haut en haut (au-dessus du torse), bas en bas
+    // Y axis: elevation, up at the top (above the torso), down at the bottom
     const yUp = P + (B - P) * 0.18, yMid = (P + B) / 2, yDown = P + (B - P) * 0.82;
     const lab = (y, t, w) => `<text x="16" y="${y}" transform="rotate(-90 16 ${y})" text-anchor="middle" font-size="12"` +
       ` font-weight="${w}" fill="var(--muted)">${t}</text>`;
@@ -114,11 +114,11 @@
     s += `<text x="${PL}" y="${P - 10}" font-size="12" font-weight="600" fill="var(--fg)">← ${lt} du robot</text>` +
       `<text x="${W - P}" y="${P - 10}" text-anchor="end" font-size="12" font-weight="600" fill="var(--fg)">${rt} du robot →</text>` +
       `<text x="${X(0)}" y="${P - 10}" text-anchor="middle" font-size="11" fill="var(--muted)">${mirrored() ? "vue de face" : "vue du robot"}</text>`;
-    // tête de NAO au centre (devant, hauteur du torse) : dos en vue robot, face en vue observateur
+    // NAO head in the centre (in front, torso height): back in robot view, face in observer view
     const hs = 46, hx = X(0), hy = Y(clamp(0, R.el[0], R.el[1]));
     s += `<image href="${HEAD[view].src}" x="${hx - hs / 2}" y="${hy - hs / 2}" width="${hs}" height="${hs}" opacity=".9"` +
       ` preserveAspectRatio="xMidYMid meet" pointer-events="none"><title>${mirrored() ? "NAO de face : vous lui faites face" : "NAO de dos : vous regardez comme lui"}</title></image>`;
-    // légende des tailles
+    // size legend
     const ly = H - 30, dm = Math.sqrt(R.dist[0] * R.dist[1]);
     s += `<text x="${PL}" y="${ly + 4}" font-size="11" fill="var(--muted)">Taille du point = proximité :</text>`;
     [[R.dist[1], 220], [dm, 290], [R.dist[0], 370]].forEach(([d, x]) => {
@@ -169,7 +169,7 @@
     if (typeof updateConsigne === "function") updateConsigne();
   }
 
-  // Consigne lisible : « 30° à gauche, 15° vers le haut, à 0,50 m ».
+  // Readable prompt: "30° à gauche, 15° vers le haut, à 0,50 m".
   function describe(ev) {
     if (!ev || !ev.present) return "aucun événement";
     const az = Math.round(ev.azimuth_rad * DEG), el = Math.round(ev.elevation_rad * DEG);
@@ -179,9 +179,9 @@
     return `événement ${h}, ${v}, ${d}`;
   }
 
-  // Tirage ÉQUILIBRÉ (serveur, nao_motion/data/balance.py) : favorise les cases
-  // émotion × intensité × zone d'événement les moins enregistrées du passage, en
-  // restant aléatoire. Ne commande aucun mouvement.
+  // BALANCED draw (server, nao_motion/data/balance.py): favours the
+  // emotion × intensity × event zone cells least recorded for the pass, while
+  // staying random. Commands no movement.
   async function draw(kind, allowNone, withEvent) {
     const d = await api("draw", {kind, allow_none: !!allowNone, event: !!withEvent});
     showBalance(kind, d.balance);
@@ -199,8 +199,8 @@
       : `${label(c.emotion)} · intensité ${c.intensity} · ${c.zone}`;
   }
 
-  // Le tirage respecte les cases telles qu'elles sont : si « événement présent » est
-  // décoché dans l'onglet, seuls émotion et intensité sont tirés, l'événement reste absent.
+  // The draw respects the boxes as they are: if "événement présent" is
+  // unchecked in the tab, only emotion and intensity are drawn, the event stays absent.
   const eventOn = (p) => { const c = $(p + "-fov-present"); return !!(c && c.checked); };
 
   async function applyDraw(d, withEvent) {

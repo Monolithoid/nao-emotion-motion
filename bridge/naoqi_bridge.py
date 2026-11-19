@@ -1,35 +1,35 @@
 # -*- coding: utf-8 -*-
-"""Pont minimal entre nao_motion (Python 3) et NAOqi.
+"""Minimal bridge between nao_motion (Python 3) and NAOqi.
 
-Ce fichier est volontairement compatible Python 2.7 ET Python 3 (pas de
-f-strings, pas d'annotations), car le SDK Python de NAOqi pour NAO est
-souvent limité à Python 2.7 selon la version. Il ne dépend que de la
-bibliothèque standard et du SDK NAOqi.
+This file is deliberately compatible with Python 2.7 AND Python 3 (no
+f-strings, no annotations), because the NAOqi Python SDK for NAO is often
+limited to Python 2.7 depending on the version. It only depends on the
+standard library and the NAOqi SDK.
 
-Deux emplacements possibles :
-  - SUR LE ROBOT (recommandé) : le module `naoqi` est déjà présent dans le
-    Python 2.7 du NAO, rien à installer. `python naoqi_bridge.py --on-robot`
-    se connecte à NAOqi en local (127.0.0.1) et écoute sur le réseau (port 9600).
-    C'est aussi le choix d'ia-agent (nao_ws_bridge.py embarqué).
-  - sur le PC : demande le SDK Python NAOqi (pynaoqi, Python 2.7), devenu
-    difficile à trouver et à installer.
+Two possible locations:
+  - ON THE ROBOT (recommended): the `naoqi` module is already present in the
+    NAO's Python 2.7, nothing to install. `python naoqi_bridge.py --on-robot`
+    connects to NAOqi locally (127.0.0.1) and listens on the network (port 9600).
+    This is also ia-agent's choice (embedded nao_ws_bridge.py).
+  - on the PC: requires the NAOqi Python SDK (pynaoqi, Python 2.7), which has
+    become hard to find and install.
 
-Protocole : TCP, une requête JSON par ligne -> une réponse JSON par ligne.
+Protocol: TCP, one JSON request per line -> one JSON response per line.
     {"cmd": "read_angles", "joints": [...]} -> {"ok": true, "result": [...]}
 
-Sécurité :
-  - AUCUN mouvement au démarrage ni à la connexion d'un client.
-  - Chien de garde : si une commande de mouvement a été envoyée et qu'aucun
-    message (battement ou commande) n'arrive pendant --watchdog secondes, le
-    pont arrête les tâches de mouvement et maintient la posture MESURÉE. Il
-    ne renvoie pas le robot au repos et ne relâche rien.
-  - Les jambes sont refusées.
+Safety:
+  - NO movement at startup nor when a client connects.
+  - Watchdog: if a movement command was sent and no message (heartbeat or
+    command) arrives for --watchdog seconds, the bridge stops the movement
+    tasks and holds the MEASURED posture. It does not send the robot back to
+    rest and does not relax anything.
+  - Legs are refused.
 
-Usage :
-    python naoqi_bridge.py --on-robot          # sur le NAO (recommandé)
-    python naoqi_bridge.py                     # sur le PC : l'adresse du robot est donnée par l'interface
-    python naoqi_bridge.py --robot-ip nao.local  # ou fournie au lancement (IP ou nom DNS)
-    python naoqi_bridge.py --fake              # sans robot (tests du protocole)
+Usage:
+    python naoqi_bridge.py --on-robot          # on the NAO (recommended)
+    python naoqi_bridge.py                     # on the PC: the robot address is given by the interface
+    python naoqi_bridge.py --robot-ip nao.local  # or given at launch (IP or DNS name)
+    python naoqi_bridge.py --fake              # without a robot (protocol tests)
 """
 from __future__ import print_function
 
@@ -47,8 +47,8 @@ HOST_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])
 
 
 def native_str(x):
-    """Python 2 : json donne des chaînes unicode, que NAOqi 2.1 (ALProxy) refuse pour
-    les paramètres String ; on les convertit en str (octets UTF-8). Python 3 : inchangé."""
+    """Python 2: json yields unicode strings, which NAOqi 2.1 (ALProxy) refuses for
+    String parameters; they are converted to str (UTF-8 bytes). Python 3: unchanged."""
     if sys.version_info[0] < 3 and isinstance(x, type(u"")):
         return x.encode("utf-8")
     return x
@@ -59,7 +59,7 @@ def valid_host(host):
 
 
 class FakeBackend(object):
-    """Robot factice pour tester le protocole (aucune physique)."""
+    """Fake robot for testing the protocol (no physics)."""
     real = False
 
     def __init__(self):
@@ -101,8 +101,8 @@ class NaoqiBackend(object):
     def __init__(self, ip, port, api="auto"):
         self.motion = None
         self.system = None
-        # Ordre : `naoqi` (ALProxy) d'abord, présent sur le robot pour NAOqi 2.1 et
-        # utilisé par ia-agent sur ce même robot ; `qi` (libqi) en repli.
+        # Order: `naoqi` (ALProxy) first, present on the robot for NAOqi 2.1 and
+        # used by ia-agent on the same robot; `qi` (libqi) as a fallback.
         order = {"auto": ("naoqi", "qi"), "naoqi": ("naoqi",), "qi": ("qi",)}[api]
         last = None
         for name in order:
@@ -169,9 +169,9 @@ class NaoqiBackend(object):
         self.motion.setAngles(names, angles, speed)
 
     def angle_interpolation(self, names, angles, times):
-        # non bloquant ; interrompu par stop()
+        # non-blocking; interrupted by stop()
         if self.api == "qi":
-            # repli libqi : `_async` n'existe que sur les versions récentes de qi
+            # libqi fallback: `_async` only exists on recent versions of qi
             self.motion.angleInterpolation(names, angles, times, True, _async=True)
         else:
             self.motion.post.angleInterpolation(names, angles, times, True)
@@ -182,13 +182,13 @@ class NaoqiBackend(object):
         except Exception:
             pass
         current = self.get_angles(names)
-        # maintien de la posture mesurée, sans changer la raideur
+        # hold the measured posture, without changing stiffness
         self.motion.setAngles(names, current, 0.1)
 
 
 class Bridge(object):
-    """backend peut être None : l'adresse du robot (IP ou nom DNS) est alors fournie
-    plus tard par l'interface via la commande connect_robot."""
+    """backend can be None: the robot address (IP or DNS name) is then provided
+    later by the interface through the connect_robot command."""
 
     def __init__(self, backend, watchdog_s, factory=None):
         self.backend = backend
@@ -221,7 +221,7 @@ class Bridge(object):
             if cmd == "heartbeat":
                 return {"watchdog_trips": self.watchdog_trips}
             if cmd == "connect_robot":
-                # connexion NAOqi seulement : aucun mouvement, aucune raideur modifiée
+                # NAOqi connection only: no movement, no stiffness change
                 if self.motion_active:
                     raise ValueError("mouvement en cours : arreter avant de changer de robot")
                 host, port = req.get("host"), int(req.get("port") or 9559)
@@ -274,16 +274,16 @@ class Bridge(object):
             with self.lock:
                 if self.motion_active and time.time() - self.last_msg > self.watchdog_s:
                     self.watchdog_trips += 1
-                    sys.stderr.write("[bridge] chien de garde : client muet, arret et maintien\n")
+                    sys.stderr.write("[bridge] watchdog: silent client, stop and hold\n")
                     try:
                         self._stop()
                     except Exception as e:
-                        sys.stderr.write("[bridge] echec arret : %s\n" % e)
+                        sys.stderr.write("[bridge] stop failed: %s\n" % e)
 
 
 def _set_keepalive(conn):
-    """Keepalive TCP court quand le système le permet (Linux du NAO) : une liaison
-    coupée sans fermeture propre est détectée même sans trafic."""
+    """Short TCP keepalive when the system allows it (the NAO's Linux): a link
+    dropped without a clean close is detected even without traffic."""
     try:
         conn.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         for opt, val in (("TCP_KEEPIDLE", 2), ("TCP_KEEPINTVL", 1), ("TCP_KEEPCNT", 3)):
@@ -294,15 +294,15 @@ def _set_keepalive(conn):
 
 
 def _serve_client(bridge, conn, state, idle_s):
-    """Sert un client jusqu'à sa déconnexion, son silence (> idle_s) ou l'arrivée d'un
-    nouveau client (qui le remplace)."""
+    """Serves a client until it disconnects, goes silent (> idle_s) or a new client
+    arrives (and replaces it)."""
     conn.settimeout(idle_s)
     _set_keepalive(conn)
     f = conn.makefile("rwb") if sys.version_info[0] >= 3 else conn.makefile("rw")
     try:
         for line in f:
             if state.get("current") is not conn:
-                break  # remplacé par un nouveau client
+                break  # replaced by a new client
             if not line.strip():
                 continue
             try:
@@ -314,7 +314,7 @@ def _serve_client(bridge, conn, state, idle_s):
             f.write(out.encode("utf-8") if sys.version_info[0] >= 3 else out)
             f.flush()
     except socket.timeout:
-        sys.stderr.write("[bridge] client muet depuis %.0f s : connexion fermee\n" % idle_s)
+        sys.stderr.write("[bridge] client silent for %.0f s: connection closed\n" % idle_s)
     except Exception:
         pass
     finally:
@@ -323,26 +323,26 @@ def _serve_client(bridge, conn, state, idle_s):
                 c.close()
             except Exception:
                 pass
-    # client déconnecté : si un mouvement était en cours, arrêt et maintien. Un client
-    # remplacé ne touche à rien : l'arrêt a été fait à l'arrivée du nouveau client.
+    # client disconnected: if a movement was in progress, stop and hold. A replaced
+    # client touches nothing: the stop was done when the new client arrived.
     with bridge.lock:
         if state.get("current") is not conn:
             return
         state["current"] = None
         if bridge.motion_active:
-            sys.stderr.write("[bridge] client deconnecte pendant un mouvement : arret et maintien\n")
+            sys.stderr.write("[bridge] client disconnected during a movement: stop and hold\n")
             try:
                 bridge._stop()
             except Exception as e:
-                sys.stderr.write("[bridge] echec arret : %s\n" % e)
+                sys.stderr.write("[bridge] stop failed: %s\n" % e)
 
 
 def serve(bridge, host, port, ready_event=None, idle_s=10.0):
-    """Un seul client servi à la fois ; un NOUVEAU client remplace l'ancien. Après une
-    coupure réseau, l'ancienne connexion peut rester « ouverte » côté robot (aucune
-    fermeture reçue) : sans ce remplacement, le pont resterait occupé et le PC ne
-    pourrait plus se reconnecter. Un client muet plus de idle_s secondes (le client
-    envoie un battement toutes les 0,2 s) est aussi déconnecté."""
+    """Only one client is served at a time; a NEW client replaces the old one. After a
+    network drop, the old connection may stay "open" on the robot side (no
+    close received): without this replacement, the bridge would stay busy and the PC
+    could no longer reconnect. A client silent for more than idle_s seconds (the client
+    sends a heartbeat every 0.2 s) is also disconnected."""
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((host, port))
@@ -360,15 +360,15 @@ def serve(bridge, host, port, ready_event=None, idle_s=10.0):
             old = state.get("current")
             state["current"] = conn
             if old is not None:
-                sys.stderr.write("[bridge] nouveau client %s : l'ancienne connexion est fermee\n" % (addr,))
-                if bridge.motion_active:  # l'ancien client pilotait : arrêt et maintien
+                sys.stderr.write("[bridge] new client %s: the old connection is closed\n" % (addr,))
+                if bridge.motion_active:  # the old client was driving: stop and hold
                     try:
                         bridge._stop()
                     except Exception as e:
-                        sys.stderr.write("[bridge] echec arret : %s\n" % e)
+                        sys.stderr.write("[bridge] stop failed: %s\n" % e)
         if old is not None:
             try:
-                old.shutdown(socket.SHUT_RDWR)  # débloque sa lecture en cours
+                old.shutdown(socket.SHUT_RDWR)  # unblocks its pending read
             except Exception:
                 pass
         th = threading.Thread(target=_serve_client, args=(bridge, conn, state, idle_s))
@@ -377,7 +377,7 @@ def serve(bridge, host, port, ready_event=None, idle_s=10.0):
 
 
 def read_env(path):
-    """Lecture minimale d'un fichier .env (NAO_IP, NAO_PORT, NAO_BRIDGE_PORT, ...)."""
+    """Minimal reader for a .env file (NAO_IP, NAO_PORT, NAO_BRIDGE_PORT, ...)."""
     out = {}
     try:
         f = open(path)
@@ -417,10 +417,10 @@ def main():
             a.host = "0.0.0.0"
     factory = (lambda host, port: FakeBackend()) if a.fake else (lambda host, port: NaoqiBackend(host, port, a.api))
     bridge = Bridge(None, a.watchdog, factory)
-    if a.robot_ip:  # optionnel : sinon l'adresse est donnée par l'interface
+    if a.robot_ip:  # optional: otherwise the address is given by the interface
         bridge.handle({"cmd": "connect_robot", "host": a.robot_ip, "port": a.robot_port})
-    print("[bridge] pret sur %s:%d, robot : %s. Aucun mouvement n'est envoye au demarrage."
-          % (a.host, a.port, bridge.robot_address or "adresse a fournir par l'interface"))
+    print("[bridge] ready on %s:%d, robot: %s. No movement is sent at startup."
+          % (a.host, a.port, bridge.robot_address or "address to be given by the interface"))
     serve(bridge, a.host, a.port, idle_s=a.idle)
 
 

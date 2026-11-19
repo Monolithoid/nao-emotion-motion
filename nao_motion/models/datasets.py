@@ -1,14 +1,13 @@
-"""Construction des jeux d'apprentissage à partir des prises enregistrées.
+"""Building the training sets from the recorded takes.
 
-Les trois groupes (bras, tête, mains) sont INDÉPENDANTS : chaque exemple associe
-[émotion, intensité, événement] aux points de contrôle et à la durée du seul
-groupe concerné. Les prises de tête ou de mains enregistrées autrefois sur des
-bras rejoués restent utilisables : seules les articulations du groupe sont lues.
+The three groups (arms, head, hands) are INDEPENDENT: each example maps
+[emotion, intensity, event] to the control points and duration of the group
+concerned only. Head or hands takes formerly recorded over replayed arms remain
+usable: only the group's joints are read.
 
-Chaque exemple porte un identifiant de GROUPE servant au découpage
-entraînement/validation : une prise forme son propre groupe, sauf les anciennes
-prises de tête/mains enregistrées sur un même geste des bras, qui le partagent
-(prudence : elles ont été démontrées dans le même contexte).
+Each example carries a GROUP identifier used for the training/validation split:
+a take forms its own group, except old head/hands takes recorded over the same
+arm gesture, which share it (caution: they were demonstrated in the same context).
 """
 from __future__ import annotations
 
@@ -27,7 +26,7 @@ from .features import Norm, motion_input
 @dataclass
 class Examples:
     X: np.ndarray
-    Y: np.ndarray            # points de contrôle normalisés aplatis
+    Y: np.ndarray            # flattened normalised control points
     log_dur: np.ndarray
     groups: List[str]
     take_ids: List[str]
@@ -55,7 +54,7 @@ def follower_joints(cfg: Config, kind: str):
 
 
 def _target_segment(store: TakeStore, take: Take, joints, target: str) -> Trajectory:
-    """Segment utile des articulations du groupe : mesures, ou consigne envoyée (mains)."""
+    """Useful segment of the group's joints: measurements, or the target sent (hands)."""
     if target == "command":
         ref = store.load_reference(take.meta.take_id)
         if ref is not None and set(joints) <= set(ref.joints):
@@ -67,7 +66,7 @@ def _target_segment(store: TakeStore, take: Take, joints, target: str) -> Trajec
 
 def group_examples(store: TakeStore, cfg: Config, kind: str, statuses: Sequence[str] = ("accepted",),
                    target: str = "measured", n_ctrl: Optional[int] = None) -> Examples:
-    """[émotion, intensité, événement] -> [points de contrôle normalisés du groupe, log durée]."""
+    """[emotion, intensity, event] -> [normalised control points of the group, log duration]."""
     K, n = _rep(cfg, n_ctrl)
     joints = group_joints(cfg, kind)
     norm = Norm.from_config(cfg, joints)
@@ -142,7 +141,7 @@ def arm_examples(store: TakeStore, cfg: Config, statuses: Sequence[str] = ("acce
 
 def head_examples(store: TakeStore, cfg: Config, statuses: Sequence[str] = ("accepted",), kind: str = "head",
                   target: str = "measured") -> Examples:
-    """Exemples tête (kind="head") ou mains (kind="hands"), sans aucune entrée venant des bras."""
+    """Head (kind="head") or hands (kind="hands") examples, with no input coming from the arms."""
     return group_examples(store, cfg, kind, statuses, target)
 
 
@@ -153,7 +152,7 @@ def _pack(X, Y, D, G, T, E, I, J, K):
 
 
 def grouped_split(groups: List[str], val_fraction: float, seed: int):
-    """Découpage par groupes ; retourne (indices entraînement, indices validation, groupes de validation)."""
+    """Split by groups; returns (training indices, validation indices, validation groups)."""
     uniq = sorted(set(groups))
     rng = np.random.default_rng(seed)
     rng.shuffle(uniq)

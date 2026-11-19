@@ -1,28 +1,26 @@
-"""Calibration du guardian pilotée depuis l'interface web (onglet Calibration).
+"""Guardian calibration driven from the web interface (Calibration tab).
 
-Même procédure et même calcul que `nao-motion calibrate` (CalibrationSession,
-compute_calibration) : seule la conduite change. L'opérateur avance étape par
-étape, groupe par groupe et dans l'ordre qu'il choisit ; la page interroge
-`state()` pour afficher les angles en direct, les min/max qui s'élargissent
-pendant l'exploration et le nuage de points de chaque couple.
+Same procedure and same computation as `nao-motion calibrate` (CalibrationSession,
+compute_calibration): only the way it is driven changes. The operator goes step by
+step, group by group and in the order they choose; the page polls `state()` to show
+the live angles, the min/max widening during exploration and the point cloud of
+each pair.
 
-Sécurité (inchangée) :
-  - aucune commande de mouvement : on relâche un groupe (raideur nulle) ou on
-    le raidit SUR PLACE (la consigne est d'abord la position mesurée) ;
-  - sur le robot réel, relâcher un groupe exige une confirmation explicite ;
-  - fermer ou annuler laisse chaque articulation dans son état : pas de retour
-    au repos ;
-  - une calibration n'est jamais écrasée ; l'activation est une action à part.
+Safety (unchanged):
+  - no movement command: a group is relaxed (zero stiffness) or stiffened IN PLACE
+    (the target is first the measured position);
+  - on the real robot, relaxing a group requires an explicit confirmation;
+  - closing or cancelling leaves each joint in its state: no return to rest;
+  - a calibration is never overwritten; activation is a separate action.
 
-Progression gardée : les explorations, poses capturées et groupes repris sont
-sauvegardés à chaque étape dans configs/calibration/drafts/<robot>.npz et
-repris à la prochaine ouverture (fermeture de l'onglet, redémarrage du serveur).
-Un groupe déjà calibré peut aussi être repris d'un fichier enregistré
-(`import_group`) : on garde par exemple les bras et on refait la tête.
+Saved progress: explorations, captured poses and imported groups are saved at each
+step in configs/calibration/drafts/<robot>.npz and restored on the next opening
+(tab closed, server restarted). An already calibrated group can also be imported
+from a saved file (`import_group`): for example, keep the arms and redo the head.
 
-En simulation, un démonstrateur synthétique remplace la main de l'opérateur
-(exploration) et les poses de remplacement sont « placées » avant capture :
-les valeurs obtenues n'ont aucune portée réelle.
+In simulation, a synthetic demonstrator replaces the operator's hand (exploration)
+and the placeholder poses are "placed" before capture: the values obtained have no
+real-world meaning.
 """
 from __future__ import annotations
 
@@ -44,7 +42,7 @@ GROUP_LABEL = {"head": "tête", "left_arm": "bras gauche", "right_arm": "bras dr
 
 def _g(group: str) -> str:
     return GROUP_LABEL.get(group, group)
-MAX_POINTS = 400  # points envoyés à la page par couple
+MAX_POINTS = 400  # points sent to the page per pair
 
 
 def _downsample(q: np.ndarray, n: int = MAX_POINTS) -> np.ndarray:
@@ -55,7 +53,7 @@ def _downsample(q: np.ndarray, n: int = MAX_POINTS) -> np.ndarray:
 
 
 class CalibrationWizard:
-    PERSIST_SIM = False  # en simulation, la progression n'est pas écrite sur disque (tests : True)
+    PERSIST_SIM = False  # in simulation, progress is not written to disk (tests: True)
 
     def __init__(self, wb):
         self.wb = wb
@@ -64,7 +62,7 @@ class CalibrationWizard:
         self.proc = load_procedure(self.cfg.root)
         self.session = CalibrationSession(self.cfg, self.adapter, self.proc)
         self.robot = self.session.robot_info()
-        # limites d'usine (ALMotion.getLimits), lues une fois à l'ouverture : affichage seulement
+        # factory limits (ALMotion.getLimits), read once at opening: display only
         try:
             self.factory = self.session.factory_limits()
         except Exception:
@@ -79,7 +77,7 @@ class CalibrationWizard:
         self._lock = threading.RLock()
         self.restored = self._restore_draft()
 
-    # -- progression gardée sur disque ---------------------------------------------------
+    # -- progress saved on disk ---------------------------------------------------
     @property
     def draft_path(self) -> Path:
         name = re.sub(r"[^\w\-]+", "_", str(self.robot.get("name") or "nao")) or "nao"
@@ -130,7 +128,7 @@ class CalibrationWizard:
         return done
 
     def discard_draft(self):
-        """Efface toute la progression (explorations, poses, groupes repris)."""
+        """Clears all progress (explorations, poses, imported groups)."""
         self._not_sweeping()
         s = self.session
         s.sweeps, s.poses, s.imported = {}, {}, {}
@@ -141,8 +139,8 @@ class CalibrationWizard:
         self.message = "Progression effacée : calibration repartie de zéro."
 
     def import_group(self, file: str, group: str) -> dict:
-        """Reprend un groupe (limites, enveloppes, poses) d'une calibration enregistrée,
-        sans l'explorer à nouveau. Aucun mouvement."""
+        """Imports a group (limits, hulls, poses) from a saved calibration,
+        without exploring it again. No movement."""
         self._not_sweeping()
         self._joints(group)
         d = self.cfg.root / "calibration"
@@ -159,19 +157,19 @@ class CalibrationWizard:
         return imp
 
     def import_all(self, file: str) -> List[str]:
-        """Reprend TOUS les groupes (limites, enveloppes, poses, vitesses) d'une calibration
-        enregistrée : il ne reste qu'à recapturer la pose à changer (ex. le repos d'un
-        groupe), puis calculer et enregistrer sous un nouveau nom. Aucun mouvement."""
+        """Imports ALL groups (limits, hulls, poses, velocities) from a saved
+        calibration: all that is left is to recapture the pose to change (e.g. a group's
+        rest pose), then compute and save under a new name. No movement."""
         self._not_sweeping()
         f = self.cfg.root / "calibration" / Path(str(file)).name
         if not f.exists():
             raise CalibrationError(f"Calibration introuvable : {f.name}")
         cal = Calibration.load(f)
         groups = list(self.cfg.groups)
-        for g in groups:  # vérifie tout avant de toucher à la séance
+        for g in groups:  # check everything before touching the session
             _import_group(cal, g, self.cfg.groups[g])
         s = self.session
-        s.poses = {}  # les poses viennent toutes du fichier : pas de mélange avec une séance précédente
+        s.poses = {}  # the poses all come from the file: no mixing with a previous session
         for g in groups:
             s.import_group(cal, g)
         self._invalidate()
@@ -190,7 +188,7 @@ class CalibrationWizard:
         self._save_draft()
         self.message = f"Reprise du groupe {_g(group)} annulée : l'explorer ou le reprendre d'un autre fichier."
 
-    # -- état -----------------------------------------------------------------------
+    # -- state -----------------------------------------------------------------------
     @property
     def sweeping(self) -> bool:
         return self.thread is not None and self.thread.is_alive()
@@ -207,9 +205,9 @@ class CalibrationWizard:
     def _invalidate(self):
         self.result, self.saved_path, self.activated = None, None, False
 
-    # -- étapes (aucun mouvement commandé) -------------------------------------------
+    # -- steps (no commanded movement) -------------------------------------------
     def release(self, group: str, confirm: bool = False):
-        """Relâche un groupe pour le placer à la main (raideur nulle)."""
+        """Relaxes a group so it can be placed by hand (zero stiffness)."""
         self._not_sweeping()
         js = self._joints(group)
         if getattr(self.adapter, "is_real", False) and not confirm:
@@ -218,14 +216,14 @@ class CalibrationWizard:
         self.message = f"Groupe {_g(group)} relâché : le placer à la main."
 
     def hold(self, group: str):
-        """Raidit un groupe SUR PLACE (consigne = position mesurée, sans saut)."""
+        """Stiffens a group IN PLACE (target = measured position, no jump)."""
         self._not_sweeping()
         self.adapter.set_roles(driven=self._joints(group))
         self.message = f"Groupe {_g(group)} raidi sur place."
 
     def sweep_start(self, group: str, confirm: bool = False, max_duration_s: float = 600.0,
                     background: bool = True):
-        """Relâche le groupe (les autres sont raidis sur place) et enregistre les angles."""
+        """Relaxes the group (the others are stiffened in place) and records the angles."""
         self._not_sweeping()
         self._joints(group)
         if getattr(self.adapter, "is_real", False) and not confirm:
@@ -238,7 +236,7 @@ class CalibrationWizard:
         def work():
             try:
                 self.session.sweep(group, max_duration_s=max_duration_s, confirm=True)
-            except Exception as e:  # remonté à la page
+            except Exception as e:  # reported to the page
                 self.sweep_error = str(e)
             finally:
                 if self.sim:
@@ -254,7 +252,7 @@ class CalibrationWizard:
             self._after_sweep(group)
 
     def sweep_clear(self, group: str):
-        """Efface les mesures d'exploration d'un groupe (aucune commande)."""
+        """Clears a group's exploration measurements (no command)."""
         self._not_sweeping()
         self._joints(group)
         self.session.clear_sweep(group)
@@ -271,7 +269,7 @@ class CalibrationWizard:
             self._after_sweep(group)
 
     def _after_sweep(self, group: str):
-        # raidi sur place, comme dans la procédure en ligne de commande
+        # stiffened in place, as in the command-line procedure
         try:
             self.adapter.set_roles(driven=self._joints(group))
         except Exception as e:
@@ -284,12 +282,12 @@ class CalibrationWizard:
         self.message = f"Exploration du groupe {_g(group)} terminée : {n} mesures. Groupe raidi sur place."
 
     def capture(self, name: str, group: str) -> Dict[str, float]:
-        """Lit la pose actuelle d'un groupe (moyenne de quelques lectures)."""
+        """Reads a group's current pose (average of a few readings)."""
         self._not_sweeping()
         if name not in POSE_NAMES:
             raise CalibrationError(f"Pose inconnue : {name} (rest | start)")
         js = self._joints(group)
-        if self.sim:  # en simulation, on « place » le groupe sur la pose de remplacement
+        if self.sim:  # in simulation, the group is "placed" on the placeholder pose
             for j in js:
                 v = self.cfg.poses[name][group][j]
                 self.adapter.q[j] = v
@@ -320,7 +318,7 @@ class CalibrationWizard:
             raise CalibrationError("Enregistrer la calibration d'abord")
         if self.sim:
             raise CalibrationError("Calibration simulée : elle ne peut pas être activée")
-        self.wb.activate_calibration(self.saved_path)  # valide, active, recharge (rollback si échec)
+        self.wb.activate_calibration(self.saved_path)  # validate, activate, reload (rollback on failure)
         p = self.cfg.root / "calibration" / "ACTIVE"
         self.activated = True
         self.message = f"{self.saved_path.name} activée pour le guardian."
@@ -333,15 +331,15 @@ class CalibrationWizard:
         if self.sim:
             self.adapter.set_demonstrator(None)
 
-    # -- état pour la page -------------------------------------------------------------
+    # -- state for the page -------------------------------------------------------------
     def _frame(self, j: str) -> List[float]:
         f = (self.factory or {}).get(j)
         return [float(f[0]), float(f[1])] if f else list(self.cfg.limits[j])
 
     def _zone(self, a: str, b: str, pts: np.ndarray, hull: np.ndarray) -> dict:
-        """Zone que retiendra le calcul pour ce couple (même règle que compute_calibration :
-        enveloppe simplifiée rétrécie de la marge, ∩ plages explorées ∩ usine, moins la marge)
-        et position des poses capturées par rapport à elle."""
+        """Area the computation will retain for this pair (same rule as compute_calibration:
+        simplified hull shrunk by the margin, ∩ explored ranges ∩ factory, minus the margin)
+        and position of the captured poses relative to it."""
         m = float(self.proc.get("margin_rad", 0.05))
         box = []
         for k, j in enumerate((a, b)):
@@ -356,12 +354,12 @@ class CalibrationWizard:
             flat = {j: v for gq in self.session.poses.get(name, {}).values() for j, v in gq.items()}
             if a in flat and b in flat:
                 p = [flat[a], flat[b]]
-                # le repos peut être hors zone (contact) : seul le départ doit y être
+                # rest may be outside the zone (contact): only the start pose must be inside
                 poses[name] = {"q": [round(p[0], 4), round(p[1], 4)],
                                "inside": bool(len(poly) and in_zone(p, cons, box))}
         cur = None
         ang = getattr(self, "_angles", None) or {}
-        if a in ang and b in ang:  # angles déjà lus pour cet état (pas de lecture en plus)
+        if a in ang and b in ang:  # angles already read for this state (no extra read)
             cur = [ang[a], ang[b]]
         return {"zone": np.round(poly, 4).tolist(), "poses": poses, "current": cur,
                 "current_inside": bool(cur is not None and len(poly) and in_zone(cur, cons, box))}
@@ -398,7 +396,7 @@ class CalibrationWizard:
         live = np.array(list(s.live)) if self.sweeping and s.live else None
         live_joints = list(s.live_joints) if live is not None else []
         if live is not None and s.current in s.sweeps and len(s.sweeps[s.current]["q"]):
-            live = np.vstack([np.asarray(s.sweeps[s.current]["q"]), live])  # complète l'exploration précédente
+            live = np.vstack([np.asarray(s.sweeps[s.current]["q"]), live])  # adds to the previous exploration
         ranges: Dict[str, dict] = {}
         for g, sw in s.sweeps.items():
             q = np.asarray(sw["q"])

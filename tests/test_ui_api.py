@@ -11,7 +11,7 @@ def test_llm_request_never_executes(trained):
     assert "plan_id" in out and "Proposition" in out["note"]
     assert len(wb.adapter.command_log) == n
     with pytest.raises(ValueError):
-        api.post_execute({"plan_id": out["plan_id"]})  # sans confirmation
+        api.post_execute({"plan_id": out["plan_id"]})  # without confirmation
     assert len(wb.adapter.command_log) == n
 
 
@@ -28,7 +28,7 @@ def test_event_endpoint_and_stats(trained):
 
 
 def test_static_nao_figure_served():
-    """L'illustration du NAO (image + script de mise en évidence) est servie avec le bon type."""
+    """The NAO illustration (image + highlight script) is served with the right type."""
     import threading
     import urllib.request
     from http.server import ThreadingHTTPServer
@@ -51,7 +51,7 @@ def test_static_nao_figure_served():
         with urllib.request.urlopen(base + "/") as r:
             html = r.read().decode()
         assert 'id="nao-fig"' in html and "nao-figure.js" in html
-        # raccourcis clavier : script chargé, barre d'aide présente, script servi
+        # keyboard shortcuts: script loaded, help bar present, script served
         assert 'id="shortcuts"' in html and 'src="shortcuts.js"' in html
         with urllib.request.urlopen(base + "/shortcuts.js") as r:
             assert "javascript" in r.headers["Content-Type"] and b"ArrowRight" in (js := r.read())
@@ -69,13 +69,13 @@ def test_hands_endpoints(tmp_path, cfg):
     st = api.get_hands({})
     assert st["measured"] == {"LHand": 0.3, "RHand": 0.3} and st["limits"]["LHand"] == [0.0, 1.0]
     with pytest.raises(Exception):
-        api.post_hands({"targets": {"LHand": 1.0}})  # contrôleur désarmé : rien n'est envoyé
+        api.post_hands({"targets": {"LHand": 1.0}})  # controller disarmed: nothing is sent
     assert wb.adapter.command_log == []
     api.post_arm({"armed": True, "confirm": True})
     assert api.post_hands({"targets": {"LHand": 1.0, "RHand": 0.0}}).get("started")
     wb._hands_thread and wb._hands_thread.join(5)
     assert api.get_hands({})["measured"] == {"LHand": 1.0, "RHand": 0.0}
-    api.post_hold({})  # « Raidir tout sur place » couvre aussi les mains
+    api.post_hold({})  # "Raidir tout sur place" also covers the hands
     assert all(wb.adapter.roles[j] == "driven" for j in cfg.controlled_joints)
 
 

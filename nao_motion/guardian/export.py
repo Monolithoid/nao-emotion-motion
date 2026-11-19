@@ -1,13 +1,13 @@
-"""Export du guardian pour un autre projet (ia-agent, pont embarqué sur NAO...).
+"""Guardian export for another project (ia-agent, bridge embedded on NAO...).
 
-Produit un dossier contenant :
-  - guardian.json   : limites calibrées, marge, vitesses, accélération, durées,
-                      contraintes couplées, poses calibrées, provenance ;
-  - nao_guardian.py : vérificateur autonome (Python 2.7 et 3, sans dépendance)
-                      qui applique les mêmes règles que `nao_motion.guardian`.
+Produces a folder containing:
+  - guardian.json   : calibrated limits, margin, velocities, acceleration, durations,
+                      coupled constraints, calibrated poses, provenance;
+  - nao_guardian.py : standalone checker (Python 2.7 and 3, no dependency)
+                      that applies the same rules as `nao_motion.guardian`.
 
-Par défaut, l'export est refusé sans calibration active : des limites de
-remplacement ne doivent pas protéger un robot réel.
+By default, the export is refused without an active calibration: placeholder
+limits must not protect a real robot.
 """
 from __future__ import annotations
 
@@ -48,8 +48,8 @@ def guardian_dict(cfg: Config, allow_uncalibrated: bool = False) -> dict:
         "groups": dict({k: list(v) for k, v in cfg.groups.items()}, **({"hands": list(cfg.hand_joints)}
                                                                         if cfg.hand_joints else {})),
         "forbidden_joint_prefixes": list(LEG_PREFIXES),
-        # plage autorisée, marges déjà comprises (zone calibrée moins zone_margin_rad, butées
-        # d'usine moins limit_margin_rad) : le vérificateur n'en retire plus rien
+        # allowed range, margins already included (calibrated zone minus zone_margin_rad, factory
+        # stops minus limit_margin_rad): the checker removes nothing more
         "limits": {j: [float(lo), float(hi)] for j, (lo, hi) in cfg.guardian_bounds.items()},
         "limit_margin_rad": 0.0,
         "per_joint_margin": {},
@@ -60,8 +60,8 @@ def guardian_dict(cfg: Config, allow_uncalibrated: bool = False) -> dict:
         "duration_s": [g.min_duration_s, g.max_duration_s],
         "start_tolerance_rad": g.start_tolerance_rad,
         "transition_velocity_rad_s": g.transition_velocity_rad_s,
-        # le repos peut être hors zone (contact) : segments repos <-> départ bornés par
-        # ces limites (usine) et cette vitesse, sans contraintes couplées
+        # rest may be outside the zone (contact): rest <-> start segments bounded by
+        # these (factory) limits and this velocity, without coupled constraints
         "rest_limits": {j: [float(lo), float(hi)] for j, (lo, hi) in cfg.rest_limits.items()},
         "rest_velocity_rad_s": g.rest_velocity_rad_s,
         "coupled_constraints": [{"name": c.name, "terms": dict(c.terms), "bound": c.bound,

@@ -1,17 +1,16 @@
-"""Démonstrateurs SYNTHÉTIQUES pour la simulation.
+"""SYNTHETIC demonstrators for the simulation.
 
-Ils remplacent la main de l'opérateur afin de vérifier le fonctionnement
-technique de la chaîne (collecte, données, entraînement, génération,
-guardian). Ils ne disent RIEN de l'expressivité réelle : les formes ci-dessous
-sont arbitraires. Les prises produites sont marquées `synthetic: true`.
+They replace the operator's hand to check that the pipeline works technically
+(collection, data, training, generation, guardian). They say NOTHING about real
+expressiveness: the shapes below are arbitrary. The takes they produce are marked
+`synthetic: true`.
 
-« surprise » et « colère » pointent vers l'événement quand il y en a un (bras du
-côté de l'événement, d'autant plus tendu que l'événement est proche), pour que
-la chaîne puisse apprendre un geste orienté par l'angle et la distance.
+"surprise" and "colere" (anger) point towards the event when there is one (arm on
+the event's side, more extended the closer the event), so that the pipeline can
+learn a gesture oriented by angle and distance.
 
-Certaines émotions ont volontairement deux variantes de geste sous la même
-étiquette, pour illustrer qu'un modèle de régression déterministe tend à en
-produire la moyenne.
+Some emotions deliberately have two gesture variants under the same label, to
+illustrate that a deterministic regression model tends to produce their average.
 """
 from __future__ import annotations
 
@@ -23,8 +22,8 @@ import numpy as np
 from ..config import Config
 from ..events import EventContext
 
-# amplitude (rad) par articulation "générique" côté gauche ; le côté droit est miroir
-# clés : sp=ShoulderPitch, sr=ShoulderRoll, ey=ElbowYaw, er=ElbowRoll, wy=WristYaw
+# amplitude (rad) per "generic" joint on the left side; the right side is mirrored
+# keys: sp=ShoulderPitch, sr=ShoulderRoll, ey=ElbowYaw, er=ElbowRoll, wy=WristYaw
 STYLES = {
     "joie": [dict(sp=-0.8, sr=0.30, er=0.25, freq=1.2, osc=0.05, dur=3.2),
              dict(sp=-0.6, sr=0.15, ey=0.4, er=-0.3, freq=1.2, osc=0.08, dur=3.4, one_arm=True)],
@@ -35,7 +34,7 @@ STYLES = {
     "calme": [dict(sp=-0.25, sr=0.20, ey=0.25, freq=0.8, osc=0.03, dur=3.2)],
 }
 _SIDE_JOINT = {"sp": "ShoulderPitch", "sr": "ShoulderRoll", "ey": "ElbowYaw", "er": "ElbowRoll", "wy": "WristYaw"}
-# signes pour obtenir le miroir côté droit (convention NAOqi)
+# signs to get the right-side mirror (NAOqi convention)
 _MIRROR = {"sp": 1, "sr": -1, "ey": -1, "er": -1, "wy": -1}
 
 
@@ -47,8 +46,8 @@ POINTING = ("surprise", "colere")
 
 
 def pointing_pose(cfg: Config, event: EventContext) -> Dict[str, float]:
-    """Pose approximative du bras du côté de l'événement, tendu vers lui (convention NAOqi :
-    ShoulderPitch = -élévation, ShoulderRoll = azimut, coude presque tendu)."""
+    """Approximate pose of the arm on the event's side, extended towards it (NAOqi convention:
+    ShoulderPitch = -elevation, ShoulderRoll = azimuth, elbow almost straight)."""
     side = "L" if event.azimuth_rad >= 0 else "R"
     m = cfg.guardian.limit_margin_rad + 0.02
     want = {"ShoulderPitch": -event.elevation_rad, "ShoulderRoll": event.azimuth_rad,
@@ -64,7 +63,7 @@ def pointing_pose(cfg: Config, event: EventContext) -> Dict[str, float]:
 
 def arm_gesture(cfg: Config, emotion: str, intensity: float, rng: np.random.Generator,
                 style: Optional[int] = None, event: Optional[EventContext] = None):
-    """Retourne (fonction t -> {joint: rad}, durée) pour un geste des bras."""
+    """Returns (function t -> {joint: rad}, duration) for an arm gesture."""
     if event is not None and event.present and emotion in POINTING:
         return _pointing_gesture(cfg, emotion, intensity, rng, event)
     styles = STYLES.get(emotion, STYLES["calme"])
@@ -101,14 +100,14 @@ def arm_gesture(cfg: Config, emotion: str, intensity: float, rng: np.random.Gene
 
 
 def _pointing_gesture(cfg, emotion, intensity, rng, event: EventContext):
-    """Pointe vers l'événement : aller, tenue, retour. Plus l'événement est proche, plus
-    le bras va loin vers la pose de pointage (proximité inconnue : valeur moyenne)."""
+    """Points towards the event: out, hold, back. The closer the event, the further
+    the arm goes towards the pointing pose (unknown proximity: average value)."""
     start = dict(zip(cfg.arm_joints, cfg.pose("start", cfg.arm_joints)))
     target = pointing_pose(cfg, event)
     close = 1.0 / (1.0 + event.distance_m) if event.distance_m else 0.4
     w = float(np.clip((0.45 + 0.55 * intensity) * (0.55 + 0.9 * close), 0.3, 1.0)) * rng.uniform(0.92, 1.05)
     dur = (2.8 if emotion == "surprise" else 2.4) * (1.15 - 0.2 * intensity) * rng.uniform(0.9, 1.1)
-    # enveloppe sin² : vitesse de pointe = pi * amplitude / durée ; on la garde sous ~80 % de la limite
+    # sin² envelope: peak velocity = pi * amplitude / duration; kept under ~80 % of the limit
     vmax = 0.8 * cfg.guardian.max_velocity_rad_s
     amp = max(abs(v - start[j]) for j, v in target.items()) * min(w, 1.0)
     dur = max(dur, math.pi * amp / vmax)
@@ -125,9 +124,9 @@ def _pointing_gesture(cfg, emotion, intensity, rng, event: EventContext):
 
 def head_behaviour(cfg: Config, emotion: str, intensity: float, event: EventContext,
                    arm_fn: Callable[[float], Dict[str, float]], rng: np.random.Generator):
-    """Politique de regard synthétique : regarder l'événement, suivre une main avec
-    retard, ou détourner le regard, selon l'émotion. Un événement proche donne une
-    réaction plus rapide et un évitement plus marqué. Arbitraire, pour les tests."""
+    """Synthetic gaze policy: look at the event, follow a hand with
+    a delay, or look away, depending on the emotion. A close event gives a
+    faster reaction and a stronger avoidance. Arbitrary, for tests."""
     start = dict(zip(cfg.head_joints, cfg.pose("start", cfg.head_joints)))
     lag = rng.uniform(0.1, 0.35)
     mode = {"joie": "event", "surprise": "event", "colere": "event",
@@ -135,12 +134,12 @@ def head_behaviour(cfg: Config, emotion: str, intensity: float, event: EventCont
     if mode == "event" and not event.present:
         mode = "hands" if emotion == "joie" else "front"
     m = cfg.guardian.limit_margin_rad + 0.02
-    close = 1.0 / (1.0 + event.distance_m) if event.present and event.distance_m else 0.4  # proximité
-    T = 1.6 - 1.2 * close  # 1,2 s à 1 m environ ; plus vite si proche
+    close = 1.0 / (1.0 + event.distance_m) if event.present and event.distance_m else 0.4  # proximity
+    T = 1.6 - 1.2 * close  # about 1.2 s at 1 m; faster if close
     lim = cfg.limits
-    # amplitude visée -> durée minimale pour rester sous ~70 % des limites du guardian
-    # (rampe quintique : vitesse max 1,875 A/T, accélération max 5,77 A/T²) ; la tête
-    # n'est plus calée sur la durée d'un geste des bras, elle a son propre tempo
+    # target amplitude -> minimum duration to stay under ~70 % of the guardian limits
+    # (quintic ramp: max velocity 1.875 A/T, max acceleration 5.77 A/T²); the head
+    # is no longer tied to the duration of an arm gesture, it has its own tempo
     if mode == "event":
         amp = max(abs(np.clip(event.azimuth_rad, -1.2, 1.2) - start["HeadYaw"]),
                   abs(-event.elevation_rad - start["HeadPitch"]))
@@ -173,7 +172,7 @@ def head_behaviour(cfg: Config, emotion: str, intensity: float, event: EventCont
             return clipped(y0 + r * away, p0 + r * 0.3 * intensity)
         if mode == "hands":
             a = arm_fn(max(0.0, t - lag))
-            # regarde vers la main gauche, très approximativement
+            # looks towards the left hand, very roughly
             y = 0.35 * (a.get("LShoulderRoll", 0.2) - 0.2) * 2
             p = 0.15 + 0.2 * (a.get("LShoulderPitch", 1.1) - 1.1)
             return clipped(y0 + r * (y - y0), p0 + r * (p - p0))
@@ -182,16 +181,16 @@ def head_behaviour(cfg: Config, emotion: str, intensity: float, event: EventCont
     return fn
 
 
-# ouverture des mains (0 fermée, 1 ouverte) visée au cœur du geste, par émotion
+# hand opening (0 closed, 1 open) targeted at the core of the gesture, per emotion
 HAND_OPENING = {"joie": 0.85, "surprise": 1.0, "colere": 0.05, "peur": 0.6, "tristesse": 0.15, "calme": 0.5}
 
 
 def hand_behaviour(cfg: Config, emotion: str, intensity: float, event: EventContext, duration: float,
                    rng: np.random.Generator):
-    """Opérateur simulé du passage mains : il pilote l'ouverture des mains, bras et tête raides
-    (fonction du temps u en s -> {LHand, RHand}). Mains ouvertes pour la
-    joie ou la surprise, poings serrés pour la colère ; avec un événement, la main du côté
-    de l'événement s'ouvre davantage (geste tendu vers lui). Arbitraire, pour les tests."""
+    """Simulated operator for the hands pass: drives the hand opening, arms and head stiff
+    (function of time u in s -> {LHand, RHand}). Hands open for
+    joy or surprise, fists clenched for anger; with an event, the hand on the event's
+    side opens more (gesture reaching towards it). Arbitrary, for tests."""
     hj = list(cfg.hand_joints)
     start = dict(zip(hj, cfg.pose("start", hj)))
     peak = HAND_OPENING.get(emotion, 0.5)

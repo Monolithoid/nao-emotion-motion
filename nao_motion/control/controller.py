@@ -1,18 +1,18 @@
-"""Contrôleur d'exécution : planifie le cycle complet, le fait valider, l'exécute.
+"""Execution controller: plans the full cycle, has it validated, executes it.
 
-Principes :
-  - Démarre DÉSARMÉ. Aucun mouvement n'est envoyé sans `arm(confirm=True)`
-    suivi d'un appel explicite à une méthode d'exécution.
-  - Le cycle nominal repos -> départ -> geste -> départ -> repos est construit
-    ici (transitions à jerk minimal), puis validé EN ENTIER par le guardian
-    avant le premier envoi.
-  - Exécution en streaming : à chaque pas, vérification de l'arrêt demandé, de
-    la connexion et de l'écart de suivi.
-  - Sur arrêt ou erreur : arrêt et MAINTIEN de la posture mesurée quand c'est
-    possible. Pas de retour motorisé au repos automatique ; le retour au repos
-    (`return_to_rest`) ou le relâchement (`relax`) sont des actions explicites.
-  - En cas de perte de connexion, plus rien ne peut être envoyé : c'est le
-    chien de garde du pont, côté robot, qui arrête et maintient.
+Principles:
+  - Starts DISARMED. No movement is sent without `arm(confirm=True)`
+    followed by an explicit call to an execution method.
+  - The nominal cycle rest -> start -> gesture -> start -> rest is built
+    here (minimum-jerk transitions), then validated IN FULL by the guardian
+    before the first send.
+  - Streaming execution: at each step, checks for a stop request, the
+    connection and the tracking error.
+  - On stop or error: stop and HOLD the measured posture when possible.
+    No automatic motorised return to rest; returning to rest
+    (`return_to_rest`) or relaxing (`relax`) are explicit actions.
+  - If the connection is lost, nothing more can be sent: the bridge
+    watchdog, on the robot side, stops and holds.
 """
 from __future__ import annotations
 
@@ -35,8 +35,8 @@ class State(str, enum.Enum):
     DISCONNECTED = "disconnected"
     IDLE = "idle"
     EXECUTING = "executing"
-    HOLDING = "holding"      # arrêt demandé : posture maintenue
-    FAULT = "fault"          # erreur : intervention de l'opérateur requise
+    HOLDING = "holding"      # stop requested: posture held
+    FAULT = "fault"          # error: operator intervention required
 
 
 class ControllerError(RuntimeError):
@@ -80,7 +80,7 @@ class Controller:
         self.rate = float(ex.get("stream_rate_hz", 25))
         self.speed = float(ex.get("max_fraction_speed", 0.3))
         self.tracking_error = float(ex.get("tracking_error_rad", 0.35))
-        # mains : le moteur de la main suit plus lentement qu'une articulation du bras
+        # hands: the hand motor follows more slowly than an arm joint
         self.hand_tracking_error = float(ex.get("hand_tracking_error", 0.5))
         # per-joint thresholds (e.g. light, fast wrists) and the lag the robot is allowed: the
         # measured angle is compared with the command over the last tracking_lag_s, not with a
@@ -109,7 +109,7 @@ class Controller:
 
     # -- connexion / armement ------------------------------------------------
     def connect(self):
-        """Connexion SANS mouvement ni changement de raideur."""
+        """Connects WITHOUT movement or stiffness change."""
         self.adapter.connect()
         self.state = State.IDLE
         self._log("connecté (aucun mouvement envoyé)")
@@ -140,7 +140,7 @@ class Controller:
         self._log("désarmé")
 
     def stop(self):
-        """Arrêt explicite : interrompt l'exécution, maintient la posture, désarme."""
+        """Explicit stop: interrupts execution, holds the posture, disarms."""
         self._stop.set()
         self.armed = False
         try:
@@ -152,7 +152,7 @@ class Controller:
         self._log("ARRÊT demandé : posture maintenue, contrôleur désarmé")
 
     def acknowledge(self):
-        """L'opérateur a constaté l'état du robot ; revient à IDLE si connecté (sans mouvement)."""
+        """The operator has checked the robot's state; returns to IDLE if connected (no movement)."""
         if not self.adapter.is_connected():
             self.state = State.DISCONNECTED
             raise ControllerError("Toujours déconnecté")
@@ -160,7 +160,7 @@ class Controller:
         self.last_error = None
         self._stop.clear()
 
-    # -- état mesuré -----------------------------------------------------------
+    # -- measured state -----------------------------------------------------------
     def measured(self, joints) -> Dict[str, float]:
         return dict(zip(joints, self.adapter.read_angles(joints).tolist()))
 
@@ -177,9 +177,9 @@ class Controller:
         return min_jerk(q0, q1, joints, g.rest_velocity_rad_s * 0.8, g.max_acceleration_rad_s2 * 0.25)
 
     def _validate_segments(self, segs, rest_names, start_state, ctx) -> Report:
-        """Segments repos <-> départ : validate_rest_transition (le repos peut être hors
-        de la zone de mouvement) ; tout le reste : validation complète sur le trajet
-        continu qu'ils forment."""
+        """Rest <-> start segments: validate_rest_transition (rest may be outside
+        the movement zone); everything else: full validation on the continuous
+        path they form."""
         t, reports, main, main_t0 = 0.0, [], [], None
         for name, s in segs:
             if name in rest_names:
@@ -205,11 +205,11 @@ class Controller:
     # -- planification -----------------------------------------------------
     def plan_cycle(self, motion: Trajectory, from_pose: str = "rest", to_pose: str = "rest",
                    current: Optional[Dict[str, float]] = None) -> Plan:
-        """Construit et valide repos -> départ -> geste -> départ -> repos.
+        """Builds and validates rest -> start -> gesture -> start -> rest.
 
-        from_pose="rest" exige que le robot soit mesuré au repos. "current" part
-        de la posture mesurée (choix explicite de l'opérateur). to_pose peut
-        valoir "start" pour s'arrêter en position de départ.
+        from_pose="rest" requires the robot to be measured at rest. "current" starts
+        from the measured posture (explicit operator choice). to_pose can
+        be "start" to stop in the start position.
         """
         joints = motion.joints
         rate_hz = 50.0
@@ -218,7 +218,7 @@ class Controller:
         q_cur = np.array([cur[j] for j in joints])
         notes = []
         if from_pose == "rest":
-            # mains exclues : ouvertes ou fermées, elles rejoignent le départ avec le reste
+            # hands excluded: open or closed, they reach the start pose with the rest
             far = [j for j in self._near(cur, "rest", 2 * self.cfg.guardian.start_tolerance_rad)
                    if not self.cfg.is_hand(j)]
             if far:
@@ -237,7 +237,7 @@ class Controller:
         vlim = np.array([g.velocity_limit(j) for j in joints]) * 0.8
         alim = np.array([g.acceleration_limit(j) for j in joints]) * 0.8
         if from_pose == "rest":
-            # le repos peut être hors zone (contact) : segment vérifié à part
+            # rest may be outside the zone (contact): segment checked separately
             segs = [("repos_vers_depart", self._rest_transition(q_cur, start, joints))]
         else:
             # The measured posture may lie outside the calibrated zone (arms placed by hand,
@@ -296,8 +296,8 @@ class Controller:
         return Plan(full, segments, rep, motion_report, notes)
 
     def plan_hands_move(self, targets: Dict[str, float]) -> Plan:
-        """Ouverture des mains : posture mesurée -> cible {LHand|RHand: 0..1}, profil à jerk
-        minimal, validé par le guardian (limites, vitesse, accélération). Rien n'est envoyé ici."""
+        """Hand opening: measured posture -> target {LHand|RHand: 0..1}, minimum-jerk
+        profile, validated by the guardian (limits, velocity, acceleration). Nothing is sent here."""
         joints = [j for j in self.cfg.hand_joints if j in targets]
         unknown = [j for j in targets if not self.cfg.is_hand(j)]
         if unknown or not joints:
@@ -327,7 +327,7 @@ class Controller:
             t += s.duration
         return Plan(full, segments, rep)
 
-    # -- exécution -----------------------------------------------------------
+    # -- execution -----------------------------------------------------------
     def factory_ceiling(self, traj: Trajectory):
         """Factory limits (rest_limits: factory limits read at calibration when known, else the
         configured limits) = absolute ceiling, kept even with the guardian off. Returns the
@@ -340,11 +340,11 @@ class Controller:
 
     def execute(self, plan: Plan, on_tick: Optional[Callable[[float, np.ndarray], None]] = None,
                 guardian: bool = True) -> str:
-        """Exécute un plan validé. Retourne 'done', 'stopped' ou lève en cas de faute.
+        """Executes a validated plan. Returns 'done', 'stopped' or raises on a fault.
 
-        guardian=False (test choisi par l'opérateur, à ses risques) : ni le verdict du guardian
-        ni sa revalidation ne sont appliqués ; seules les limites d'usine restent un plafond
-        absolu (refus si un point les dépasse) ; l'arrêt sur écart de suivi reste actif."""
+        guardian=False (test chosen by the operator, at their own risk): neither the guardian's verdict
+        nor its revalidation are applied; only the factory limits remain an absolute
+        ceiling (refused if a point exceeds them); the stop on tracking error stays active."""
         with self._lock:
             if not self.armed:
                 raise ControllerError("Contrôleur désarmé : aucun mouvement envoyé")
@@ -361,7 +361,7 @@ class Controller:
             self.state = State.EXECUTING
         joints = plan.traj.joints
         try:
-            # revalidation contre l'état mesuré juste avant d'envoyer
+            # revalidation against the measured state right before sending
             # The plan was validated whole, segment by segment, when it was built (posture /
             # rest <-> start on the factory limits, the rest on the calibrated zone). Checking the
             # concatenated cycle again against the zone here refused every cycle whose rest or
@@ -487,7 +487,7 @@ class Controller:
             a.sleep(max(0.0, t0 + k * dt - a.now()))
 
     def return_to_rest(self, confirm: bool = False) -> str:
-        """Retour au repos EXPLICITE depuis la posture mesurée (via la position de départ)."""
+        """EXPLICIT return to rest from the measured posture (through the start position)."""
         if not confirm:
             raise ControllerError("Retour au repos : confirmation explicite requise")
         if self.state == State.HOLDING:
@@ -498,7 +498,7 @@ class Controller:
         return self.execute(self.plan_return_to_rest(joints))
 
     def hold(self, joints):
-        """Raidit des articulations sur leur posture mesurée (aucun déplacement commandé)."""
+        """Stiffens joints at their measured posture (no commanded movement)."""
         if self.state == State.EXECUTING:
             raise ControllerError("Mouvement en cours : Stop (posture maintenue) ou relâcher")
         self.adapter.set_roles(driven=list(joints))

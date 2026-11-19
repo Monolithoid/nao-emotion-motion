@@ -1,11 +1,11 @@
-"""Adaptateur simulé : robot virtuel sans aucune dépendance matérielle.
+"""Simulated adapter: virtual robot with no hardware dependency.
 
-- Les articulations pilotées suivent leur consigne avec une vitesse limitée.
-- Les articulations guidées suivent un « démonstrateur » virtuel (fonction du
-  temps) qui remplace la main de l'opérateur ; sinon elles restent immobiles.
-- `virtual_time=True` fait avancer une horloge virtuelle au lieu d'attendre :
-  tests rapides et déterministes.
-- `fail_after_s` simule une perte de connexion.
+- Driven joints follow their target with a limited velocity.
+- Guided joints follow a virtual "demonstrator" (function of time) that replaces
+  the operator's hand; otherwise they stay still.
+- `virtual_time=True` advances a virtual clock instead of waiting: fast,
+  deterministic tests.
+- `fail_after_s` simulates a connection loss.
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ class SimAdapter(RobotAdapter):
         self._demo_t0 = 0.0
         self.fail_after_s: Optional[float] = None
         self._connect_time = 0.0
-        self.command_log: List[tuple] = []  # (t, joints, angles) pour les tests
+        self.command_log: List[tuple] = []  # (t, joints, angles) for tests
 
     # -- horloge ----------------------------------------------------------
     def now(self) -> float:
@@ -80,13 +80,13 @@ class SimAdapter(RobotAdapter):
     def capabilities(self) -> dict:
         return {"adapter": "sim", "robot_name": "sim", "real_robot": False, "stream": True, "interpolation": False}
 
-    # -- démonstrateur virtuel ---------------------------------------------
+    # -- virtual demonstrator ---------------------------------------------
     def set_demonstrator(self, fn: Optional[Callable[[float], Dict[str, float]]]):
         with self._lock:
             self.demonstrator = fn
             self._demo_t0 = self.now()
 
-    # -- physique simplifiée -------------------------------------------------
+    # -- simplified physics -------------------------------------------------
     def _update(self):
         with self._lock:
             t = self.now()

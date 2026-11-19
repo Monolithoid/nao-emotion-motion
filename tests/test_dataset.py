@@ -11,7 +11,7 @@ from tests.test_data import arm_take
 
 @pytest.fixture
 def setup(tmp_path, cfg):
-    """Prises : 2 réelles acceptées, 1 rejetée, 1 simulée, 1 incomplète ; une calibration ; un modèle."""
+    """Takes: 2 real accepted, 1 rejected, 1 simulated, 1 incomplete; one calibration; one model."""
     st = TakeStore(tmp_path / "data", cfg)
     ids = {}
     for name, kw, status in [("ok1", {}, "accepted"), ("ok2", {"emotion": "peur"}, "accepted"),
@@ -44,7 +44,7 @@ def test_export_selects_real_accepted_complete_takes(tmp_path, setup):
     exported = sorted(p.name for p in (out / "takes").iterdir())
     assert exported == sorted([ids["ok1"], ids["ok2"]])
     assert r["takes"] == 2 and r["added"] == 2
-    # copies exactes des fichiers bruts
+    # exact copies of the raw files
     src = setup["data"] / "takes" / ids["ok1"]
     assert (out / "takes" / ids["ok1"] / "samples.npz").read_bytes() == (src / "samples.npz").read_bytes()
     assert (out / "calibration" / "nao-20261104-100000.yaml").exists()
@@ -98,7 +98,7 @@ def test_import_roundtrip_never_overwrites(tmp_path, setup, cfg):
     assert r["takes_added"] == 2 and r["calibrations_added"] == ["nao-20261104-100000.yaml"]
     assert r["models_added"] == ["arms"]
     assert (tmp_path / "pc2" / "runs" / "latest_arms.txt").read_text() == "arms-1"
-    assert not (new_conf / "calibration" / "ACTIVE").exists()  # rien n'est activé
+    assert not (new_conf / "calibration" / "ACTIVE").exists()  # nothing is activated
     st2 = TakeStore(tmp_path / "pc2" / "data", cfg)
     tk = st2.load(setup["ids"]["ok1"])
     np.testing.assert_array_equal(tk.traj.q, setup["store"].load(setup["ids"]["ok1"]).traj.q)

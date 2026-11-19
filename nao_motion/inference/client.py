@@ -1,4 +1,4 @@
-"""Client d'inférence déportée : même interface `generate` que MotionEngine."""
+"""Remote inference client: same `generate` interface as MotionEngine."""
 from __future__ import annotations
 
 import json
@@ -25,7 +25,7 @@ class RemoteEngine:
         with urllib.request.urlopen(req, timeout=self.timeout) as r:
             d = json.loads(r.read())
         g = d["generated"]
-        traj = Trajectory.from_dict(g["trajectory"])  # revalidée localement par le guardian
+        traj = Trajectory.from_dict(g["trajectory"])  # revalidated locally by the guardian
         with_hands = self.cfg.all_joints + self.cfg.hand_joints
         if set(traj.joints) not in (set(self.cfg.all_joints), set(with_hands)):
             raise ValueError("Trajectoire distante incompatible avec la configuration locale")

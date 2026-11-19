@@ -3,7 +3,7 @@
   nao-emotion-motion
 </h1>
 
-![NAO en mouvement, avec des trajectoires lumineuses autour de la tête et des bras](./assets/nao-emotion-motion-social.jpg)
+![NAO in motion, with glowing trajectories around its head and arms](./assets/nao-emotion-motion-social.jpg)
 
 # nao-emotion-motion
 

@@ -39,7 +39,7 @@ td.live{color:var(--accent);font-variant-numeric:tabular-nums}td.num{font-varian
 .facbar{vertical-align:middle}.warn{color:var(--bad,#c0392b);font-size:.85em}
 .banner-warn{background:var(--warn);border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin:6px 0}.banner-warn ul{margin:4px 0 0 18px;padding:0}
 .okc{color:var(--ok);font-size:.85em}
-/* illustration du NAO : partie concernée par l'action en cours (nao-figure.js) */
+/* NAO illustration: part concerned by the current action (nao-figure.js) */
 :root{--guided:#e07a12;--driven:#2f62d8}
 @media (prefers-color-scheme: dark){:root{--guided:#f0a040;--driven:#6d95f2}}
 .layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:8px;align-items:start}
@@ -83,7 +83,7 @@ button.next{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,va
 .hand-row output{min-width:3em;font-variant-numeric:tabular-nums;font-weight:600}
 .cal-files table{border-collapse:collapse;width:100%}.cal-files td,.cal-files th{border-top:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}
 .cal-files tr.is-active td{font-weight:600}.cal-files .why{color:var(--bad)}
-/* avancement de la collecte (onglet Prises) */
+/* collection progress (Prises tab) */
 .progress-list{display:flex;flex-direction:column;gap:14px;max-width:900px;margin-bottom:8px}
 .pg{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px 8px}
 .pg-head{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline}
@@ -164,7 +164,7 @@ body[data-tab=arms] .nao-svg,body[data-tab=head] .nao-svg,body[data-tab=hands] .
 .cal-ext td.grow{color:var(--ok);font-weight:600}
 .cal-ext .legend span{display:inline-block;margin-right:12px}
 
-/* onglet Réseau et onglet Entraînement (mlp.js) */
+/* Réseau tab and Entraînement tab (mlp.js) */
 :root{--c-train:#e07a12;--c-val:#2f62d8;--c-ref:#8a93a6;--z-good:rgba(29,138,75,.10);--z-warn:rgba(224,154,0,.13);--z-bad:rgba(194,59,49,.08);--v-warn:#b87400}
 @media (prefers-color-scheme: dark){:root{--c-train:#f0a040;--c-val:#6d95f2;--c-ref:#7d869a;--z-good:rgba(69,183,122,.13);--z-warn:rgba(240,180,40,.13);--z-bad:rgba(234,106,95,.10);--v-warn:#f0b840}}
 .net-grid{display:grid;grid-template-columns:460px minmax(0,1fr);gap:16px;align-items:start;margin-top:10px}

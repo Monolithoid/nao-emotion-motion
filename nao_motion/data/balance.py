@@ -1,42 +1,39 @@
-"""Tirage aléatoire ÉQUILIBRÉ des consignes de prise.
+"""BALANCED random draw of take prompts.
 
-But : que le bouton « Tirage aléatoire » propose en priorité ce qui manque dans
-le jeu de données, pour que les prises se répartissent uniformément, tout en
-restant aléatoire (deux tirages de suite ne donnent pas la même chose, aucune
-consigne n'est jamais impossible).
+Goal: have the « Tirage aléatoire » (random draw) button suggest first what is
+missing from the dataset, so that takes are spread evenly, while staying random
+(two draws in a row do not give the same thing, no prompt is ever impossible).
 
-Méthode (stratification + « softmin » sur le déficit) :
+Method (stratification + "softmin" on the deficit):
 
-1. L'espace des consignes est découpé en CASES : émotion × tranche d'intensité ×
-   zone d'événement. Une zone = secteur d'azimut × tranche d'élévation × tranche
-   de distance (distance en échelle log : autant de proches que de lointains),
-   plus la zone « sans événement » si elle est autorisée. Le nombre de tranches
-   se règle dans robot.yaml (events.balance).
-2. Chaque case a une PART ÉQUITABLE : uniforme sur les émotions et les
-   intensités ; pour les zones, `none_share` (20 % par défaut) pour « sans
-   événement » et le reste réparti également entre les zones avec événement.
-3. On compte les prises déjà enregistrées du même passage (bras, tête ou mains),
-   hors prises rejetées (elles sont à refaire). Une prise dont la distance est
-   inconnue compte pour moitié dans chaque tranche de distance, etc.
-4. Score d'une case = 4 × son excédent (prises présentes − part équitable ×
-   total) + l'excédent de son émotion + celui de sa tranche d'intensité + celui
-   de sa zone. Tous les termes sont en « nombre de prises ». Le poids 4 de la
-   case (`cell_weight`) fait passer la case d'abord : comme un paquet de cartes
-   distribué, chaque case reçoit une prise avant qu'une autre en reçoive une
-   deuxième. Entre cases également remplies, les marges départagent : une
-   émotion en retard de 2 prises est nettement favorisée, si bien que les
-   répartitions globales (par émotion, intensité, zone) restent équilibrées à
-   1-2 prises près à tout moment, même avant que toutes les cases soient vues.
-5. Probabilité d'une case ∝ exp(−force × (score − score minimal)). Avec la
-   force par défaut (2), une émotion en retard d'une prise rend ses cases
-   e² ≈ 7 fois plus probables ; une case en retard d'une prise l'est des
-   milliers de fois plus. Force 0 = tirage uniforme d'avant. Le hasard reste
-   entier pour CHOISIR PARMI les cases les moins remplies (souvent des dizaines).
-6. Dans la case choisie, valeurs continues tirées uniformément (intensité au
-   pas de 0,05, angles au degré, distance log-uniforme au centimètre) : on ne
-   rejoue jamais deux fois exactement la même consigne.
+1. The prompt space is split into CELLS: emotion × intensity band × event zone.
+   A zone = azimuth sector × elevation band × distance band (distance on a log
+   scale: as many near as far), plus the "no event" zone if allowed. The number of
+   bands is set in robot.yaml (events.balance).
+2. Each cell has a FAIR SHARE: uniform over emotions and intensities; for zones,
+   `none_share` (20 % by default) for "no event" and the rest split evenly between
+   the zones with an event.
+3. The takes already recorded for the same pass (arms, head or hands) are counted,
+   excluding rejected takes (they need redoing). A take whose distance is unknown
+   counts for half in each distance band, etc.
+4. Score of a cell = 4 × its surplus (takes present − fair share × total) + the
+   surplus of its emotion + that of its intensity band + that of its zone. All terms
+   are in "number of takes". The cell weight of 4 (`cell_weight`) makes the cell come
+   first: like dealing a deck of cards, each cell gets one take before another gets a
+   second. Between equally filled cells, the margins break the tie: an emotion 2 takes
+   behind is clearly favoured, so the overall distributions (by emotion, intensity,
+   zone) stay balanced within 1-2 takes at all times, even before every cell has been
+   seen.
+5. Probability of a cell ∝ exp(−strength × (score − minimum score)). With the default
+   strength (2), an emotion one take behind makes its cells e² ≈ 7 times more likely;
+   a cell one take behind is thousands of times more likely. Strength 0 = the former
+   uniform draw. Randomness stays complete for CHOOSING AMONG the least filled cells
+   (often dozens).
+6. Within the chosen cell, continuous values are drawn uniformly (intensity in steps
+   of 0.05, angles to the degree, log-uniform distance to the centimetre): the exact
+   same prompt is never replayed twice.
 
-Ce module ne commande aucun mouvement : il ne fait que proposer une consigne.
+This module commands no movement: it only suggests a prompt.
 """
 from __future__ import annotations
 
@@ -106,7 +103,7 @@ class Grid:
 
     # -- zones ----------------------------------------------------------------
     def zones(self, allow_none: bool, event: bool = True) -> List[object]:
-        if not event:  # événement décoché dans l'interface : seule la zone « sans événement »
+        if not event:  # event unchecked in the interface: only the "no event" zone
             return [NONE]
         z = [(a, e, d) for a in range(self.n_az) for e in range(self.n_el) for d in range(self.n_dist)]
         return ([NONE] if allow_none and self.none_share > 0 else []) + z
@@ -125,7 +122,7 @@ class Grid:
         return _bin(math.log(d), math.log(self.dist[0]), math.log(self.dist[1]), self.n_dist)
 
     def event_zones(self, ev: dict) -> List[Tuple[object, float]]:
-        """Zone(s) d'un événement enregistré, avec poids (distance inconnue : réparti)."""
+        """Zone(s) of a recorded event, with weights (unknown distance: spread)."""
         if not ev or not ev.get("present"):
             return [(NONE, 1.0)]
         a = _bin(math.degrees(ev.get("azimuth_rad") or 0.0), *self.az, self.n_az)
@@ -135,7 +132,7 @@ class Grid:
             return [((a, e, k), 1.0 / self.n_dist) for k in range(self.n_dist)]
         return [((a, e, self.dist_bin(float(d))), 1.0)]
 
-    # -- libellés -------------------------------------------------------------
+    # -- labels -------------------------------------------------------------
     def int_label(self, i: int) -> str:
         if self.n_int == 3:
             return ("faible", "moyenne", "forte")[i]
@@ -159,11 +156,11 @@ class Grid:
 
 def count_takes(grid: Grid, metas: Iterable, kind: Optional[str], statuses: Optional[Sequence[str]] = None,
                 include_synthetic: bool = True):
-    """Comptes (case, émotion, intensité, zone) des prises du passage `kind`.
+    """Counts (cell, emotion, intensity, zone) of the takes of pass `kind`.
 
-    Par défaut : toutes les prises hors rejetées (tirage). `statuses` restreint
-    aux statuts donnés (ex. ("accepted",) pour la progression) ;
-    `include_synthetic=False` écarte les prises simulées.
+    By default: all takes except rejected ones (draw). `statuses` restricts
+    to the given statuses (e.g. ("accepted",) for progress);
+    `include_synthetic=False` excludes simulated takes.
     """
     joint, emo, inten, zone = Counter(), Counter(), Counter(), Counter()
     total = 0.0
@@ -185,7 +182,7 @@ def count_takes(grid: Grid, metas: Iterable, kind: Optional[str], statuses: Opti
 
 
 def cell_weights(grid: Grid, counts, allow_none: bool, event: bool = True):
-    """Cases candidates, scores (excédent en prises) et probabilités."""
+    """Candidate cells, scores (surplus in takes) and probabilities."""
     joint, emo, inten, zone, n = counts
     zs = grid.zones(allow_none, event)
     pe, pi = 1.0 / len(grid.emotions), 1.0 / grid.n_int
@@ -213,7 +210,7 @@ def _draw_in_cell(grid: Grid, cell, rng: np.random.Generator) -> dict:
         return {"emotion": e, "intensity": intensity, "event": {"present": False, "source": "tirage"}}
     a, el, d = z
     ev = None
-    for _ in range(50):  # arrondis : on garde une valeur qui retombe bien dans la case
+    for _ in range(50):  # rounding: keep a value that still falls inside the cell
         az = round(float(rng.uniform(*_edges(*grid.az, grid.n_az, a))))
         elv = round(float(rng.uniform(*_edges(*grid.el, grid.n_el, el))))
         llo, lhi = _edges(math.log(grid.dist[0]), math.log(grid.dist[1]), grid.n_dist, d)
@@ -227,12 +224,12 @@ def _draw_in_cell(grid: Grid, cell, rng: np.random.Generator) -> dict:
 
 def balanced_draw(cfg, metas: Sequence, kind: Optional[str], allow_none: bool = False,
                   event: bool = True, rng: Optional[np.random.Generator] = None) -> dict:
-    """Propose une consigne (émotion, intensité, événement) qui comble les manques.
+    """Suggests a prompt (emotion, intensity, event) that fills the gaps.
 
-    kind : "arms" | "head" | "hands" (comptes de ce passage) ; None = aucun
-    compte (onglet Génération : tirage uniforme sur les cases).
-    event=False : l'événement est décoché dans l'interface ; on ne tire qu'émotion et
-    intensité (équilibrées), l'événement proposé est absent.
+    kind: "arms" | "head" | "hands" (counts for that pass); None = no
+    counts (Generation tab: uniform draw over the cells).
+    event=False: the event is unchecked in the interface; only emotion and
+    intensity are drawn (balanced), the suggested event is absent.
     """
     grid = Grid.from_config(cfg)
     rng = rng or np.random.default_rng()
@@ -262,7 +259,7 @@ def balanced_draw(cfg, metas: Sequence, kind: Optional[str], allow_none: bool = 
 
 
 def coverage(cfg, metas: Sequence, kind: str, allow_none: bool = True) -> dict:
-    """Répartition actuelle (pour l'affichage) : par émotion, intensité, zone."""
+    """Current distribution (for display): by emotion, intensity, zone."""
     grid = Grid.from_config(cfg)
     joint, emo, inten, zone, n = count_takes(grid, metas, kind)
     zs = grid.zones(allow_none)

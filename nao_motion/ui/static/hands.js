@@ -1,12 +1,12 @@
 "use strict";
-// Onglet 3 · Mains : ouverture des doigts de NAO (LHand, RHand), de 0 (fermée) à 1 (ouverte).
-// Une main de NAO ne se guide pas à la main : on la pilote d'ici, par les curseurs, les
-// boutons ou le clavier (↑ ↓ O F dans l'onglet Mains).
-//   - pendant le passage mains (compte à rebours ou enregistrement), chaque réglage est envoyé
-//     en continu et suivi en direct par la boucle d'enregistrement ;
-//   - sinon, un réglage = un mouvement court validé par le guardian, envoyé au relâchement
-//     du curseur (contrôleur armé requis : « Mouvements autorisés »).
-// Les erreurs s'affichent sous les curseurs (pas de boîte de dialogue qui bloquerait le clavier).
+// Tab 3 · Mains: NAO finger opening (LHand, RHand), from 0 (closed) to 1 (open).
+// A NAO hand cannot be guided by hand: it is driven from here, with the sliders, the
+// buttons or the keyboard (↑ ↓ O F in the Mains tab).
+//   - during the hands pass (countdown or recording), each setting is sent
+//     continuously and followed live by the recording loop;
+//   - otherwise, one setting = one short movement validated by the guardian, sent when
+//     the slider is released (armed controller required: "Mouvements autorisés").
+// Errors are shown under the sliders (no dialog that would block the keyboard).
 (function () {
   const HANDS = ["LHand", "RHand"];
   const STEP = 0.1;
@@ -37,7 +37,7 @@
     } catch (e) { live.textContent = "Mains : " + e; }
   }
 
-  // en direct : au plus une requête toutes les 60 ms, la dernière valeur gagne
+  // live: at most one request every 60 ms, the last value wins
   function send(targets, now) {
     pending = Object.assign(pending || {}, targets);
     const go = () => { timer = null; const t = pending; pending = null; lastSent = performance.now(); if (t) post(t); };
@@ -63,7 +63,7 @@
 
   for (const j of HANDS) {
     const s = slider(j);
-    s.addEventListener("input", () => setHands(linked(j, s.value)));            // en direct pendant le passage mains
+    s.addEventListener("input", () => setHands(linked(j, s.value)));            // live during the hands pass
     s.addEventListener("change", () => { if (!recording()) setHands(linked(j, s.value), {commit: true}); });
     show(j);
   }
@@ -73,7 +73,7 @@
     setHands(v, {commit: true});
   }));
 
-  // clavier, dans l'onglet Mains seulement (mêmes règles que shortcuts.js)
+  // keyboard, in the Mains tab only (same rules as shortcuts.js)
   function isEntry(el) {
     if (!el || el === document.body) return false;
     if (el.isContentEditable) return true;
@@ -92,11 +92,11 @@
     } else if (k === "o" && !e.repeat) v = {LHand: 1, RHand: 1};
     else if (k === "f" && !e.repeat) v = {LHand: 0, RHand: 0};
     if (!v) return;
-    e.preventDefault();  // pas de défilement, pas de curseur déplacé deux fois
+    e.preventDefault();  // no scrolling, no slider moved twice
     setHands(v, {commit: true});
   });
 
-  // mesure et consigne affichées ; curseurs recalés sur la mesure hors saisie
+  // measurement and target shown; sliders synced to the measurement outside input
   async function poll() {
     if (activeTab() !== "hands") return;
     let d;

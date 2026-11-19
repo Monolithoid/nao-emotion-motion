@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nao-emotion-motion"
 version = "0.1.0"
-description = "Apprentissage et génération de mouvements expressifs (bras + tête) pour NAO, conditionnés par émotion et intensité"
+description = "Learning and generation of expressive movements (arms + head) for NAO, conditioned on emotion and intensity"
 requires-python = ">=3.9"
 dependencies = ["numpy>=1.22", "pyyaml>=6", "torch>=2.1"]
 

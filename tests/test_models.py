@@ -50,13 +50,13 @@ def test_checkpoint_refuses_incompatible_config(trained, cfg, tmp_path):
 
 
 def test_head_model_is_independent_of_arms(trained, cfg, tmp_path):
-    """Le modèle de la tête n'a que [émotion, intensité, événement] en entrée et prédit sa durée."""
+    """The head model only has [emotion, intensity, event] as input and predicts its duration."""
     head = LoadedModel(Path(trained["head_run"]) / "model.pt", cfg, "head")
     assert head.meta["independent"] is True
     assert "arm_checkpoint" not in head.meta and "arm_joints" not in head.meta
     assert head.arch["in_dim"] == motion_input_dim(len(cfg.emotions))
     assert head.arch["out_dim"] == int(cfg.model["representation"]["n_control_points"]) * len(cfg.head_joints) + 1
-    # un ancien modèle tête (dépendant des bras) est refusé avec un message clair
+    # an old head model (dependent on the arms) is refused with a clear message
     ck = torch.load(Path(trained["head_run"]) / "model.pt", map_location="cpu", weights_only=True)
     del ck["meta"]["independent"]
     ck["meta"]["arm_joints"] = cfg.arm_joints
@@ -67,7 +67,7 @@ def test_head_model_is_independent_of_arms(trained, cfg, tmp_path):
 
 
 def test_head_trains_without_any_arm_model(trained, cfg, tmp_path):
-    """Tête entraînée seule : aucune prise ni aucun modèle des bras dans le dossier."""
+    """Head trained alone: no arm take and no arm model in the folder."""
     import shutil
     from .conftest import make_wb
     src = trained["wb"]
@@ -80,7 +80,7 @@ def test_head_trains_without_any_arm_model(trained, cfg, tmp_path):
     eng = wb.get_engine()
     assert eng.arm_model is None and eng.head_model is not None
     g = eng.generate("joie", 0.7, EventContext(True, 0.5, 0.0))
-    # bras maintenus en position de départ, tête générée
+    # arms held in the start position, head generated
     np.testing.assert_allclose(g.arms.q, np.tile(cfg.pose("start", cfg.arm_joints), (len(g.arms.t), 1)))
     assert any("bras maintenus" in n for n in g.notes)
     assert g.head.q.std(axis=0).max() > 0
@@ -100,14 +100,14 @@ def test_engine_generates_valid_shapes_and_interpolates(trained, cfg):
     eng = MotionEngine.from_paths(cfg, Path(trained["arm_run"]) / "model.pt", Path(trained["head_run"]) / "model.pt")
     g = eng.generate("joie", 0.7, EventContext(True, 0.5, 0.0))
     assert g.combined.joints == cfg.arm_joints + cfg.head_joints
-    assert np.array_equal(g.arms.t, g.head.t)  # base temporelle commune pour la fusion
-    # chaque groupe garde sa durée apprise ; le geste dure autant que le plus long
+    assert np.array_equal(g.arms.t, g.head.t)  # common time base for merging
+    # each group keeps its learned duration; the gesture lasts as long as the longest
     assert set(g.durations) == {"arms", "head"}
     assert g.duration == pytest.approx(max(g.durations.values()), abs=1e-3)
     short = min(g.durations, key=g.durations.get)
     tr = getattr(g, short)
     after = tr.t >= g.durations[short] + 0.01
-    if after.any():  # le groupe le plus court tient sa pose finale
+    if after.any():  # the shortest group holds its final pose
         np.testing.assert_allclose(tr.q[after], np.tile(tr.q[after][0], (after.sum(), 1)), atol=1e-9)
     a = eng.generate("joie", 0.7).arm_ctrl
     b = eng.generate("tristesse", 0.7).arm_ctrl
@@ -122,7 +122,7 @@ def test_engine_generates_valid_shapes_and_interpolates(trained, cfg):
         eng.generate("joie", 1.5)
     with pytest.raises(ValueError):
         eng.generate("inconnue", 0.5)
-    # l'absence d'événement et un événement devant donnent des entrées différentes
+    # no event and an event in front give different inputs
     h_none = eng.generate("joie", 0.7, EventContext.none()).head_ctrl
     h_front = eng.generate("joie", 0.7, EventContext(True, 0.0, 0.0)).head_ctrl
     assert not np.allclose(h_none, h_front)
@@ -132,7 +132,7 @@ def test_engine_stretch_timing_and_no_model(trained, cfg):
     eng = MotionEngine.from_paths(cfg, Path(trained["arm_run"]) / "model.pt", Path(trained["head_run"]) / "model.pt")
     eng.timing = "stretch"
     g = eng.generate("joie", 0.7)
-    # étirés : aucun groupe ne tient sa pose avant la fin
+    # stretched: no group holds its pose before the end
     for tr in (g.arms, g.head):
         assert np.abs(np.diff(tr.q[-6:-1], axis=0)).max() > 0 or np.ptp(tr.q, axis=0).max() < 1e-6
     with pytest.raises(CheckpointError):
@@ -155,8 +155,8 @@ def test_metrics_report(trained):
 
 
 def test_head_collection_without_arms(trained, cfg, tmp_path):
-    """Passage tête : seule la tête est relâchée, les bras restent raides sur place,
-    aucune commande n'est envoyée ; ni prise de bras ni modèle requis."""
+    """Head pass: only the head is relaxed, the arms stay stiff in place,
+    no command is sent; no arm take or model required."""
     from .conftest import make_wb
     wb = make_wb(tmp_path, cfg)
     wb.ctrl.hold(cfg.all_joints)
@@ -169,19 +169,19 @@ def test_head_collection_without_arms(trained, cfg, tmp_path):
     assert all(wb.adapter.roles[j] == "driven" for j in cfg.arm_joints)
     wb.start_recording(countdown_s=0.2, background=False)
     np.testing.assert_allclose(wb.adapter.read_angles(cfg.arm_joints), q_arms, atol=1e-6)  # bras immobiles
-    assert not any(set(c[1]) & set(cfg.head_joints) for c in wb.adapter.command_log[n:])  # tête jamais commandée
+    assert not any(set(c[1]) & set(cfg.head_joints) for c in wb.adapter.command_log[n:])  # head never commanded
     hid = wb.save_recording(status="accepted")
     m = wb.store.load_meta(hid)
     assert m.kind == "head" and m.joints == cfg.head_joints and m.arm_take_id is None and m.arm_source is None
     assert m.emotion == "surprise" and m.event["present"] and m.head_initial is not None
-    assert m.segment[1] - m.segment[0] > 0.5  # segment proposé là où la tête bouge
+    assert m.segment[1] - m.segment[0] > 0.5  # segment suggested where the head moves
     ex = head_examples(wb.store, cfg)
     assert ex.take_ids == [hid] and ex.X.shape[1] == motion_input_dim(len(cfg.emotions))
 
 
 def test_legacy_head_takes_on_replayed_arms_still_train(trained, cfg, tmp_path):
-    """Les prises de tête déjà validées, enregistrées sur des bras rejoués (ancien format),
-    restent lisibles et servent à l'entraînement : seules les articulations de la tête sont lues."""
+    """Head takes already validated, recorded over replayed arms (old format),
+    remain readable and are used for training: only the head joints are read."""
     from nao_motion.data.store import TakeMeta, new_id
     from nao_motion.trajectory import Trajectory
     from .conftest import make_wb
@@ -209,7 +209,7 @@ def test_legacy_head_takes_on_replayed_arms_still_train(trained, cfg, tmp_path):
 
 
 def test_head_model_with_old_event_encoding_is_refused(trained, cfg, tmp_path):
-    """Un modèle de tête entraîné sans la distance (4 entrées d'événement) doit être réentraîné."""
+    """A head model trained without the distance (4 event inputs) must be retrained."""
     run = Path(trained["head_run"])
     head = LoadedModel(run / "model.pt", cfg, "head")
     assert head.meta["event_features"] == 6
@@ -229,7 +229,7 @@ def test_distance_changes_generated_head(trained, cfg):
 
 
 def test_arm_model_receives_event(trained, cfg):
-    """Le geste des bras dépend de l'angle et de la distance (ex. pointer vers l'événement)."""
+    """The arm gesture depends on the angle and the distance (e.g. pointing towards the event)."""
     eng = MotionEngine.from_paths(cfg, Path(trained["arm_run"]) / "model.pt")
     assert eng.arm_model.meta["event_features"] == 6
     left, _ = eng.plan_arms("surprise", 0.9, event=EventContext(True, 0.7, 0.2, distance_m=0.5))
@@ -241,7 +241,7 @@ def test_arm_model_receives_event(trained, cfg):
 
 
 def test_arm_model_without_event_is_refused(trained, cfg, tmp_path):
-    """Un modèle des bras entraîné avant l'ajout de l'événement doit être réentraîné."""
+    """An arms model trained before the event was added must be retrained."""
     ck = torch.load(Path(trained["arm_run"]) / "model.pt", map_location="cpu", weights_only=True)
     del ck["meta"]["event_features"]
     old = tmp_path / "old_arms.pt"
@@ -251,7 +251,7 @@ def test_arm_model_without_event_is_refused(trained, cfg, tmp_path):
 
 
 def test_training_overrides_change_network_without_touching_config(trained, cfg):
-    """Réglages d'un entraînement (interface) : appliqués au réseau et consignés, model.yaml intact."""
+    """Training settings (interface): applied to the network and recorded, model.yaml untouched."""
     from nao_motion.training import TrainingError, check_overrides
     wb = trained["wb"]
     before = json.dumps(cfg.model, sort_keys=True)
