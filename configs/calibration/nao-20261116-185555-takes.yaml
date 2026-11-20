@@ -1,0 +1,590 @@
+schema_version: 1
+kind: nao_motion.calibration
+version: nao-20261116-185555-takes
+created_at: '2026-11-16T18:55:55'
+robot:
+  robot_name: nao
+  naoqi_version: 2.1.4.13
+  robot:
+  - - Model Type
+    - Head Version
+    - Body Version
+    - Laser
+    - Legs
+    - Arms
+    - Extended Arms
+    - Hands
+    - Arm Version
+    - Number of Legs
+    - Number of Arms
+    - Number of Hands
+  - - naoH25
+    - VERSION_40
+    - VERSION_40
+    - false
+    - true
+    - true
+    - true
+    - true
+    - VERSION_40
+    - 2
+    - 2
+    - 2
+  backend: naoqi
+  adapter: bridge
+  name: nao
+margin_rad: 0.05
+unit: rad
+notes: extended from nao-20261104-183718 with 178 takes (arms 100, head 78, status
+  accepted); speed limits from the takes (p95)
+limits:
+  LShoulderPitch:
+  - -2.0356685638427736
+  - 0.9623980045318603
+  LShoulderRoll:
+  - -0.26415927410125734
+  - 1.0805160522460937
+  LElbowYaw:
+  - -2.0356685638427736
+  - 2.0346641063690187
+  LElbowRoll:
+  - -1.4946163415908813
+  - -0.08490658476948738
+  LWristYaw:
+  - -1.7738691091537475
+  - 1.7738691091537475
+  RShoulderPitch:
+  - -2.0356685638427736
+  - 1.0008317947387695
+  RShoulderRoll:
+  - -1.052987766265869
+  - 0.2552239418029785
+  RElbowYaw:
+  - -2.0356685638427736
+  - 2.0356685638427736
+  RElbowRoll:
+  - 0.3046858787536621
+  - 1.4946163415908813
+  RWristYaw:
+  - -1.7738691091537475
+  - 1.7738691091537475
+  HeadYaw:
+  - -2.0356685638427736
+  - 2.0346641063690187
+  HeadPitch:
+  - -0.6219517707824707
+  - 0.46487213373184205
+measured:
+  LShoulderPitch:
+    min: -2.0856685638427734
+    max: 0.7746281623840332
+    factory:
+    - -2.0856685638427734
+    - 2.0856685638427734
+    n: 2235
+    beyond_factory: false
+    takes_min: -1.7978901863098145
+    takes_max: 1.0123980045318604
+    n_takes: 100
+  LShoulderRoll:
+    min: 0.3972640037536621
+    max: 1.1305160522460938
+    factory:
+    - -0.3141592741012573
+    - 1.326450228691101
+    n: 2235
+    beyond_factory: false
+    takes_min: -0.3141592741012573
+    takes_max: 0.6749181747436523
+    n_takes: 100
+  LElbowYaw:
+    min: -2.0856685638427734
+    max: 2.0846641063690186
+    factory:
+    - -2.0856685638427734
+    - 2.0856685638427734
+    n: 2235
+    beyond_factory: false
+    takes_min: -2.0856685638427734
+    takes_max: -0.024585962295532227
+    n_takes: 100
+  LElbowRoll:
+    min: -1.5446163415908813
+    max: -0.03490658476948738
+    factory:
+    - -1.5446163415908813
+    - -0.03490658476948738
+    n: 2235
+    beyond_factory: false
+    takes_min: -1.5446163415908813
+    takes_max: -0.1288139820098877
+    n_takes: 100
+  LWristYaw:
+    min: -1.8238691091537476
+    max: 1.8238691091537476
+    factory:
+    - -1.8238691091537476
+    - 1.8238691091537476
+    n: 2235
+    beyond_factory: false
+    takes_min: -1.6429557800292969
+    takes_max: 0.9648439884185791
+    n_takes: 100
+  RShoulderPitch:
+    min: -2.0856685638427734
+    max: 0.5338740348815918
+    factory:
+    - -2.0856685638427734
+    - 2.0856685638427734
+    n: 2695
+    beyond_factory: false
+    takes_min: -1.8714380264282227
+    takes_max: 1.0508317947387695
+    n_takes: 100
+  RShoulderRoll:
+    min: -1.1029877662658691
+    max: -0.2086658477783203
+    factory:
+    - -1.326450228691101
+    - 0.3141592741012573
+    n: 2695
+    beyond_factory: false
+    takes_min: -0.5706899166107178
+    takes_max: 0.3052239418029785
+    n_takes: 100
+  RElbowYaw:
+    min: -2.0856685638427734
+    max: 2.0856685638427734
+    factory:
+    - -2.0856685638427734
+    - 2.0856685638427734
+    n: 2695
+    beyond_factory: false
+    takes_min: -0.2715599536895752
+    takes_max: 2.0856685638427734
+    n_takes: 100
+  RElbowRoll:
+    min: 0.3237159252166748
+    max: 1.5446163415908813
+    factory:
+    - 0.03490658476948738
+    - 1.5446163415908813
+    n: 2695
+    beyond_factory: false
+    takes_min: 0.2546858787536621
+    takes_max: 1.5446163415908813
+    n_takes: 100
+  RWristYaw:
+    min: -1.8238691091537476
+    max: 1.8238691091537476
+    factory:
+    - -1.8238691091537476
+    - 1.8238691091537476
+    n: 2695
+    beyond_factory: false
+    takes_min: -0.7593719959259033
+    takes_max: 1.5907161235809326
+    n_takes: 100
+  HeadYaw:
+    min: -2.0856685638427734
+    max: 2.0846641063690186
+    factory:
+    - -2.0856685638427734
+    - 2.0856685638427734
+    n: 1819
+    beyond_factory: false
+    takes_min: -1.446603775024414
+    takes_max: 1.1688660383224487
+    n_takes: 78
+  HeadPitch:
+    min: -0.6719517707824707
+    max: 0.4494199752807617
+    factory:
+    - -0.6719517707824707
+    - 0.514872133731842
+    n: 1819
+    beyond_factory: false
+    takes_min: -0.5630199909210205
+    takes_max: 0.514872133731842
+    n_takes: 78
+poses:
+  rest:
+    head:
+      HeadYaw: -0.0684584140777588
+      HeadPitch: 0.06898808479309082
+    left_arm:
+      LShoulderPitch: 0.6890308380126953
+      LShoulderRoll: 0.40186595916748047
+      LElbowYaw: -0.04146003723144531
+      LElbowRoll: -1.4158400297164917
+      LWristYaw: -1.5460073471069335
+    right_arm:
+      RShoulderPitch: 0.8587753772735596
+      RShoulderRoll: -0.340283203125
+      RElbowYaw: 0.30675792694091797
+      RElbowRoll: 1.399663543701172
+      RWristYaw: 1.175002098083496
+  start:
+    head:
+      HeadYaw: -0.06876521110534668
+      HeadPitch: 0.06898808479309082
+    left_arm:
+      LShoulderPitch: 0.4687484264373779
+      LShoulderRoll: 0.5736739635467529
+      LElbowYaw: -0.2715599536895752
+      LElbowRoll: -1.3642976522445678
+      LWristYaw: -1.6085945129394532
+    right_arm:
+      RShoulderPitch: 0.3531686782836914
+      RShoulderRoll: -0.3405900001525879
+      RElbowYaw: 0.037387752532958986
+      RElbowRoll: 1.2428886413574218
+      RWristYaw: 1.5891821384429932
+coupled_constraints:
+- name: calib:HeadYaw-HeadPitch:0
+  terms:
+    HeadYaw: -0.112986
+    HeadPitch: -0.993597
+  bound: 0.64447
+  description: enveloppe mesurée HeadYaw/HeadPitch + prises
+- name: calib:HeadYaw-HeadPitch:1
+  terms:
+    HeadYaw: -0.062559
+    HeadPitch: -0.998041
+  bound: 0.63273
+  description: enveloppe mesurée HeadYaw/HeadPitch + prises
+- name: calib:HeadYaw-HeadPitch:2
+  terms:
+    HeadYaw: 0.0
+    HeadPitch: -1.0
+  bound: 0.621952
+  description: enveloppe mesurée HeadYaw/HeadPitch + prises
+- name: calib:HeadYaw-HeadPitch:3
+  terms:
+    HeadYaw: 0.093889
+    HeadPitch: -0.995583
+  bound: 0.624309
+  description: enveloppe mesurée HeadYaw/HeadPitch + prises
+- name: calib:HeadYaw-HeadPitch:4
+  terms:
+    HeadYaw: 0.999688
+    HeadPitch: -0.024992
+  bound: 2.035316
+  description: enveloppe mesurée HeadYaw/HeadPitch + prises
+- name: calib:HeadYaw-HeadPitch:5
+  terms:
+    HeadYaw: 0.999924
+    HeadPitch: -0.012294
+  bound: 2.030472
+  description: enveloppe mesurée HeadYaw/HeadPitch + prises
+- name: calib:HeadYaw-HeadPitch:6
+  terms:
+    HeadYaw: 0.08917
+    HeadPitch: 0.996016
+  bound: 0.462817
+  description: enveloppe mesurée HeadYaw/HeadPitch + prises
+- name: calib:HeadYaw-HeadPitch:7
+  terms:
+    HeadYaw: 0.0
+    HeadPitch: 1.0
+  bound: 0.464872
+  description: enveloppe mesurée HeadYaw/HeadPitch + prises
+- name: calib:HeadYaw-HeadPitch:8
+  terms:
+    HeadYaw: -0.062539
+    HeadPitch: 0.998043
+  bound: 0.479984
+  description: enveloppe mesurée HeadYaw/HeadPitch + prises
+- name: calib:HeadYaw-HeadPitch:9
+  terms:
+    HeadYaw: -1.0
+    HeadPitch: -0.0
+  bound: 2.035669
+  description: enveloppe mesurée HeadYaw/HeadPitch + prises
+- name: calib:LShoulderPitch-LShoulderRoll:0
+  terms:
+    LShoulderPitch: -0.730815
+    LShoulderRoll: -0.682575
+  bound: 1.158052
+  description: enveloppe mesurée LShoulderPitch/LShoulderRoll + prises
+- name: calib:LShoulderPitch-LShoulderRoll:1
+  terms:
+    LShoulderPitch: -0.23794
+    LShoulderRoll: -0.97128
+  bound: 0.229597
+  description: enveloppe mesurée LShoulderPitch/LShoulderRoll + prises
+- name: calib:LShoulderPitch-LShoulderRoll:2
+  terms:
+    LShoulderPitch: 0.004724
+    LShoulderRoll: -0.999989
+  bound: 0.264663
+  description: enveloppe mesurée LShoulderPitch/LShoulderRoll + prises
+- name: calib:LShoulderPitch-LShoulderRoll:3
+  terms:
+    LShoulderPitch: 0.183346
+    LShoulderRoll: -0.983048
+  bound: 0.323197
+  description: enveloppe mesurée LShoulderPitch/LShoulderRoll + prises
+- name: calib:LShoulderPitch-LShoulderRoll:4
+  terms:
+    LShoulderPitch: 0.476284
+    LShoulderRoll: -0.879292
+  bound: 0.516134
+  description: enveloppe mesurée LShoulderPitch/LShoulderRoll + prises
+- name: calib:LShoulderPitch-LShoulderRoll:5
+  terms:
+    LShoulderPitch: 0.931487
+    LShoulderRoll: -0.363776
+  bound: 0.811721
+  description: enveloppe mesurée LShoulderPitch/LShoulderRoll + prises
+- name: calib:LShoulderPitch-LShoulderRoll:6
+  terms:
+    LShoulderPitch: 0.971982
+    LShoulderRoll: -0.235054
+  bound: 0.860486
+  description: enveloppe mesurée LShoulderPitch/LShoulderRoll + prises
+- name: calib:LShoulderPitch-LShoulderRoll:7
+  terms:
+    LShoulderPitch: 0.937281
+    LShoulderRoll: 0.348575
+  bound: 1.007968
+  description: enveloppe mesurée LShoulderPitch/LShoulderRoll + prises
+- name: calib:LShoulderPitch-LShoulderRoll:8
+  terms:
+    LShoulderPitch: 0.406915
+    LShoulderRoll: 0.913466
+  bound: 1.213627
+  description: enveloppe mesurée LShoulderPitch/LShoulderRoll + prises
+- name: calib:LShoulderPitch-LShoulderRoll:9
+  terms:
+    LShoulderPitch: -0.008596
+    LShoulderRoll: 0.999963
+  bound: 1.075596
+  description: enveloppe mesurée LShoulderPitch/LShoulderRoll + prises
+- name: calib:LShoulderPitch-LShoulderRoll:10
+  terms:
+    LShoulderPitch: -0.020353
+    LShoulderRoll: 0.999793
+  bound: 1.081321
+  description: enveloppe mesurée LShoulderPitch/LShoulderRoll + prises
+- name: calib:LShoulderPitch-LShoulderRoll:11
+  terms:
+    LShoulderPitch: -1.0
+    LShoulderRoll: -0.0
+  bound: 2.035669
+  description: enveloppe mesurée LShoulderPitch/LShoulderRoll + prises
+- name: calib:RShoulderPitch-RShoulderRoll:0
+  terms:
+    RShoulderPitch: 0.007275
+    RShoulderRoll: -0.999974
+  bound: 1.037785
+  description: enveloppe mesurée RShoulderPitch/RShoulderRoll + prises
+- name: calib:RShoulderPitch-RShoulderRoll:1
+  terms:
+    RShoulderPitch: 0.008733
+    RShoulderRoll: -0.999962
+  bound: 1.037192
+  description: enveloppe mesurée RShoulderPitch/RShoulderRoll + prises
+- name: calib:RShoulderPitch-RShoulderRoll:2
+  terms:
+    RShoulderPitch: 0.382353
+    RShoulderRoll: -0.924016
+  bound: 1.068318
+  description: enveloppe mesurée RShoulderPitch/RShoulderRoll + prises
+- name: calib:RShoulderPitch-RShoulderRoll:3
+  terms:
+    RShoulderPitch: 0.767853
+    RShoulderRoll: -0.640626
+  bound: 0.922796
+  description: enveloppe mesurée RShoulderPitch/RShoulderRoll + prises
+- name: calib:RShoulderPitch-RShoulderRoll:4
+  terms:
+    RShoulderPitch: 0.997055
+    RShoulderRoll: -0.076696
+  bound: 1.016211
+  description: enveloppe mesurée RShoulderPitch/RShoulderRoll + prises
+- name: calib:RShoulderPitch-RShoulderRoll:5
+  terms:
+    RShoulderPitch: 0.890169
+    RShoulderRoll: 0.455631
+  bound: 0.775665
+  description: enveloppe mesurée RShoulderPitch/RShoulderRoll + prises
+- name: calib:RShoulderPitch-RShoulderRoll:6
+  terms:
+    RShoulderPitch: 0.70711
+    RShoulderRoll: 0.707104
+  bound: 0.634449
+  description: enveloppe mesurée RShoulderPitch/RShoulderRoll + prises
+- name: calib:RShoulderPitch-RShoulderRoll:7
+  terms:
+    RShoulderPitch: 0.24689
+    RShoulderRoll: 0.969044
+  bound: 0.270924
+  description: enveloppe mesurée RShoulderPitch/RShoulderRoll + prises
+- name: calib:RShoulderPitch-RShoulderRoll:8
+  terms:
+    RShoulderPitch: 0.043817
+    RShoulderRoll: 0.99904
+  bound: 0.253051
+  description: enveloppe mesurée RShoulderPitch/RShoulderRoll + prises
+- name: calib:RShoulderPitch-RShoulderRoll:9
+  terms:
+    RShoulderPitch: -0.1942
+    RShoulderRoll: 0.980962
+  bound: 0.257746
+  description: enveloppe mesurée RShoulderPitch/RShoulderRoll + prises
+- name: calib:RShoulderPitch-RShoulderRoll:10
+  terms:
+    RShoulderPitch: -0.270065
+    RShoulderRoll: 0.962842
+  bound: 0.303492
+  description: enveloppe mesurée RShoulderPitch/RShoulderRoll + prises
+- name: calib:RShoulderPitch-RShoulderRoll:11
+  terms:
+    RShoulderPitch: -1.0
+    RShoulderRoll: -0.0
+  bound: 2.035669
+  description: enveloppe mesurée RShoulderPitch/RShoulderRoll + prises
+- name: calib:LElbowYaw-LElbowRoll:0
+  terms:
+    LElbowYaw: -0.992025
+    LElbowRoll: -0.126039
+  bound: 2.203674
+  description: enveloppe mesurée LElbowYaw/LElbowRoll + prises
+- name: calib:LElbowYaw-LElbowRoll:1
+  terms:
+    LElbowYaw: 0.0
+    LElbowRoll: -1.0
+  bound: 1.494616
+  description: enveloppe mesurée LElbowYaw/LElbowRoll + prises
+- name: calib:LElbowYaw-LElbowRoll:2
+  terms:
+    LElbowYaw: 0.089221
+    LElbowRoll: -0.996012
+  bound: 1.486126
+  description: enveloppe mesurée LElbowYaw/LElbowRoll + prises
+- name: calib:LElbowYaw-LElbowRoll:3
+  terms:
+    LElbowYaw: 0.606673
+    LElbowRoll: -0.794951
+  bound: 1.418327
+  description: enveloppe mesurée LElbowYaw/LElbowRoll + prises
+- name: calib:LElbowYaw-LElbowRoll:4
+  terms:
+    LElbowYaw: 0.894427
+    LElbowRoll: 0.447214
+  bound: 1.700033
+  description: enveloppe mesurée LElbowYaw/LElbowRoll + prises
+- name: calib:LElbowYaw-LElbowRoll:5
+  terms:
+    LElbowYaw: 0.106088
+    LElbowRoll: 0.994357
+  bound: -0.080646
+  description: enveloppe mesurée LElbowYaw/LElbowRoll + prises
+- name: calib:LElbowYaw-LElbowRoll:6
+  terms:
+    LElbowYaw: 0.0
+    LElbowRoll: 1.0
+  bound: -0.084907
+  description: enveloppe mesurée LElbowYaw/LElbowRoll + prises
+- name: calib:LElbowYaw-LElbowRoll:7
+  terms:
+    LElbowYaw: -1.0
+    LElbowRoll: -0.0
+  bound: 2.035669
+  description: enveloppe mesurée LElbowYaw/LElbowRoll + prises
+- name: calib:RElbowYaw-RElbowRoll:0
+  terms:
+    RElbowYaw: -0.021374
+    RElbowRoll: -0.999772
+  bound: -0.344399
+  description: enveloppe mesurée RElbowYaw/RElbowRoll + prises
+- name: calib:RElbowYaw-RElbowRoll:1
+  terms:
+    RElbowYaw: 0.0
+    RElbowRoll: -1.0
+  bound: -0.304686
+  description: enveloppe mesurée RElbowYaw/RElbowRoll + prises
+- name: calib:RElbowYaw-RElbowRoll:2
+  terms:
+    RElbowYaw: 0.274728
+    RElbowRoll: -0.961522
+  bound: 0.218408
+  description: enveloppe mesurée RElbowYaw/RElbowRoll + prises
+- name: calib:RElbowYaw-RElbowRoll:3
+  terms:
+    RElbowYaw: 0.305799
+    RElbowRoll: -0.952096
+  bound: 0.279585
+  description: enveloppe mesurée RElbowYaw/RElbowRoll + prises
+- name: calib:RElbowYaw-RElbowRoll:4
+  terms:
+    RElbowYaw: 1.0
+    RElbowRoll: -0.0
+  bound: 2.035669
+  description: enveloppe mesurée RElbowYaw/RElbowRoll + prises
+- name: calib:RElbowYaw-RElbowRoll:5
+  terms:
+    RElbowYaw: 0.0
+    RElbowRoll: 1.0
+  bound: 1.494617
+  description: enveloppe mesurée RElbowYaw/RElbowRoll + prises
+- name: calib:RElbowYaw-RElbowRoll:6
+  terms:
+    RElbowYaw: 0.0
+    RElbowRoll: 1.0
+  bound: 1.494616
+  description: enveloppe mesurée RElbowYaw/RElbowRoll + prises
+- name: calib:RElbowYaw-RElbowRoll:7
+  terms:
+    RElbowYaw: -0.0
+    RElbowRoll: 1.0
+  bound: 1.494616
+  description: enveloppe mesurée RElbowYaw/RElbowRoll + prises
+- name: calib:RElbowYaw-RElbowRoll:8
+  terms:
+    RElbowYaw: -0.035715
+    RElbowRoll: 0.999362
+  bound: 1.566061
+  description: enveloppe mesurée RElbowYaw/RElbowRoll + prises
+- name: calib:RElbowYaw-RElbowRoll:9
+  terms:
+    RElbowYaw: -0.079115
+    RElbowRoll: 0.996865
+  bound: 1.651885
+  description: enveloppe mesurée RElbowYaw/RElbowRoll + prises
+- name: calib:RElbowYaw-RElbowRoll:10
+  terms:
+    RElbowYaw: -1.0
+    RElbowRoll: -0.0
+  bound: 2.035669
+  description: enveloppe mesurée RElbowYaw/RElbowRoll + prises
+warnings: []
+kinematics:
+  source: takes p95
+  velocity_rad_s:
+    LShoulderPitch: 4.967
+    LShoulderRoll: 1.653
+    LElbowYaw: 5.438
+    LElbowRoll: 2.429
+    LWristYaw: 3.476
+    RShoulderPitch: 5.354
+    RShoulderRoll: 1.728
+    RElbowYaw: 4.631
+    RElbowRoll: 3.238
+    RWristYaw: 3.098
+    HeadYaw: 3.991
+    HeadPitch: 2.876
+  acceleration_rad_s2:
+    LShoulderPitch: 59.412
+    LShoulderRoll: 15.673
+    LElbowYaw: 77.322
+    LElbowRoll: 29.891
+    LWristYaw: 37.888
+    RShoulderPitch: 57.336
+    RShoulderRoll: 18.254
+    RElbowYaw: 52.633
+    RElbowRoll: 35.885
+    RWristYaw: 52.322
+    HeadYaw: 71.117
+    HeadPitch: 38.937
