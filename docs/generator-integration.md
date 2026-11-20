@@ -86,20 +86,13 @@ uncalibrated or invalid guardian section. Useful attributes:
 
 ### Emotions
 
-The ids are **French** on purpose (they are stored in the takes and the published dataset):
-
-| id | meaning |
-|---|---|
-| `joie` | joy |
-| `tristesse` | sadness |
-| `colere` | anger |
-| `peur` | fear |
-| `surprise` | surprise |
-| `calme` | calm |
+The ids are English (`joy`, `sadness`, `anger`, `fear`, `surprise`, `calm`); the
+interface shows French labels for them. Generators exported before the rename use the
+former French ids (`joie`, `tristesse`, `colere`, `peur`, `surprise`, `calme`).
 
 Always read the list from `gen.emotions` rather than hard-coding it: the list comes from
 `configs/emotions.yaml` at training time, and a model refuses a different list.
-`emotion` can also be a mix `{"joie": 0.7, "surprise": 0.3}` (non-negative weights, normalised).
+`emotion` can also be a mix `{"joy": 0.7, "surprise": 0.3}` (non-negative weights, normalised).
 An LLM that produces English labels needs its own mapping table to these ids.
 
 `intensity` is a float in `[0, 1]`; anything else raises `GestureError`. The takes were
@@ -176,7 +169,7 @@ in `g.joints` (not commanded). Check `g.notes`.
 ### Command line (quick check)
 
 ```bash
-python nao_gesture.py nao_gesture.json joie 0.7 30 0 1.2   # emotion, intensity, azimuth°, elevation°, distance m
+python nao_gesture.py nao_gesture.json joy 0.7 30 0 1.2   # emotion, intensity, azimuth°, elevation°, distance m
 # prints the verdict as JSON; exit code 0 = accepted, 1 = refused, 2 = usage
 ```
 

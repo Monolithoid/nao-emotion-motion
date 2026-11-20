@@ -2,14 +2,17 @@
 # these are working labels to organise the demonstrations.
 # Adding/removing an emotion changes the models' input dimension:
 # checkpoints store the list used and refuse a different list.
+# Ids are English (they are what an LLM or another program sends); labels stay
+# French for the interface. Takes recorded with the former French ids
+# (joie, tristesse, colere, peur, calme): `nao-motion rename-emotions`.
 schema_version: 1
 emotions:
-  - {id: joie,      label: "joie"}
-  - {id: tristesse, label: "tristesse"}
-  - {id: colere,    label: "colère"}
-  - {id: peur,      label: "peur"}
+  - {id: joy,       label: "joie"}
+  - {id: sadness,   label: "tristesse"}
+  - {id: anger,     label: "colère"}
+  - {id: fear,      label: "peur"}
   - {id: surprise,  label: "surprise"}
-  - {id: calme,     label: "calme"}
+  - {id: calm,      label: "calme"}
 
 # Expressive intentions: distinct from emotions (one can welcome with joy
 # or calmly). They are recorded as an optional annotation of the takes

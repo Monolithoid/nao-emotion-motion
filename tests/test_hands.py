@@ -74,7 +74,7 @@ def test_hands_pass_dataset_training_generation(trained, cfg, tmp_path):
     wb.ctrl.arm(confirm=True)
     ids = []
     contexts = [EventContext.none(), EventContext(True, 0.6, 0.1, source="test", distance_m=0.5)]
-    jobs = [{"emotion": e, "intensity": i} for e in ("joie", "colere", "surprise", "tristesse") for i in (0.4, 1.0)]
+    jobs = [{"emotion": e, "intensity": i} for e in ("joy", "anger", "surprise", "sadness") for i in (0.4, 1.0)]
     for job in jobs:
         for ev in contexts:
             wb.event = ev
@@ -112,7 +112,7 @@ def test_hands_pass_dataset_training_generation(trained, cfg, tmp_path):
     wb.engine = None
     eng = wb.get_engine()
     assert eng.hands_model is not None
-    gen = eng.generate("joie", 0.9, EventContext.none())
+    gen = eng.generate("joy", 0.9, EventContext.none())
     assert gen.hands is not None and gen.combined.joints == cfg.all_joints + cfg.hand_joints
     assert set(gen.durations) == {"arms", "head", "hands"}  # three independent models combined
     # the guardian judges the gesture as played (slowed down where a limit requires it)
@@ -122,7 +122,7 @@ def test_hands_pass_dataset_training_generation(trained, cfg, tmp_path):
     wb.ctrl.hold(cfg.controlled_joints)
     wb.ctrl.arm(confirm=True)
     wb.ctrl.return_to_rest(confirm=True)
-    out = wb.generate("joie", 0.9, use_event=False)
+    out = wb.generate("joy", 0.9, use_event=False)
     assert out["cycle"]["report"]["ok"], out["cycle"]
     wb.execute_plan(out["plan_id"], background=False)
     assert any(set(cfg.hand_joints) <= set(c[1]) for c in wb.adapter.command_log)
@@ -133,9 +133,9 @@ def test_hands_live_target_during_recording(trained, cfg, tmp_path):
     wb.sim_demonstration = False  # no simulated operator: the interface target is what counts
     wb.ctrl.hold(cfg.all_joints)
     with pytest.raises(ControllerError):
-        wb.prepare_hands_take("joie", 0.5)  # controller disarmed: driving impossible
+        wb.prepare_hands_take("joy", 0.5)  # controller disarmed: driving impossible
     wb.ctrl.arm(confirm=True)
-    wb.prepare_hands_take("joie", 0.5)
+    wb.prepare_hands_take("joy", 0.5)
     rec = wb.recording
     rec.set_target({"LHand": 1.0})
     rec.set_target({"RHand": 5.0})  # clamped to the range

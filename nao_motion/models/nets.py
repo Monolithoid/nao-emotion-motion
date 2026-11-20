@@ -7,7 +7,7 @@ Three INDEPENDENT models, with the same input [emotion, intensity, event (6)]:
 Each is trained on its own; the engine combines their outputs into a single gesture.
 
 Deterministic baseline: a least-squares regression produces the AVERAGE of the
-gestures carrying the same label. If "joie" (joy) was demonstrated in two different
+gestures carrying the same label. If "joy" (joy) was demonstrated in two different
 ways, the model may generate an intermediate gesture that was never shown.
 
 CVAE mode (model.yaml `cvae.enabled`, disabled by default): the MLP above becomes

@@ -391,6 +391,20 @@ def cmd_import_dataset(a):
     return 0
 
 
+def cmd_rename_emotions(a):
+    """Former French emotion ids -> English ids in the takes' metadata (trash included)."""
+    from .config import load_config
+    from .data.rename import rename_emotions
+    r = rename_emotions(a.data, known=load_config(a.config).emotions, dry_run=a.dry_run)
+    print(json.dumps(r, indent=1, ensure_ascii=False))
+    if r["unknown"]:
+        print("Émotions encore inconnues de configs/emotions.yaml : voir « unknown ».")
+        return 1
+    if r["takes_changed"] and not a.dry_run:
+        print("Prises renommées : réentraîner arms, head et hands, puis réexporter le générateur.")
+    return 0
+
+
 def cmd_serve_inference(a):
     from .inference.server import serve
     serve(_wb(a, adapter="sim"), a.host, a.port)
@@ -443,7 +457,7 @@ def main(argv=None):
     s.add_argument("--ks", type=int, nargs="+", help="numbers of control points to compare (default 8 12 16 24 32)")
     s.set_defaults(fn=cmd_fidelity)
     s = sub.add_parser("generate", help="générer et valider (simulation uniquement)")
-    s.add_argument("--emotion", default="joie"); s.add_argument("--mix", help='mélange JSON ex. {"joie":0.5,"surprise":0.5}')
+    s.add_argument("--emotion", default="joy"); s.add_argument("--mix", help='mélange JSON ex. {"joy":0.5,"surprise":0.5}')
     s.add_argument("--intensity", type=float, default=0.7)
     s.add_argument("--event-az", type=float, help="azimut en degrés (gauche positif) ; absent = pas d'événement")
     s.add_argument("--event-dist", type=float, default=None, help="distance de l'événement en mètres (optionnelle)")
@@ -500,6 +514,10 @@ def main(argv=None):
     s.add_argument("src", help="dossier d'export (ex. clone du dépôt du jeu de données)")
     s.add_argument("--no-models", action="store_true", help="ne pas copier les modèles dans runs/")
     s.set_defaults(fn=cmd_import_dataset)
+    s = sub.add_parser("rename-emotions",
+                       help="former French emotion ids (joie, tristesse...) -> English ids in the takes")
+    s.add_argument("--dry-run", action="store_true", help="only count, change nothing")
+    s.set_defaults(fn=cmd_rename_emotions)
     s = sub.add_parser("serve-inference", help="serveur HTTP d'inférence (génération sans exécution)")
     s.add_argument("--host", default="127.0.0.1"); s.add_argument("--port", type=int, default=8766)
     s.set_defaults(fn=cmd_serve_inference)

@@ -70,17 +70,17 @@ def test_cvae_checkpoint_numpy_and_engine(cvae_wb, cfg):
     lat = mt.meta["latent"]
     assert lat["dim"] == 3 and len(lat["mu"]) == len(lat["take_ids"]) == len(lat["pca"]["xy"])
     eng = MotionEngine(cfg, mt)
-    central = [eng.generate("joie", 0.7, temperature=0.0).arms.q for _ in range(2)]
+    central = [eng.generate("joy", 0.7, temperature=0.0).arms.q for _ in range(2)]
     np.testing.assert_array_equal(*central)
-    a = eng.generate("joie", 0.7, temperature=1.0, seed=1)
-    b = eng.generate("joie", 0.7, temperature=1.0, seed=2)
+    a = eng.generate("joy", 0.7, temperature=1.0, seed=1)
+    b = eng.generate("joy", 0.7, temperature=1.0, seed=2)
     assert a.inputs["latent"]["arms"] != b.inputs["latent"]["arms"]
     assert a.arms.q.shape != b.arms.q.shape or not np.allclose(a.arms.q, b.arms.q)
-    np.testing.assert_array_equal(a.arms.q, eng.generate("joie", 0.7, temperature=1.0, seed=1).arms.q)
-    g = eng.generate("joie", 0.7, latent={"arms": [0.5, -1.0, 0.0]})
+    np.testing.assert_array_equal(a.arms.q, eng.generate("joy", 0.7, temperature=1.0, seed=1).arms.q)
+    g = eng.generate("joy", 0.7, latent={"arms": [0.5, -1.0, 0.0]})
     assert g.inputs["latent"]["arms"] == [0.5, -1.0, 0.0]
     with pytest.raises(ValueError):
-        eng.generate("joie", 0.7, latent={"arms": [1.0]})
+        eng.generate("joy", 0.7, latent={"arms": [1.0]})
 
 
 def test_cvae_map_sweep_and_generate_api(cvae_wb, cfg):
@@ -90,7 +90,7 @@ def test_cvae_map_sweep_and_generate_api(cvae_wb, cfg):
     lat = api.get_latent({"component": "arms"})
     assert lat["available"] and lat["dim"] == 3 and len(lat["events"]) == len(lat["take_ids"])
     assert api.get_latent({"component": "head"})["available"] is False  # no head model here
-    sw = api.post_latent_sweep({"component": "arms", "dim": 1, "emotion": "colere", "intensity": 0.8,
+    sw = api.post_latent_sweep({"component": "arms", "dim": 1, "emotion": "anger", "intensity": 0.8,
                                 "use_event": False, "steps": 4})
     C = np.array(sw["curves"])
     assert C.shape == (4, 100, len(cfg.arm_joints)) and len(sw["durations"]) == 4 and sw["values"][0] == -2.0
@@ -98,7 +98,7 @@ def test_cvae_map_sweep_and_generate_api(cvae_wb, cfg):
     out = api.post_generate({"emotion": lat["emotions"][i], "intensity": lat["intensities"][i],
                              "latent": {"arms": lat["mu"][i]}, "event": lat["events"][i]})
     assert out["generated"]["inputs"]["latent"]["arms"] == [round(v, 4) for v in lat["mu"][i]]
-    out = api.post_generate({"emotion": "joie", "intensity": 0.5, "temperature": 0})
+    out = api.post_generate({"emotion": "joy", "intensity": 0.5, "temperature": 0})
     assert out["generated"]["inputs"]["latent"]["arms"] == [0.0, 0.0, 0.0]
     # Takes tab: the model curve of a take uses its own z (deterministic), never a random draw
     tid = lat["take_ids"][0]

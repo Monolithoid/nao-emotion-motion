@@ -144,7 +144,7 @@ def run_demo(workdir="demo_sim", epochs=None, log=print) -> dict:
     wb.ctrl.hold(cfg.all_joints)
     wb.ctrl.arm(confirm=True)
     wb.ctrl.return_to_rest(confirm=True)
-    out = wb.generate("joie", 0.7, use_event=False)
+    out = wb.generate("joy", 0.7, use_event=False)
     ok = out.get("cycle", {}).get("report", {}).get("ok")
     log(f"  geste {out['generated']['duration_s']:.2f} s ; cycle {'accepté' if ok else 'refusé'}")
     if ok:
@@ -184,7 +184,7 @@ def run_demo(workdir="demo_sim", epochs=None, log=print) -> dict:
     wb.ctrl.hold(cfg.controlled_joints)
     wb.ctrl.arm(confirm=True)
     wb.ctrl.return_to_rest(confirm=True)
-    out3 = wb.generate("joie", 0.9, use_event=False)
+    out3 = wb.generate("joy", 0.9, use_event=False)
     ok = out3.get("cycle", {}).get("report", {}).get("ok")
     log(f"  cycle bras + tête + mains {'accepté' if ok else 'refusé'} {out3.get('cycle_error', '')}")
     if ok:

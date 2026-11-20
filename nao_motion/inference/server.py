@@ -1,6 +1,6 @@
 """Minimal inference server (standard library) for remote inference.
 
-POST /generate {"emotion": "joie" | {"joie":0.5,...}, "intensity": 0.7,
+POST /generate {"emotion": "joy" | {"joy":0.5,...}, "intensity": 0.7,
                 "event": {...optional...}, "head_current": {...optional...},
                 "hands_current": {...optional: LHand/RHand opening 0..1...}}
 -> trajectory + guardian report. The server executes NOTHING: the client
