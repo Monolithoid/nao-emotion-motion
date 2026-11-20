@@ -46,4 +46,4 @@ cvae:                       # CVAE mode: the MLP above becomes a DECODER that al
   kl_warmup: 200            # epochs over which beta grows from 0; the best epoch is looked for after them
   encoder_hidden: [64]      # hidden layers of the encoder (used for training and for the z map only)
   temperature: 1.0          # generation: z drawn from N(0, T²). 0 = central gesture (z = 0), 1 = as varied
-                            # as the takes. Generation tab field
+                            # as the takes. Generation tab field; also the default of the exported generator

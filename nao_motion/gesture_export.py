@@ -107,6 +107,8 @@ def bundle_dict(cfg: Config, models: Dict[str, Optional[Path]], allow_uncalibrat
         "guardian": guardian_dict(cfg, allow_uncalibrated),
         # playback adaptation applied by the library before the guardian check (robot.yaml execution)
         "playback": {k: ex[k] for k in ("project_control_points", "adapt_generated", "slow_down") if k in ex},
+        # CVAE models: default temperature of the latent draw (model.yaml cvae.temperature)
+        "latent": {"temperature": float((cfg.model.get("cvae") or {}).get("temperature", 1.0))},
     }
 
 
