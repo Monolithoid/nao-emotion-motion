@@ -19,7 +19,7 @@ from nao_motion.trajectory import Trajectory
 from .conftest import make_wb
 
 
-def _fake_npz(path, cfg, comp, seed, hidden=(16, 16), K=None):
+def _fake_npz(path, cfg, comp, seed, hidden=(16, 16), K=None, latent_dim=0):
     """Numpy export in the `LoadedModel.export_numpy` format, without PyTorch: random hidden
     layers, last layer set for a gentle gesture around the start pose (~1.5 s) that varies
     a little with the emotion and the event."""
@@ -29,7 +29,8 @@ def _fake_npz(path, cfg, comp, seed, hidden=(16, 16), K=None):
     rng = np.random.default_rng(seed)
     arrays = {}
     for i in range(len(dims) - 1):
-        arrays[f"W{i}"] = rng.normal(0, 0.3, (dims[i + 1], dims[i])).astype(np.float32)
+        n_in = dims[i] + (latent_dim if i == 0 else 0)   # CVAE decoder: z appended to the input
+        arrays[f"W{i}"] = rng.normal(0, 0.3, (dims[i + 1], n_in)).astype(np.float32)
         arrays[f"b{i}"] = rng.normal(0, 0.1, dims[i + 1]).astype(np.float32)
     last = len(dims) - 2
     bump = np.sin(np.pi * np.arange(K) / (K - 1))[:, None] * rng.uniform(-0.06, 0.06, J)[None, :]
@@ -42,7 +43,7 @@ def _fake_npz(path, cfg, comp, seed, hidden=(16, 16), K=None):
             "train_take_ids": ["a", "b"], "val_take_ids": ["c"], "synthetic_data": True,
             "representation": {"n_control_points": K}}
     header = {"component": comp, "arch": {"in_dim": dims[0], "out_dim": dims[-1], "hidden": list(hidden),
-                                          "latent_dim": 0}, "meta": meta, "source_digest": f"fake{seed}",
+                                          "latent_dim": latent_dim}, "meta": meta, "source_digest": f"fake{seed}",
               "activation": "tanh"}
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez(path, header=np.array(json.dumps(header)), **arrays)

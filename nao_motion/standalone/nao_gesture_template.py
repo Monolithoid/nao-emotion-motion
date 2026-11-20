@@ -22,6 +22,9 @@ To use it in another project, copy `nao_gesture.py` and `nao_gesture.json`.
 Inputs
   - emotion: a name from `gen.emotions`, or a mix {"joy": 0.7, "surprise": 0.3};
   - intensity: between 0 and 1;
+  - CVAE models (`gen.latent_dims` not empty): each call draws a latent code z, so the
+    same prompt gives a different learned gesture each time. `temperature=0` = always the
+    central gesture; `seed` = reproducible; `latent={"arms": [...]}` = a given z;
   - event (optional): None = no event; otherwise a dictionary
     {"azimuth_deg" | "azimuth_rad", "elevation_deg" | "elevation_rad", "distance_m" (optional)}
     in the torso frame (FRAME_TORSO): azimuth positive to the robot's LEFT, elevation
@@ -659,8 +662,9 @@ class _Model(object):
         if len(self.layers[-1][1]) != K * J + 1 or len(self.center) != J or len(self.scale) != J:
             raise GestureError("Model %s: output does not match (%d points x %d joints)" % (name, K, J))
 
-    def predict(self, x):
-        h = list(x) + [0.0] * self.latent_dim
+    def predict(self, x, z=None):
+        """Model output for input x; `z` = latent code of a CVAE model (None = central, z = 0)."""
+        h = list(x) + (list(z) if z is not None else [0.0] * self.latent_dim)
         for i, (W, b) in enumerate(self.layers):
             h = [s + bb for s, bb in zip(_matvec(W, h), b)]
             if i < len(self.layers) - 1:
@@ -701,6 +705,11 @@ class GestureGenerator(object):
         self.slow_down = pb.get("slow_down", "local")
         if self.slow_down not in SLOW_DOWN_MODES:
             self.slow_down = "local"
+        # CVAE models: z drawn from N(0, T^2) at each generation, T = this default
+        # (model.yaml cvae.temperature at export). Files exported before it: 0 = central
+        # gesture (z = 0), the former behaviour.
+        lt = (data.get("latent") or {}).get("temperature", 0.0)
+        self.latent_temperature = float(lt) if _finite(lt) and float(lt) >= 0 else 0.0
         for j in self.groups["arms"] + self.groups["head"] + self.groups.get("hands", []):
             if j not in self.guardian.limits:
                 raise GestureError("Joint %s missing from the guardian" % j)
@@ -745,8 +754,29 @@ class GestureGenerator(object):
         return [_f32(v) for v in self._emotion_vector(emotion) + [x] + event_features(event)]
 
     # -- generation ------------------------------------------------------------------
-    def _plan(self, model, x, variation, seed, project=False, notes=None):
-        out = model.predict(x)
+    @property
+    def latent_dims(self):
+        """{group: size of z} of the CVAE models (empty: no CVAE model, generation is deterministic)."""
+        return dict((k, m.latent_dim) for k, m in self.models.items() if m.latent_dim)
+
+    def _latent(self, model, temperature, seed, given=None):
+        """z of a CVAE model: the given one, else drawn from N(0, T^2); None for a plain model."""
+        d = model.latent_dim
+        if not d:
+            return None
+        if given is not None:
+            z = [float(v) for v in given]
+            if len(z) != d or not all(_finite(v) for v in z):
+                raise GestureError("Model %s: latent code of size %d expected" % (model.name, d))
+            return z
+        if temperature <= 0:
+            return [0.0] * d
+        # own stream, distinct from the variation noise (same seed => same gesture)
+        rng = random.Random(None if seed is None else int(seed) * 1000003 + 7)
+        return [temperature * rng.gauss(0.0, 1.0) for _ in range(d)]
+
+    def _plan(self, model, x, variation, seed, project=False, notes=None, z=None):
+        out = model.predict(x, z)
         J, K = len(model.joints), model.K
         ctrl = [out[i * J:(i + 1) * J] for i in range(K)]
         if variation > 0:
@@ -769,17 +799,26 @@ class GestureGenerator(object):
             ctrl = [[min(hi[j], max(lo[j], c)) for j, c in enumerate(row)] for row in ctrl]
         return ctrl, dur
 
-    def gesture(self, emotion, intensity, event=None, variation=0.0, seed=None, project=False):
+    def gesture(self, emotion, intensity, event=None, variation=0.0, seed=None, project=False,
+                temperature=None, latent=None):
         """Gesture alone (arms + head + hands), no transitions: (joints, times, positions, info).
         project=True moves the control points that fall outside the guardian zone inside it
-        (raw model output otherwise)."""
+        (raw model output otherwise). temperature / latent: see generate()."""
         x = self.model_input(emotion, intensity, event)
         variation = float(variation or 0.0)
-        plans, proj_notes = {}, []
+        t = self.latent_temperature if temperature is None else float(temperature)
+        if not _finite(t) or t < 0:
+            raise GestureError("Invalid temperature (>= 0)")
+        latent = latent or {}
+        plans, proj_notes, zs = {}, [], {}
         for k, name in enumerate(COMPONENTS):
             if name in self.models:
-                plans[name] = self._plan(self.models[name], x, variation, None if seed is None else int(seed) + k,
-                                         project=project, notes=proj_notes)
+                sub = None if seed is None else int(seed) + k
+                z = self._latent(self.models[name], t, sub, latent.get(name))
+                if z is not None:
+                    zs[name] = [round(v, 4) for v in z]
+                plans[name] = self._plan(self.models[name], x, variation, sub,
+                                         project=project, notes=proj_notes, z=z)
         T = max(d for _, d in plans.values())
         n = max(4, int(math.ceil(T * self.rate_hz)) + 1)
         tt = _linspace(0.0, T, n)
@@ -808,10 +847,10 @@ class GestureGenerator(object):
                 notes.append("No hands model: hands not commanded")
         rows = [[c[i] for c in cols] for i in range(n)]
         durations = dict((k, round(d, 3)) for k, (_, d) in plans.items())
-        return joints, tt, rows, {"notes": notes, "durations": durations}
+        return joints, tt, rows, {"notes": notes, "durations": durations, "temperature": t, "latent": zs}
 
     def generate(self, emotion, intensity, event=None, current_pose=None, from_rest=False, return_to="start",
-                 variation=0.0, seed=None, adapt=None):
+                 variation=0.0, seed=None, adapt=None, temperature=None, latent=None):
         """Generates and validates. See the module documentation.
 
         current_pose : measured posture {joint: value}; adds the transitions.
@@ -819,6 +858,11 @@ class GestureGenerator(object):
         return_to    : "start" (end in the start position) or "rest" (go back to rest);
                        ignored without current_pose.
         variation    : small random variation (0 = learned gesture; seed `seed`).
+        temperature  : CVAE models only: z drawn from N(0, T^2), so one prompt gives a different
+                       whole gesture each time (a learned "way of doing"). None = the file's
+                       default (`latent_temperature`), 0 = central gesture (z = 0). Same `seed` =
+                       same z. Plain models ignore it.
+        latent       : CVAE models only: given z per group, e.g. {"arms": [0.5, -1.0, 0.0, 0.2]}.
         adapt        : make the gesture playable before the check, like the project UI
                        (control points into the zone, smooth saturation, slow-down where a
                        velocity or acceleration limit is exceeded). None = the file's setting
@@ -826,7 +870,8 @@ class GestureGenerator(object):
         if adapt is None:
             adapt = self.adapt_generated
         project = bool(adapt) and self.project_control_points
-        joints, tt, rows, extra = self.gesture(emotion, intensity, event, variation, seed, project=project)
+        joints, tt, rows, extra = self.gesture(emotion, intensity, event, variation, seed, project=project,
+                                               temperature=temperature, latent=latent)
         notes = list(extra["notes"])
         g = self.guardian
         ctx = {}
@@ -841,6 +886,8 @@ class GestureGenerator(object):
         gesture_report = g.check_trajectory(tt, joints, rows, context=ctx)
         inputs = {"emotion": emotion, "intensity": float(intensity), "event": event, "variation": variation,
                   "seed": seed, "timing": self.timing}
+        if extra["latent"]:
+            inputs.update(temperature=extra["temperature"], latent=extra["latent"])
         if current_pose is None:
             notes.append("No measured posture: bring the robot to the start position before sending this gesture")
             return Gesture(joints, tt, rows, gesture_report, gesture_report, [("gesture", 0.0, round(tt[-1], 4))],

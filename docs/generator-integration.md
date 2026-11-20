@@ -132,6 +132,8 @@ range, bad event, incomplete `current_pose`, bad `return_to`).
 | `from_rest` | `True` when the robot is at its calibrated rest pose. The first segment is then checked with the rest rules (section 5). If the measured posture is farther than `2 × start_tolerance` (0.1 rad by default) from rest on any arm or head joint, the gesture is refused with a `not_at_rest` violation. |
 | `return_to` | `"start"`: the movement ends in the calibrated start pose. `"rest"`: it continues from start to rest. Ignored without `current_pose`. |
 | `variation`, `seed` | small random variation of the control points (0 = the learned gesture). Same seed = same variant (but not the same variant as the project's numpy generator). |
+| `temperature` | CVAE models only (`gen.latent_dims` not empty): each call draws a latent code z ~ N(0, T²) per group, so the same prompt gives a different learned gesture (a "way of doing" seen in the takes). `None` (default) = the file's `latent_temperature` (model.yaml `cvae.temperature` at export; 0 for files exported before it), `0` = always the central gesture (z = 0). With `seed`, the draw is reproducible (not the same z as the project engine for the same seed). Recorded in `g.inputs["temperature"]` and `g.inputs["latent"]`. |
+| `latent` | CVAE models only: a given z per group, e.g. `{"arms": [0.5, -1.0, 0.0, 0.2]}` (same z = same gesture as the project engine). |
 | `adapt` | `None` (default): follow the `playback` settings exported with the JSON (the project's `execution` section), i.e. make the gesture playable as the project UI does (section 6). `False`: check the raw learned gesture only. |
 
 The movement returned with `current_pose` is made of named segments (`g.segments`, list of
