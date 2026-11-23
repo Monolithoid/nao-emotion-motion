@@ -243,11 +243,11 @@ How each segment is built and checked (`generate()`):
 
 | Segment | Built as | Checked against |
 |---|---|---|
-| `to_start` (measured posture → start, `from_rest=False`) | minimum-jerk, ≤ 0.8 × `rest_velocity` (0.3 rad/s by default → 0.24), acceleration ≤ 0.25 × max | factory limits, reduced velocity (rest rules): the measured posture may be outside the zone |
+| `to_start` (measured posture → start, `from_rest=False`) | minimum-jerk (`rest_segment()`), ≤ 0.8 × per-joint velocity and acceleration limits when `rest_velocity_rad_s` is `factory` (default); with a number, ≤ 0.8 × that velocity and 0.25 × max acceleration | factory limits, rest velocity (rest rules): the measured posture may be outside the zone |
 | `rest_to_start` (`from_rest=True`) | same profile | same, plus `not_at_rest` if not measured at rest |
 | `start_to_gesture`, `gesture_to_start` | quintic matched in position, velocity and acceleration with the gesture, ≤ 0.8 × per-joint limits; if no such curve stays inside the zone, the gesture is eased in/out and joined with a straight segment (`g.notes` says so) | calibrated zone: limits minus margin, coupled constraints, velocity, acceleration |
 | `gesture` | B-spline decoded from the models | calibrated zone |
-| `start_to_rest` (`return_to="rest"`) | minimum-jerk, same slow profile as `to_start` | rest rules |
+| `start_to_rest` (`return_to="rest"`) | minimum-jerk, same profile as `to_start` | rest rules |
 
 Practical consequences:
 

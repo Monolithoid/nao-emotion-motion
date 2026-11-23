@@ -175,10 +175,17 @@ class Guardian(object):
         self.groups = data.get("groups") or {}
         self.poses = data.get("poses") or {}
         # rest <-> start segments: rest may be outside the zone (contact); bounded by the
-        # factory limits and a reduced velocity (same rules as the project guardian)
+        # factory limits and a velocity (same rules as the project guardian): one value for
+        # every joint, or "factory" = the per-joint gesture limits (velocity_limit)
         self.rest_limits = dict((j, (float(lh[0]), float(lh[1])))
                                 for j, lh in (data.get("rest_limits") or data["limits"]).items())
-        self.rest_velocity = float(data.get("rest_velocity_rad_s", self.max_velocity))
+        rv = data.get("rest_velocity_rad_s", self.max_velocity)
+        self.rest_velocity_factory = rv == "factory"
+        if self.rest_velocity_factory:
+            # single value kept for callers of older versions: the lowest per-joint limit
+            self.rest_velocity = min([self.velocity_limit(j) for j in self.rest_limits] or [self.max_velocity])
+        else:
+            self.rest_velocity = float(rv)
         self.transition_velocity = float(data.get("transition_velocity_rad_s", self.max_velocity))
 
     @classmethod
@@ -202,6 +209,19 @@ class Guardian(object):
 
     def acceleration_limit(self, joint):
         return self.per_joint_acceleration.get(joint, self.max_acceleration)
+
+    def rest_velocity_limit(self, joint):
+        """Velocity limit of the rest <-> start segments for this joint."""
+        return self.velocity_limit(joint) if self.rest_velocity_factory else self.rest_velocity
+
+    def rest_transition_caps(self, joints):
+        """(velocity, acceleration) caps per joint used to BUILD rest <-> start segments.
+        "factory": 0.8 x the gesture limits, like the start <-> gesture transitions; otherwise
+        0.8 x rest_velocity and 0.25 x max acceleration (former rule)."""
+        if self.rest_velocity_factory:
+            return ([self.velocity_limit(j) * 0.8 for j in joints],
+                    [self.acceleration_limit(j) * 0.8 for j in joints])
+        return [self.rest_velocity * 0.8] * len(joints), [self.max_acceleration * 0.25] * len(joints)
 
     def pose(self, name):
         """Calibrated "rest" or "start" pose: {joint: rad}."""
@@ -376,7 +396,7 @@ class Guardian(object):
 
     def check_rest_transition(self, times, joints, positions, start_state=None, time_offset=0.0):
         """Rest <-> start segment, the ONLY one allowed to leave the movement zone (rest in
-        contact, arms on the knees...): factory limits, reduced velocity (rest_velocity_rad_s)
+        contact, arms on the knees...): factory limits, rest velocity (rest_velocity_rad_s)
         and acceleration; no margin, no coupled constraints. That this path is free of
         collisions is up to the calibration (start reachable from rest)."""
         try:
@@ -410,10 +430,11 @@ class Guardian(object):
         vel = [[(qs[i + 1][k] - qs[i][k]) / dt[i] for k in range(J)] for i in range(len(dt))]
         for k, j in enumerate(joints):
             i = max(range(len(vel)), key=lambda m: abs(vel[m][k]))
-            if abs(vel[i][k]) > self.rest_velocity:
+            lim = self.rest_velocity_limit(j)
+            if abs(vel[i][k]) > lim:
                 v.append(Violation("rest_velocity", "Rest <-> start segment too fast", joint=j,
                                    time_s=float(ts[i]) + time_offset, value=float(abs(vel[i][k])),
-                                   limit=self.rest_velocity))
+                                   limit=lim))
         if len(vel) >= 2:
             acc = [[(vel[i + 1][k] - vel[i][k]) / ((dt[i + 1] + dt[i]) / 2) for k in range(J)]
                    for i in range(len(vel) - 1)]

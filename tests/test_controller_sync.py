@@ -141,7 +141,7 @@ def test_refused_plan_is_never_executed(wb, cfg):
 def test_rest_outside_motion_zone_is_allowed(tmp_path):
     """Rest outside the movement zone (arms resting on the knees: contact). Only the
     rest <-> start segments leave it, checked against the factory limits and the
-    reduced velocity; the gesture stays subject to the full guardian."""
+    rest velocity; the gesture stays subject to the full guardian."""
     import copy
     from nao_motion.config import load_config
     from .conftest import make_wb
@@ -160,7 +160,7 @@ def test_rest_outside_motion_zone_is_allowed(tmp_path):
     rep = wb.ctrl.guardian.validate_rest_transition(wb.ctrl._transition(
         np.array(cfg.pose("rest", cfg.all_joints)), np.array(cfg.pose("start", cfg.all_joints)), cfg.all_joints))
     assert not rep.ok and any(v.code == "rest_velocity" for v in rep.violations)
-    cfg.guardian.rest_velocity_rad_s = 0.3
+    cfg.guardian.rest_velocity_rad_s = None
     # rest beyond the factory limits: refused
     cfg.poses["rest"]["left_arm"][j] = hi + 0.5
     wb.adapter.q[j] = wb.adapter.target[j] = hi + 0.5
@@ -171,3 +171,37 @@ def test_rest_outside_motion_zone_is_allowed(tmp_path):
     wb.adapter.q[j] = wb.adapter.target[j] = hi + 0.2
     plan = wb.ctrl.plan_cycle(gesture(cfg, amp=1.5))
     assert not plan.report.ok and any(v.code == "limit" for v in plan.report.violations)
+
+
+def test_rest_velocity_factory_config(tmp_path, cfg):
+    """guardian.yaml rest_velocity_rad_s: "factory" (default) or a number; anything else refused."""
+    import shutil
+    from nao_motion.config import ConfigError, load_config
+    g = cfg.guardian
+    assert g.rest_velocity_rad_s is None
+    assert g.rest_velocity_limit("LWristYaw") == g.velocity_limit("LWristYaw")
+    d = tmp_path / "configs"
+    shutil.copytree(cfg.root, d)
+    p = d / "guardian.yaml"
+    text = p.read_text(encoding="utf-8")
+    p.write_text(text.replace("rest_velocity_rad_s: factory", "rest_velocity_rad_s: 0.3"), encoding="utf-8")
+    assert load_config(d).guardian.rest_velocity_limit("LWristYaw") == 0.3
+    p.write_text(text.replace("rest_velocity_rad_s: factory", "rest_velocity_rad_s: fast"), encoding="utf-8")
+    with pytest.raises(ConfigError, match="rest_velocity_rad_s"):
+        load_config(d)
+
+
+def test_rest_transition_at_factory_limits_is_short(wb, cfg):
+    """Rest <-> start at the factory limits: well under a second (it took several seconds at
+    0.3 rad/s), and still accepted by the rest rules."""
+    j = cfg.all_joints
+    rest, start = np.array(cfg.pose("rest", j)), np.array(cfg.pose("start", j))
+    tr = wb.ctrl._rest_transition(rest, start, j)
+    assert tr.duration < 1.0
+    assert wb.ctrl.guardian.validate_rest_transition(tr).ok
+    cfg.guardian.rest_velocity_rad_s = 0.3
+    try:
+        slow = wb.ctrl._rest_transition(rest, start, j)
+    finally:
+        cfg.guardian.rest_velocity_rad_s = None
+    assert slow.duration > tr.duration

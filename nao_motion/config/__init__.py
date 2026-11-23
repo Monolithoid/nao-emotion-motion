@@ -41,7 +41,9 @@ class GuardianConfig:
     start_tolerance_rad: float
     transition_velocity_rad_s: float
     coupled_constraints: List[CoupledConstraint]
-    rest_velocity_rad_s: float = 0.3  # rest <-> start segments (rest outside the movement zone)
+    # rest <-> start segments (rest outside the movement zone). None ("factory" in guardian.yaml):
+    # same per-joint velocity and acceleration limits as the gestures (factory limits)
+    rest_velocity_rad_s: Optional[float] = 0.3
     per_joint_margin: Dict[str, float] = field(default_factory=dict)
     per_joint_acceleration: Dict[str, float] = field(default_factory=dict)
     # where each per-joint velocity limit comes from (guardian.yaml, factory speed, takes, ceiling)
@@ -52,6 +54,22 @@ class GuardianConfig:
 
     def velocity_limit(self, joint: str) -> float:
         return float(self.per_joint_velocity_rad_s.get(joint, self.max_velocity_rad_s))
+
+    def rest_velocity_limit(self, joint: str) -> float:
+        """Velocity limit of the rest <-> start segments for this joint."""
+        if self.rest_velocity_rad_s is None:
+            return self.velocity_limit(joint)
+        return float(self.rest_velocity_rad_s)
+
+    def rest_transition_caps(self, joints) -> Tuple[List[float], List[float]]:
+        """(velocity, acceleration) caps per joint used to BUILD rest <-> start segments.
+        Factory mode: 0.8 x the gesture limits, like the start <-> gesture transitions;
+        otherwise the former rule (0.8 x rest_velocity_rad_s, 0.25 x max acceleration)."""
+        if self.rest_velocity_rad_s is None:
+            return ([self.velocity_limit(j) * 0.8 for j in joints],
+                    [self.acceleration_limit(j) * 0.8 for j in joints])
+        return ([float(self.rest_velocity_rad_s) * 0.8] * len(joints),
+                [self.max_acceleration_rad_s2 * 0.25] * len(joints))
 
     def margin(self, joint: str) -> float:
         return float(self.per_joint_margin.get(joint, self.limit_margin_rad))
@@ -269,7 +287,7 @@ def load_config(config_dir: Optional[os.PathLike] = None, calibration_file: Opti
         start_tolerance_rad=float(guard["start_tolerance_rad"]),
         transition_velocity_rad_s=float(guard["transition_velocity_rad_s"]),
         coupled_constraints=cc,
-        rest_velocity_rad_s=float(guard.get("rest_velocity_rad_s", 0.3)),
+        rest_velocity_rad_s=_rest_velocity(guard.get("rest_velocity_rad_s", 0.3)),
         per_joint_margin={k: float(v) for k, v in (guard.get("per_joint_margin") or {}).items()},
         per_joint_acceleration={k: float(v) for k, v in (guard.get("per_joint_acceleration") or {}).items()},
         zone_margin_rad=None if guard.get("zone_margin_rad") is None else float(guard["zone_margin_rad"]),
@@ -324,6 +342,20 @@ def _guardian_bounds(g: GuardianConfig, limits, joints, calibration) -> Dict[str
             if c.name.startswith("calib:"):
                 c.bound = c.bound + cal_m - zm
     return out
+
+
+def _rest_velocity(value) -> Optional[float]:
+    """guardian.yaml `rest_velocity_rad_s`: a velocity (rad/s, same for every joint) or
+    "factory" (the per-joint gesture limits). None is returned for "factory"."""
+    if isinstance(value, str) and value.strip().lower() == "factory":
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        raise ConfigError("guardian.yaml: rest_velocity_rad_s must be a number > 0 or \"factory\"")
+    if not v > 0:
+        raise ConfigError("guardian.yaml: rest_velocity_rad_s must be a number > 0 or \"factory\"")
+    return v
 
 
 def factory_velocity(guard: dict, joint: str) -> Optional[float]:

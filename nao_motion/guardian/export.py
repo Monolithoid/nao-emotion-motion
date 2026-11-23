@@ -61,9 +61,10 @@ def guardian_dict(cfg: Config, allow_uncalibrated: bool = False) -> dict:
         "start_tolerance_rad": g.start_tolerance_rad,
         "transition_velocity_rad_s": g.transition_velocity_rad_s,
         # rest may be outside the zone (contact): rest <-> start segments bounded by
-        # these (factory) limits and this velocity, without coupled constraints
+        # these (factory) limits and this velocity ("factory": the per-joint velocity_rad_s),
+        # without coupled constraints
         "rest_limits": {j: [float(lo), float(hi)] for j, (lo, hi) in cfg.rest_limits.items()},
-        "rest_velocity_rad_s": g.rest_velocity_rad_s,
+        "rest_velocity_rad_s": "factory" if g.rest_velocity_rad_s is None else g.rest_velocity_rad_s,
         "coupled_constraints": [{"name": c.name, "terms": dict(c.terms), "bound": c.bound,
                                  "description": c.description,
                                  "origin": "calibration" if c.name in calib_names else "manual"}
