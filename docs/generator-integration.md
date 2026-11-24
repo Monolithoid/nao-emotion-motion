@@ -54,7 +54,7 @@ def play(emotion, intensity, event=None):
     stiffen_in_place(names)                            # section 4
     pose = measured_pose(names)
     g = gen.generate(emotion, intensity, event=event, current_pose=pose,
-                     from_rest=is_at_rest(pose), return_to="rest")
+                     from_rest=not is_at_start(pose), return_to="rest")
     if not g.ok:
         log(g.report.summary())                        # never send a refused movement
         return False
@@ -129,7 +129,7 @@ range, bad event, incomplete `current_pose`, bad `return_to`).
 | Parameter | Effect |
 |---|---|
 | `current_pose` | measured posture `{joint: value}` for **every** joint of the gesture (arms, head, and hands if a hands model exists). Strongly recommended: with it, the move to the start pose is added when needed and the **whole** movement is validated. |
-| `from_rest` | `True` when the robot is at its calibrated rest pose. The first segment is then checked with the rest rules (section 5). If the measured posture is farther than `2 × start_tolerance` (0.1 rad by default) from rest on any arm or head joint, the gesture is refused with a `not_at_rest` violation. |
+| `from_rest` | `True` when the robot is anywhere before the start pose: "rest" is any posture that is not the start pose, not a pose that is checked. A `rest_to_start` segment then goes from `current_pose` to the start pose and is checked with the rest rules (section 5). |
 | `return_to` | `"start"`: the movement ends in the calibrated start pose. `"rest"`: it continues from start to rest. Ignored without `current_pose`. |
 | `variation`, `seed` | small random variation of the control points (0 = the learned gesture). Same seed = same variant (but not the same variant as the project's numpy generator). |
 | `temperature` | CVAE models only (`gen.latent_dims` not empty): each call draws a latent code z ~ N(0, T²) per group, so the same prompt gives a different learned gesture (a "way of doing" seen in the takes). `None` (default) = the file's `latent_temperature` (model.yaml `cvae.temperature` at export; 0 for files exported before it), `0` = always the central gesture (z = 0). With `seed`, the draw is reproducible (not the same z as the project engine for the same seed). Recorded in `g.inputs["temperature"]` and `g.inputs["latent"]`. |
@@ -294,7 +294,7 @@ How each segment is built and checked (`generate()`):
 
 | Segment | Built as | Checked against |
 |---|---|---|
-| `rest_to_start` (`from_rest=True`) | minimum-jerk (`rest_segment()`), ≤ 0.8 × per-joint velocity and acceleration limits when `rest_velocity_rad_s` is `factory` (default); with a number, ≤ 0.8 × that velocity and 0.25 × max acceleration | factory limits, rest velocity (rest rules): rest may be outside the zone; plus `not_at_rest` if not measured at rest |
+| `rest_to_start` (`from_rest=True`) | minimum-jerk (`rest_segment()`), ≤ 0.8 × per-joint velocity and acceleration limits when `rest_velocity_rad_s` is `factory` (default); with a number, ≤ 0.8 × that velocity and 0.25 × max acceleration | factory limits, rest velocity (rest rules): the measured posture may be outside the zone |
 | `gesture` | B-spline decoded from the models, the start pose repeated at both ends ([gesture-curve.md](gesture-curve.md)) | calibrated zone |
 | `start_to_rest` (`return_to="rest"`) | minimum-jerk, same profile as `rest_to_start` | rest rules |
 
@@ -306,14 +306,13 @@ Practical consequences:
 - The first point of the movement must match the measured posture within `start_tolerance`
   (0.05 rad by default): measure `current_pose` immediately before sending, and do not let
   anything else move the robot between `generate()` and `angleInterpolation()`.
-- To decide `from_rest`, use the same rule as the project UI ("auto" start: rest if measured
-  there, else current posture):
+- To decide `from_rest`: any posture that is not the start pose (within `start_tolerance`,
+  hands included, as `start_mismatch` checks them) counts as rest:
 
   ```python
-  def is_at_rest(pose):
-      rest, tol = gen.guardian.pose("rest"), 2 * gen.guardian.start_tolerance
-      hands = set(gen.groups.get("hands") or [])
-      return all(abs(pose[j] - rest[j]) <= tol for j in pose if j in rest and j not in hands)
+  def is_at_start(pose):
+      start, tol = gen.guardian.pose("start"), gen.guardian.start_tolerance
+      return all(abs(pose[j] - start[j]) <= tol for j in pose if j in start)
   ```
 
 ## 6. Guardian behaviour
@@ -339,7 +338,6 @@ Violation codes you may see in `g.report.violations` (each has `code`, `message`
 | `duration` | gesture shorter or longer than allowed |
 | `start_mismatch` | first point too far from the measured posture |
 | `rest_limit`, `rest_velocity` | rest / measured-posture transition outside factory limits or too fast |
-| `not_at_rest` | `from_rest=True` but the robot is not measured at rest |
 | `legs`, `unknown_joint`, `incompatible`, `format` | wrong input |
 
 **Making a gesture playable (same as the project UI).** Before checking, the library does what
@@ -366,7 +364,6 @@ electrical or software stability of the robot.
 | Unknown emotion, intensity outside [0, 1], invalid event, incomplete `current_pose` | `GestureError` raised by `generate()` | fix the input (map LLM labels to `gen.emotions`, clamp intensity); log |
 | Guardian refusal | `g.ok` is `False`, nothing to send; `angle_interpolation()` raises `GuardianError` | send **nothing**; log `g.report.summary()`. Optionally retry once with a lower intensity, without the event, or with a small `variation` and a new `seed`; otherwise skip the gesture (the dialogue goes on without it) |
 | Mostly `velocity` / `acceleration` refusals | gesture still too fast after the slow-down (section 6), or `adapt=False` | report it to the dataset owner (calibration velocities, retraining) rather than raising limits in the JSON |
-| `not_at_rest` | `from_rest=True` while the robot is elsewhere | call again with `from_rest=False` (or use `is_at_rest()` above) |
 | `start_mismatch` | the robot moved since the measurement | measure again and regenerate |
 | Uncalibrated file | `GuardianError` at load | export again from a calibrated project |
 | Need to stop during the movement | — | run the movement asynchronously: `tid = motion.post.angleInterpolation(...)`, then `motion.stop(tid)` (generic NAOqi module method) or `motion.killTasksUsingResources(names)`. The project stops by **holding the posture**, not by going back to rest. Relaxing instead makes raised arms fall. |
@@ -386,7 +383,7 @@ for 0.5 s or exceeds 0.8 rad (`configs/robot.yaml` → `execution.tracking_*`). 
 4. Express targets in the torso frame, azimuth positive to the robot's left, or pass
    `frame="head"` with the head angles measured at detection time.
 5. Stiffen the gesture joints in place, then measure `current_pose` with sensor values.
-6. Call `generate(..., current_pose=pose, from_rest=is_at_rest(pose), return_to=...)`.
+6. Call `generate(..., current_pose=pose, from_rest=not is_at_start(pose), return_to=...)`.
 7. Send only if `g.ok`, with `g.angle_interpolation()`; convert names to `str` under Python 2.7.
 8. At the end: relax only at rest (or keep stiff at start to chain gestures); after a stop, hold.
 9. Never command the legs; never bypass the guardian; never return to rest automatically after an

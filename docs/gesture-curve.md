@@ -102,11 +102,13 @@ from rest:  rest_to_start | gesture                                 [| start_to_
 
 What remains outside the curve:
 
-- `rest_to_start` (`from_rest=True`) and `start_to_rest` (`return_to="rest"`): unchanged, still
-  checked under the rest rules.
-- Nothing else: there is no `to_start` any more. The robot must already be at the start pose
-  (within `start_tolerance_rad`); otherwise the guardian refuses the gesture
-  (`start_mismatch`) and nothing is sent. The caller brings the robot back first if needed.
+- `rest_to_start` (`from_rest=True`) and `start_to_rest` (`return_to="rest"`): still checked
+  under the rest rules. "Rest" is any posture before the start pose, not a pose that is
+  checked: `rest_to_start` goes from the measured posture to the start pose.
+- Nothing else: there is no `to_start` any more. With `from_rest=False`, the robot must already
+  be at the start pose (within `start_tolerance_rad`); otherwise the guardian refuses the
+  gesture (`start_mismatch`) and nothing is sent. A caller that is not sure passes
+  `from_rest=True` whenever the robot is not at the start pose.
 
 With `duration_s=D`, the `gesture` segment (entry and return included) lasts about `D`, so the
 movement and the speech have the same length.

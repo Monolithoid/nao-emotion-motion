@@ -47,8 +47,10 @@ robot must already be at the start position (within `start_tolerance`): no
 move to it is added and the guardian refuses the gesture (start_mismatch).
 Without `current_pose`, only the gesture is returned and the caller must first
 bring the robot to the start position.
-`from_rest=True`: the robot is at rest (possibly outside the movement zone, in
-contact); the rest -> start segment then follows the "rest" rules.
+`from_rest=True`: the robot is anywhere before the start pose ("rest" is any such
+posture, not a pose that is checked; possibly outside the movement zone, in
+contact): the rest -> start segment goes from the measured posture to the start
+pose and follows the "rest" rules.
 """
 from __future__ import absolute_import, division, print_function, unicode_literals
 
@@ -1079,7 +1081,8 @@ class GestureGenerator(object):
 
         current_pose : measured posture {joint: value}: must be the start pose (within
                        start_tolerance) unless from_rest; the whole movement is validated.
-        from_rest    : the robot is at rest (rest -> start segment under the "rest" rules).
+        from_rest    : the robot is anywhere before the start pose (rest -> start segment
+                       from current_pose, under the "rest" rules).
         return_to    : "start" (end in the start position) or "rest" (go back to rest);
                        ignored without current_pose.
         variation    : small random variation (0 = learned gesture; seed `seed`).
@@ -1148,13 +1151,7 @@ class GestureGenerator(object):
         q_cur = [current_pose[j] for j in joints]
         start = [float(start_p[j]) for j in joints]
         rest = [float(rest_p[j]) for j in joints]
-        hands = set(self.groups.get("hands") or [])
         violations = []
-        if from_rest:
-            far = [j for j, q, r in zip(joints, q_cur, rest)
-                   if j not in hands and abs(q - r) > 2 * g.start_tolerance]
-            if far:
-                violations.append(Violation("not_at_rest", "Robot not measured at rest: %s" % ", ".join(far)))
         motion = _resampled(_traj(tt, rows), 50.0)
         # the curve starts and ends on the start pose at rest: no transition around it. The robot
         # must already be there (within start_tolerance), or come from rest: no to_start segment;
