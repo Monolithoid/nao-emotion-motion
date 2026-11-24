@@ -114,7 +114,10 @@ def test_same_gesture_as_engine(exported, case):
 
 
 @pytest.mark.parametrize("from_rest", [False, True])
-def test_same_cycle_as_controller(exported, tmp_path, from_rest):
+def test_cycle_against_controller(exported, tmp_path, from_rest):
+    """The exported generator puts the start pose inside the gesture's B-spline: no
+    start <-> gesture transition, unlike the project controller. The rest / to-start segment
+    before the gesture is still the controller's."""
     c, models, _, _, gen = exported
     wb = make_wb(tmp_path, c)
     eng = MotionEngine.from_paths(c, models["arms"], models["head"], models["hands"])
@@ -130,10 +133,20 @@ def test_same_cycle_as_controller(exported, tmp_path, from_rest):
                      return_to="rest" if from_rest else "start")
     names_fr = {"repos_vers_depart": "rest_to_start", "vers_depart": "to_start", "depart_vers_geste": "start_to_gesture",
                 "geste": "gesture", "geste_vers_depart": "gesture_to_start", "depart_vers_repos": "start_to_rest"}
-    assert [s[0] for s in g.segments] == [names_fr.get(s[0], s[0]) for s in plan.segments]
-    np.testing.assert_allclose(g.times, plan.traj.t, atol=1e-9)
-    np.testing.assert_allclose(np.array(g.positions), plan.traj.q, atol=1e-7)
-    assert g.ok == plan.report.ok
+    expected = [names_fr.get(s[0], s[0]) for s in plan.segments]
+    expected = [n for n in expected if n not in ("start_to_gesture", "gesture_to_start")]
+    assert [s[0] for s in g.segments] == expected
+    # same first segment (measured posture -> start) as the controller
+    end = g.segments[0][2]
+    n = sum(1 for t in g.times if t <= end + 1e-9)
+    np.testing.assert_allclose(g.times[:n], plan.traj.t[:n], atol=1e-9)
+    np.testing.assert_allclose(np.array(g.positions[:n]), plan.traj.q[:n], atol=1e-7)
+    # the gesture itself starts and ends on the start pose
+    start = np.array(c.pose("start", joints))
+    np.testing.assert_allclose(g.positions[n - 1], start, atol=1e-9)
+    i_end = sum(1 for t in g.times if t <= g.segments[1][2] + 1e-9) - 1
+    np.testing.assert_allclose(g.positions[i_end], start, atol=1e-9)
+    assert plan.report.ok
     assert g.ok, [v.to_dict() for v in g.report.violations][:8]
     names, angles, times = g.angle_interpolation()
     assert names == joints and len(angles) == len(joints) and times[0][0] > 0
@@ -288,14 +301,17 @@ def test_adapted_gesture_matches_project(exported_fast, case):
     joints, tt, rows, _ = gen.gesture(emo, inten, _event_dict(ev), project=True)
     assert joints == list(ref.combined.joints)
     np.testing.assert_allclose(np.array(rows), ref.combined.q, atol=1e-9)
-    # 2. same make_playable, fed with the library's own samples.  Projected control points
+    # 2. same make_playable, fed with the library's own samples (the projected learned gesture
+    # inside its B-spline, start pose at both ends, before the adaptation).  Projected control points
     # sit exactly on a bound, so whether a joint "goes past" it (and gets the soft saturation
     # over its whole band) can flip on a 1e-16 rounding difference, in the project's own
     # numpy version too: positions are compared within that band (SOFT_BAND_RAD), the timing
     # and the verdict exactly.
+    joints, tt, rows = gen._sequence(emo, inten, _event_dict(ev), None, 1, 0.0, 0, True, None, None,
+                                     False, {})[:3]
     played = make_playable(c, Trajectory(joints, np.array(tt), np.array(rows))).traj
-    raw = gen.generate(emo, inten, _event_dict(ev), adapt=False)
-    g = gen.generate(emo, inten, _event_dict(ev))
+    raw = gen.generate(emo, inten, _event_dict(ev), adapt=False, seed=0)
+    g = gen.generate(emo, inten, _event_dict(ev), seed=0)
     assert not raw.ok  # the raw gesture is refused...
     assert g.adaptation["changed"] and g.raw_report is not None and not g.raw_report.ok
     np.testing.assert_allclose(g.times, played.t, atol=1e-7)

@@ -25,23 +25,26 @@ def test_count_forces_the_number_of_draws(exported, n):
     g = gen.generate(c.emotions[0], 0.6, current_pose=_pose(c, gen), count=n, seed=1)
     assert g.ok, g.report.summary()
     assert g.sequence["draws"] == n and len(g.sequence["draw_seeds"]) == n
-    # no duration: the whole learned material, at the learned tempo
+    # no duration: the whole learned material at the learned tempo, between the entry and the return
     assert g.sequence["time_scale"] == 1.0
     seg = dict((name, (a, b)) for name, a, b in g.segments)
-    assert seg["gesture"][1] - seg["gesture"][0] == pytest.approx(sum(g.sequence["draw_durations_s"]), abs=0.05)
+    whole = g.sequence["entry_s"] + sum(g.sequence["draw_durations_s"]) + g.sequence["return_s"]
+    assert seg["gesture"][1] - seg["gesture"][0] == pytest.approx(whole, abs=0.05)
 
 
 @pytest.mark.parametrize("D, n", [(1.0, 1), (2.5, 2), (4.0, 3)])
 def test_duration_draws_until_it_is_covered(exported, D, n):
-    """Draws are added until their learned durations exceed D (the fake gestures last ~1.5 s)."""
+    """Draws are added until the entry plus their learned durations exceed D (the fake gestures
+    last ~1.5 s)."""
     c, _, _, _, gen = exported
     g = gen.generate(c.emotions[0], 0.5, current_pose=_pose(c, gen), duration_s=D, seed=2)
     assert g.ok, g.report.summary()
     assert g.sequence["draws"] == n
-    assert sum(g.sequence["draw_durations_s"][:-1]) <= D < sum(g.sequence["draw_durations_s"])
-    seg = dict((name, (a, b)) for name, a, b in g.segments)
-    assert seg["gesture"][1] - seg["gesture"][0] == pytest.approx(D, abs=0.03)
-    assert [s[0] for s in g.segments] == ["to_start", "start_to_gesture", "gesture", "gesture_to_start"]
+    entry, ds = g.sequence["entry_s"], g.sequence["draw_durations_s"]
+    assert entry + sum(ds[:-1]) <= D < entry + sum(ds)
+    # already at the start pose: the gesture is the whole movement, entry and return included
+    assert [s[0] for s in g.segments] == ["gesture"]
+    assert g.duration == pytest.approx(D, abs=0.03)
 
 
 @pytest.mark.parametrize("intensity", [0.0, 0.3, 0.8])
@@ -83,7 +86,7 @@ def test_same_seed_same_movement(exported):
     assert again.positions == u.positions
 
 
-def test_continuous_and_ends_at_rest_on_the_start_pose(exported):
+def test_continuous_and_starts_and_ends_at_rest_on_the_start_pose(exported):
     c, _, _, _, gen = exported
     g = gen.generate(c.emotions[0], 0.3, duration_s=6.0, seed=5)
     assert g.sequence["draws"] >= 4
@@ -93,18 +96,47 @@ def test_continuous_and_ends_at_rest_on_the_start_pose(exported):
     assert (np.abs(v) <= limits * 1.001).all()                  # no jump anywhere, junctions included
     assert np.abs(np.diff(v, axis=0)).max() < 0.05              # smooth velocity (C2 spline)
     start = np.array([gen.guardian.pose("start")[j] for j in g.joints])
-    np.testing.assert_allclose(q[-1], start, atol=1e-9)         # ends on the start pose...
-    assert np.abs(v[-1]).max() < 1e-3                           # ...at zero velocity
+    for k in (0, -1):                                           # starts and ends on the start pose...
+        np.testing.assert_allclose(q[k], start, atol=1e-9)
+    assert np.abs(v[0]).max() < 1e-2 and np.abs(v[-1]).max() < 1e-2   # ...at zero velocity...
+    a = np.diff(v, axis=0) / np.diff(t)[1:, None]
+    assert np.abs(a[0]).max() < 1.0 and np.abs(a[-1]).max() < 1.0     # ...and zero acceleration
+    assert g.sequence["entry_s"] > 0
     assert g.ok
 
 
-def test_no_duration_gives_the_former_output(exported):
+@pytest.mark.parametrize("D", [None, 3.0])
+def test_segments_around_the_gesture(exported, D):
+    """No transition around the gesture: to_start only when the robot is not at the start pose."""
+    c, _, _, _, gen = exported
+    at_start = _pose(c, gen)
+    g = gen.generate(c.emotions[1], 0.6, current_pose=at_start, duration_s=D, seed=7)
+    assert [s[0] for s in g.segments] == ["gesture"] and g.ok
+    away = dict(at_start)
+    j = gen.groups["arms"][0]
+    away[j] += 3 * gen.guardian.start_tolerance
+    g = gen.generate(c.emotions[1], 0.6, current_pose=away, duration_s=D, seed=7)
+    assert [s[0] for s in g.segments] == ["to_start", "gesture"] and g.ok
+    rest = dict(zip(gen._joint_order(), c.pose("rest", gen._joint_order())))
+    g = gen.generate(c.emotions[1], 0.6, current_pose=rest, from_rest=True, return_to="rest", duration_s=D, seed=7)
+    assert [s[0] for s in g.segments] == ["rest_to_start", "gesture", "start_to_rest"] and g.ok
+    if D is not None:  # the movement fills the duration on its own
+        seg = dict((name, (a, b)) for name, a, b in g.segments)
+        assert seg["gesture"][1] - seg["gesture"][0] == pytest.approx(D, abs=0.03)
+
+
+def test_no_duration_is_one_uncut_draw(exported):
+    """Without duration_s / count (reflexes): the same construction with one draw, uncut;
+    g.sequence stays None."""
     c, _, _, _, gen = exported
     g = gen.generate(c.emotions[0], 0.7, seed=3, current_pose=_pose(c, gen))
     assert g.sequence is None and "sequence" not in g.to_dict()
     assert "duration_s" not in g.inputs and "count" not in g.inputs
-    raw = gen.generate(c.emotions[0], 0.7, seed=3, adapt=False)
-    assert raw.positions == gen.gesture(c.emotions[0], 0.7, seed=3)[2]
+    one = gen.generate(c.emotions[0], 0.7, seed=3, current_pose=_pose(c, gen), count=1)
+    assert g.positions == one.positions and g.times == one.times
+    assert [s[0] for s in g.segments] == ["gesture"] and g.ok
+    start = [gen.guardian.pose("start")[j] for j in g.joints]
+    assert g.positions[0] == pytest.approx(start, abs=1e-9) and g.positions[-1] == pytest.approx(start, abs=1e-9)
 
 
 def test_too_fast_gestures_are_made_playable_and_fitted(exported_fast):
@@ -160,6 +192,6 @@ def test_command_line_duration(exported, capsys):
     c, _, out, lib, _ = exported
     assert lib._main([out["data"], c.emotions[0], "0.5", "--duration=3.2", "--seed=1"]) == 0
     res = json.loads(capsys.readouterr().out)
-    assert res["sequence"]["draws"] == 3 and abs(res["duration_s"] - 3.2) < 0.05
+    assert res["sequence"]["draws"] == 2 and abs(res["duration_s"] - 3.2) < 0.05
     assert lib._main([out["data"], c.emotions[0], "0.5", "--count=2"]) == 0
     assert lib._main([out["data"], c.emotions[0], "0.5", "--bogus=2"]) == 2

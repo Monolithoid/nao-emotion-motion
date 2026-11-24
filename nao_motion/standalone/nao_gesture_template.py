@@ -39,11 +39,12 @@ Output: a `Gesture` (joints, times in s, positions in rad; LHand / RHand are
 openings 0..1) and the guardian report. The generator commands NOTHING and the
 guardian never modifies a movement: it accepts or rejects it.
 
-`current_pose` ({joint: measured value}): the learned gesture starts from the
-calibrated start position. Given the measured posture, the generator adds the
-transitions (current posture -> start -> gesture -> start, and to rest if asked)
-and validates the whole, like the project UI. Without it, only the gesture is
-returned and the caller must first bring the robot to the start position.
+`current_pose` ({joint: measured value}): the gesture starts and ends on the
+calibrated start position, inside its own B-spline (no transition around it).
+Given the measured posture, the generator adds what is missing (current posture
+-> start when it is not there yet, start -> rest if asked) and validates the
+whole, like the project UI. Without it, only the gesture is returned and the
+caller must first bring the robot to the start position.
 `from_rest=True`: the robot is at rest (possibly outside the movement zone, in
 contact); the rest -> start segment then follows the "rest" rules.
 """
@@ -596,13 +597,17 @@ def _make_playable(guardian, joints, t, q, context=None, rate_hz=50.0, mode="loc
 # -- duration-targeted sequence (generate(..., duration_s=D)) --------------------------------
 # Several learned gestures (draws) are blended into ONE cubic B-spline per group: their control
 # points are concatenated (the clamped end points at each junction are dropped, so the movement
-# does not pass through the start pose between draws), the curve is cut on a control point and
-# ends on the start pose repeated (arrival at zero velocity). The duration is then fitted to D
-# within a margin that depends on the intensity.
+# does not pass through the start pose between draws), the curve is cut on a control point.
+# The start pose is part of the same curve at BOTH ends, repeated DEGREE times (S S S P1 ... Pn
+# S S S): a clamped cubic leaves and reaches it at zero velocity and acceleration, so no
+# transition is added around the gesture. The duration (entry and return included) is then
+# fitted to D within a margin that depends on the intensity. Without duration_s, the same
+# construction with one draw, uncut.
 CAPABILITIES = ("duration_s", "count")
 DURATION_FITS = ("intensity", "off")
 SEQUENCE_DEFAULTS = {"duration_fit": "intensity", "margin_k": 1.0, "scale_min": 0.7, "scale_max": 3.0}
 RETURN_SPANS = 2.0     # time allowed to go back to the start pose after the cut, in knot spans
+ENTRY_SPANS = 2.0      # time allowed to leave the start pose before the first learned point, in knot spans
 
 
 def _greville(n_ctrl):
@@ -631,14 +636,23 @@ def _margin(intensity, fit, k, scale_min, scale_max):
     return min(1.0, max(float(scale_min), 1.0 - m)), max(1.0, min(float(scale_max), 1.0 + m))
 
 
-def _sequence_curve(draws, end_pose, E, R, rate_hz):
-    """Times and rows of the blended sequence cut at E s (ending on `end_pose` at rest).
+def _move_time(guardian, groups, a, b):
+    """Shortest minimum-jerk duration (s) from `a` to `b` ({group: [value per joint]}) within
+    0.8 x the per-joint velocity and acceleration limits, like the transitions."""
+    T = 0.0
+    for name in a:
+        for j, x, y in zip(groups[name], a[name], b[name]):
+            d = abs(y - x)
+            T = max(T, 1.875 * d / (0.8 * guardian.velocity_limit(j)),
+                    math.sqrt(5.774 * d / (0.8 * guardian.acceleration_limit(j))))
+    return T
 
-    draws: [(duration s, {group: ctrl})], end_pose: {group: [value per joint]}, R: return time
-    (s) kept after the last control point. Returns (times, {group: rows}, kept points per group)."""
-    tt = _grid(E, rate_hz)
-    out, kept = {}, {}
-    n = len(draws)
+
+def _learned_points(draws):
+    """{group: (control points, learned time of each, s from 0)} of the blended draws.
+
+    draws: [(duration s, {group: ctrl})]."""
+    out, n = {}, len(draws)
     for name in draws[0][1]:
         pts, tau, off = [], [], 0.0
         for i, (T, plans) in enumerate(draws):
@@ -649,10 +663,32 @@ def _sequence_curve(draws, end_pose, E, R, rate_hz):
                 pts.append(ctrl[j])
                 tau.append(off + u * T)
             off += T
-        m = max(1, len([x for x in tau if x <= E - R + 1e-9]))
-        pts, tau = pts[:m], tau[:m]
+        out[name] = (pts, tau)
+    return out
+
+
+def _kept(tau, x):
+    """Number of learned points kept by a cut at learned time x (at least one)."""
+    return max(1, len([t for t in tau if t <= x + 1e-9]))
+
+
+def _sequence_curve(learned, start_pose, x, R, Tin, rate_hz):
+    """Times and rows of the blended sequence cut at learned time x, starting and ending on
+    `start_pose` at rest inside the same B-spline: E = Tin + x + R s in all.
+
+    learned: _learned_points(), start_pose: {group: [value per joint]}, Tin: entry time (s)
+    before the first learned point, R: return time (s) after the last kept one.
+    Returns (times, {group: rows}, kept learned points per group)."""
+    E = Tin + x + R
+    tt = _grid(E, rate_hz)
+    out, kept = {}, {}
+    for name, (lp, lt) in learned.items():
+        m = _kept(lt, x)
+        # start pose repeated DEGREE times at both ends: zero velocity and acceleration there
+        pts = [list(start_pose[name])] * DEGREE + lp[:m]
+        tau = [Tin * f / DEGREE for f in range(DEGREE)] + [Tin + t for t in lt[:m]]
         a = tau[-1]
-        pts += [list(end_pose[name])] * DEGREE
+        pts += [list(start_pose[name])] * DEGREE
         tau += [a + (E - a) * f / DEGREE for f in range(1, DEGREE + 1)]
         knots = _knots_from_times(tau)
         J, K = len(pts[0]), len(pts)
@@ -993,7 +1029,8 @@ class GestureGenerator(object):
             seed = random.Random().randrange(2 ** 31)
         seed = int(seed)
         rng = random.Random(seed)
-        draws, seeds, zs_all, durations, total = [], [], [], {}, 0.0
+        start = g.pose("start")
+        draws, seeds, zs_all, durations, total, Tin = [], [], [], {}, 0.0, 0.0
         while True:
             s_i = seed if not draws else rng.randrange(2 ** 31)
             plans, pn, zs = self._plans(x, variation, s_i, project, temp, latent)
@@ -1005,25 +1042,32 @@ class GestureGenerator(object):
             for n, (_, d) in plans.items():
                 durations[n] = durations.get(n, 0.0) + d
             total += T
-            if (len(draws) >= count) if count is not None else total > target:
+            if len(draws) == 1:
+                # start pose of the curve (a joint without one: the first learned point), and the
+                # entry time to leave it: ENTRY_SPANS knot spans, longer if the first point is far
+                start_pose = {}
+                for n, ctrl in draws[0][1].items():
+                    js = self.groups[n]
+                    start_pose[n] = [float(start[j]) if j in start else ctrl[0][c] for c, j in enumerate(js)]
+                span = max(T / (len(c) - DEGREE) for c in draws[0][1].values())
+                first = dict((n, c[0]) for n, c in draws[0][1].items())
+                Tin = max(ENTRY_SPANS * span, _move_time(g, self.groups, start_pose, first))
+            if (len(draws) >= count) if count is not None else Tin + total > target:
                 break
-        start = g.pose("start")
-        end_pose = {}
-        for n, ctrl in draws[0][1].items():
-            js = self.groups[n]
-            end_pose[n] = [float(start[j]) if j in start else ctrl[0][c] for c, j in enumerate(js)]
-        R = RETURN_SPANS * max(draws[0][0] / (len(c) - DEGREE) for c in draws[0][1].values())
-        # possible cuts: after each control point of the finest group, or at the end of the last draw
-        ref = max(draws[0][1], key=lambda n: len(draws[0][1][n]))
-        taus, off = [], 0.0
-        for i, (T, plans) in enumerate(draws):
-            us = _greville(len(plans[ref]))
-            taus += [off + u * T for j, u in enumerate(us) if not (j == 0 and i > 0)
-                     and not (j == len(us) - 1 and i < len(draws) - 1)]
-            off += T
-        cuts = sorted(set([round(x + R, 6) for x in taus[1:] if x + R < total] + [round(total, 6)]))
+        learned = _learned_points(draws)
+        # possible cuts (learned time x): after each control point of the finest group. The movement
+        # then lasts E = Tin + x + R: entry, learned time, return to the start pose, R = RETURN_SPANS
+        # knot spans or longer if the last kept points are far from the start pose
+        ref = max(learned, key=lambda n: len(learned[n][0]))
+        xs = learned[ref][1][1:]
         if target is None:
-            cuts = cuts[-1:]
+            xs = xs[-1:]  # no duration to fit: every learned point is kept
+        by_E = {}
+        for x in xs:
+            last = dict((n, lp[_kept(lt, x) - 1]) for n, (lp, lt) in learned.items())
+            R = max(RETURN_SPANS * span, _move_time(g, self.groups, last, start_pose))
+            by_E.setdefault(round(Tin + x + R, 6), (x, R))
+        cuts = sorted(by_E)
         joints = self._joint_order()
         held = dict((n, [float(start[j]) for j in self.groups[n]]) for n in ("arms", "head")
                     if n not in self.models and self.groups.get(n))
@@ -1031,7 +1075,8 @@ class GestureGenerator(object):
 
         def evaluate(E):
             if E not in cache:
-                tt, by, kept = _sequence_curve(draws, end_pose, E, R, self.rate_hz)
+                tt, by, kept = _sequence_curve(learned, start_pose, by_E[E][0], by_E[E][1], Tin,
+                                               self.rate_hz)
                 rows = []
                 for i in range(len(tt)):
                     row = []
@@ -1100,6 +1145,7 @@ class GestureGenerator(object):
             else:
                 rho = F / E
         E, F, s = best[1:]
+        R = by_E[E][1]
         tt, rows, raw, adaptation, kept = evaluate(E)
         if s != 1.0:
             tt, rows = scaled(tt, rows, s)
@@ -1110,11 +1156,12 @@ class GestureGenerator(object):
         if target is not None and F * s > g.max_duration_s + 1e-6:
             notes.append("sequence longer than the guardian maximum (%s s): the guardian will refuse it"
                          % g.max_duration_s)
-        notes.append("sequence: %d draw(s) blended, cut at %.2f s of learned time, %.2f s played"
-                     % (len(draws), E, tt[-1]))
+        notes.append("sequence: %d draw(s) blended, cut at %.2f s (entry %.2f s and return %.2f s "
+                     "included), %.2f s played" % (len(draws), E, Tin, R, tt[-1]))
         info = {"draws": len(draws), "seed": seed, "draw_seeds": seeds,
                 "draw_durations_s": [round(T, 3) for T, _ in draws], "target_s": target,
-                "cut_s": round(E, 3), "playable_s": round(F, 3), "time_scale": round(s, 3),
+                "cut_s": round(E, 3), "entry_s": round(Tin, 3), "return_s": round(R, 3),
+                "playable_s": round(F, 3), "time_scale": round(s, 3),
                 "scale_range": [round(lo, 3), round(hi, 3)], "duration_fit": fit, "margin_k": k,
                 "duration_s": round(tt[-1], 3), "kept_control_points": kept}
         extra = {"notes": notes, "durations": dict((n, round(d, 3)) for n, d in durations.items()),
@@ -1144,8 +1191,9 @@ class GestureGenerator(object):
         duration_s   : fill this many seconds (e.g. the speech) with ONE movement: learned gestures
                        are drawn (same prompt, a new z each) until their learned durations exceed
                        duration_s, blended into one B-spline per group (no stop at the start pose
-                       between them), cut on a control point and ended at the start pose. The
-                       "gesture" segment then lasts duration_s, within the tempo margin: slowed
+                       between them), cut on a control point; it starts and ends at the start
+                       pose. The "gesture" segment (entry and return included) then lasts
+                       duration_s, within the tempo margin: slowed
                        down at most 1 + k (1 - intensity) times, sped up at most 1 / (1 - k (1 -
                        intensity)) times and only if the guardian accepts it (intensity 1 = learned
                        tempo, the cut alone fits the duration). Capped at the guardian maximum
@@ -1164,24 +1212,19 @@ class GestureGenerator(object):
         if current_pose is not None:
             current_pose = dict((k, float(v)) for k, v in current_pose.items())
             ctx = dict((j, v) for j, v in current_pose.items() if j not in joints and j in g.limits)
-        adaptation = raw_report = seq = None
-        if duration_s is None and count is None:
-            joints, tt, rows, extra = self.gesture(emotion, intensity, event, variation, seed, project=project,
-                                                   temperature=temperature, latent=latent)
-            notes = list(extra["notes"])
-            if adapt:
-                raw_report = g.check_trajectory(tt, joints, rows, context=ctx)
-                tt, rows, adaptation = _make_playable(g, joints, tt, rows, mode=self.slow_down)
-                notes += adaptation["notes"]
-        else:
-            joints, tt, rows, extra, adaptation, raw_report, seq = self._sequence(
-                emotion, intensity, event, duration_s, count, variation, seed, project, temperature, latent,
-                adapt, ctx, duration_fit, margin_k)
-            notes = list(extra["notes"]) + (adaptation["notes"] if adaptation else [])
+        # one construction for every gesture: the start pose begins and ends the B-spline; without
+        # duration_s / count, a single draw, uncut (g.sequence stays None)
+        asked = duration_s is not None or count is not None
+        joints, tt, rows, extra, adaptation, raw_report, seq = self._sequence(
+            emotion, intensity, event, duration_s, count if asked else 1, variation, seed, project, temperature,
+            latent, adapt, ctx, duration_fit, margin_k)
+        notes = list(extra["notes"]) + (adaptation["notes"] if adaptation else [])
+        if not asked:
+            seq = None
         gesture_report = g.check_trajectory(tt, joints, rows, context=ctx)
         inputs = {"emotion": emotion, "intensity": float(intensity), "event": event, "variation": variation,
                   "seed": seed, "timing": self.timing}
-        if seq is not None:
+        if asked:
             inputs.update(duration_s=duration_s, count=count)
         if extra["latent"]:
             inputs.update(temperature=extra["temperature"], latent=extra["latent"])
@@ -1221,14 +1264,23 @@ class GestureGenerator(object):
             return not any(x.code in ("limit", "coupled") for x in r.violations)
         if from_rest:
             segs = [("rest_to_start", rest_segment(g, q_cur, start, joints))]
-        else:
+        elif any(abs(q - p) > g.start_tolerance for q, p in zip(q_cur, start)):
             segs = [("to_start", rest_segment(g, q_cur, start, joints))]
-        t_in = _quintic(start, z, z, motion["q"][0], v0, a0, vlim, alim, accept=in_zone)
-        t_out = _quintic(motion["q"][-1], v1, a1, start, z, z, vlim, alim, accept=in_zone)
+        else:
+            segs = []  # already at the start pose: the gesture leaves it by itself
+        # the curve starts and ends on the start pose at rest: no transition around it. Kept as a
+        # fallback should an end differ from the start pose (e.g. moved by the playback adaptation)
+        need_in = any(abs(a - b) > 1e-3 for a, b in zip(motion["q"][0], start))
+        need_out = any(abs(a - b) > 1e-3 for a, b in zip(motion["q"][-1], start))
+        t_in = t_out = None
+        if need_in:
+            t_in = _quintic(start, z, z, motion["q"][0], v0, a0, vlim, alim, accept=in_zone)
+        if need_out:
+            t_out = _quintic(motion["q"][-1], v1, a1, start, z, z, vlim, alim, accept=in_zone)
         # no velocity-matched transition inside the zone: ease the gesture in/out (same path,
         # from/to rest) and join it with a straight segment, inside the (convex) zone
-        ti = 0.0 if in_zone(t_in) else _ease_duration(v0, alim)
-        to = 0.0 if in_zone(t_out) else _ease_duration(v1, alim)
+        ti = 0.0 if t_in is None or in_zone(t_in) else _ease_duration(v0, alim)
+        to = 0.0 if t_out is None or in_zone(t_out) else _ease_duration(v1, alim)
         if ti or to:
             scale = min(1.0, 0.6 * (motion["t"][-1] - motion["t"][0]) / (ti + to))
             motion = _ease(motion, ti * scale, to * scale)
@@ -1238,7 +1290,8 @@ class GestureGenerator(object):
                 t_out = _min_jerk(motion["q"][-1], start, vlim, alim)
             notes.append("Straight transition, gesture eased %s: the velocity-matched transition left the zone"
                          % " and ".join(x for x, y in (("in", ti), ("out", to)) if y))
-        segs += [("start_to_gesture", t_in), ("gesture", motion), ("gesture_to_start", t_out)]
+        segs += ([("start_to_gesture", t_in)] if t_in is not None else []) + [("gesture", motion)] + \
+            ([("gesture_to_start", t_out)] if t_out is not None else [])
         if return_to == "rest":
             segs.append(("start_to_rest", rest_segment(g, start, rest, joints)))
         # validation: rest segments on their own, everything else on the continuous path it forms

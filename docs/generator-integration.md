@@ -128,7 +128,7 @@ range, bad event, incomplete `current_pose`, bad `return_to`).
 
 | Parameter | Effect |
 |---|---|
-| `current_pose` | measured posture `{joint: value}` for **every** joint of the gesture (arms, head, and hands if a hands model exists). Strongly recommended: with it, the transitions are added and the **whole** movement is validated. |
+| `current_pose` | measured posture `{joint: value}` for **every** joint of the gesture (arms, head, and hands if a hands model exists). Strongly recommended: with it, the move to the start pose is added when needed and the **whole** movement is validated. |
 | `from_rest` | `True` when the robot is at its calibrated rest pose. The first segment is then checked with the rest rules (section 5). If the measured posture is farther than `2 × start_tolerance` (0.1 rad by default) from rest on any arm or head joint, the gesture is refused with a `not_at_rest` violation. |
 | `return_to` | `"start"`: the movement ends in the calibrated start pose. `"rest"`: it continues from start to rest. Ignored without `current_pose`. |
 | `variation`, `seed` | small random variation of the control points (0 = the learned gesture). Same seed = same variant (but not the same variant as the project's numpy generator). |
@@ -142,12 +142,12 @@ range, bad event, incomplete `current_pose`, bad `return_to`).
 
 #### Duration-targeted sequence (`duration_s`)
 
-With `duration_s=D`, the `gesture` segment lasts about `D` seconds and stays one continuous,
-validated movement:
+With `duration_s=D`, the `gesture` segment lasts about `D` seconds, entry from and return to the
+start pose included, and stays one continuous, validated movement:
 
 1. **Draws**: learned gestures are drawn for the same emotion, intensity and event (CVAE models:
    a new latent z each; plain models: the same gesture repeated, unless `variation` > 0) until
-   their learned durations add up to more than `D`. Each draw has its own seed derived from
+   the entry time plus their learned durations add up to more than `D`. Each draw has its own seed derived from
    `seed` (the first draw uses `seed` itself, so it is the gesture `generate()` gives alone).
    Without `seed`, one is drawn and reported in `g.sequence["seed"]`: passing it back gives the
    same movement.
@@ -155,8 +155,9 @@ validated movement:
    B-spline; the clamped end points at each junction are dropped, so the robot does **not** go
    back to the start pose between draws (the end of one draw and the start of the next are
    slightly smoothed). Within a draw, arms, head and hands share the draw's duration.
-3. **Cut**: the curve is cut on a control point and ends on the start pose repeated (arrival at
-   zero velocity and acceleration). The cut is chosen on the duration **after** the usual
+3. **Cut**: the curve starts on the start pose repeated, is cut on a control point and ends on
+   the start pose repeated (departure and arrival at zero velocity and acceleration, see
+   [gesture-curve.md](gesture-curve.md)). The cut is chosen on the duration **after** the usual
    playable adaptation (section 6), which may slow fast moments down.
 4. **Tempo margin**: the result is played `s` times slower (`s` > 1) or faster (`s` < 1) to
    land on `D`, with `s` in `[max(scale_min, 1 - k (1 - i)), min(scale_max, 1 + k (1 - i))]`
@@ -167,10 +168,10 @@ validated movement:
 5. **Maximum**: `D` above the guardian maximum duration (`max_duration_s`, 15 s by default) is
    cut at that maximum (a note says so).
 
-The transitions around it are unchanged (`to_start` / `rest_to_start`, `start_to_gesture`,
-`gesture_to_start`, `start_to_rest`): to fit a whole speech, subtract their durations (or accept
-that the movement runs a little longer). `g.sequence` reports `draws`, `seed`, `draw_seeds`,
-`draw_durations_s`, `target_s`, `cut_s` (learned time kept), `playable_s` (after adaptation),
+No transition is added around it: when the robot is already at the start pose, the movement
+is the `gesture` segment alone and lasts about `D`, like the speech. `g.sequence` reports `draws`,
+`seed`, `draw_seeds`, `draw_durations_s`, `target_s`, `cut_s` (whole movement before adaptation:
+entry, learned time kept, return), `entry_s`, `return_s`, `playable_s` (after adaptation),
 `time_scale` (`s`), `scale_range`, `duration_s` (of the `gesture` segment) and
 `kept_control_points`. With CVAE models, `g.inputs["latent"]` then holds one z per draw for each
 group. Files exported before this feature have no `sequence` settings: the defaults apply.
@@ -179,13 +180,22 @@ The movement returned with `current_pose` is made of named segments (`g.segments
 `(name, start_s, end_s)`):
 
 ```
-from_rest=False:  to_start        -> start_to_gesture -> gesture -> gesture_to_start [-> start_to_rest]
-from_rest=True:   rest_to_start   -> start_to_gesture -> gesture -> gesture_to_start [-> start_to_rest]
+from_rest=False:  [to_start]      -> gesture [-> start_to_rest]
+from_rest=True:   rest_to_start   -> gesture [-> start_to_rest]
 ```
 
-Without `current_pose`, only the `gesture` segment is returned. It starts from the learned
-first point near the start pose, **not** from where the robot is: the caller must first bring
-the robot to the start pose (and validate that move itself). A note in `g.notes` says so.
+The `gesture` segment starts and ends on the start pose, at rest, inside its own B-spline
+(with or without `duration_s`; without it, one learned gesture, uncut): there is no
+`start_to_gesture` / `gesture_to_start` segment any more, so a sentence started with the
+`gesture` segment starts with the movement. `to_start` is added only when the measured posture
+is further than `start_tolerance` from the start pose. Explained with diagrams in
+[gesture-curve.md](gesture-curve.md). (Should an end of the curve ever differ from the start
+pose, e.g. moved by the playable adaptation, the former `start_to_gesture` /
+`gesture_to_start` transitions are added back as a fallback.)
+
+Without `current_pose`, only the `gesture` segment is returned. It starts on the start pose,
+**not** from where the robot is: the caller must first bring the robot to the start pose (and
+validate that move itself). A note in `g.notes` says so.
 
 ### `Gesture`
 
@@ -286,8 +296,8 @@ How each segment is built and checked (`generate()`):
 |---|---|---|
 | `to_start` (measured posture → start, `from_rest=False`) | minimum-jerk (`rest_segment()`), ≤ 0.8 × per-joint velocity and acceleration limits when `rest_velocity_rad_s` is `factory` (default); with a number, ≤ 0.8 × that velocity and 0.25 × max acceleration | factory limits, rest velocity (rest rules): the measured posture may be outside the zone |
 | `rest_to_start` (`from_rest=True`) | same profile | same, plus `not_at_rest` if not measured at rest |
-| `start_to_gesture`, `gesture_to_start` | quintic matched in position, velocity and acceleration with the gesture, ≤ 0.8 × per-joint limits; if no such curve stays inside the zone, the gesture is eased in/out and joined with a straight segment (`g.notes` says so) | calibrated zone: limits minus margin, coupled constraints, velocity, acceleration |
-| `gesture` | B-spline decoded from the models | calibrated zone |
+| `gesture` | B-spline decoded from the models, the start pose repeated at both ends ([gesture-curve.md](gesture-curve.md)) | calibrated zone |
+| `start_to_gesture`, `gesture_to_start` (fallback only, see section 3) | quintic matched in position, velocity and acceleration with the gesture, ≤ 0.8 × per-joint limits; if no such curve stays inside the zone, the gesture is eased in/out and joined with a straight segment (`g.notes` says so) | calibrated zone: limits minus margin, coupled constraints, velocity, acceleration |
 | `start_to_rest` (`return_to="rest"`) | minimum-jerk, same profile as `to_start` | rest rules |
 
 Practical consequences:
