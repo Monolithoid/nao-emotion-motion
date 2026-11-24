@@ -96,16 +96,17 @@ Smooth braking, a brief stop on `S`, smooth restart.
 
 ```
 before:  to_start | start_to_gesture | gesture | gesture_to_start [| start_to_rest]
-after:  [to_start]| gesture                                       [| start_to_rest]
+after:              gesture                                       [| start_to_rest]
+from rest:  rest_to_start | gesture                                 [| start_to_rest]
 ```
 
 What remains outside the curve:
 
-- `to_start`: only when the measured posture is further than `start_tolerance_rad` from the
-  start pose (e.g. a gesture interrupted earlier). At the start pose, the `gesture` segment
-  is the whole movement.
 - `rest_to_start` (`from_rest=True`) and `start_to_rest` (`return_to="rest"`): unchanged, still
   checked under the rest rules.
+- Nothing else: there is no `to_start` any more. The robot must already be at the start pose
+  (within `start_tolerance_rad`); otherwise the guardian refuses the gesture
+  (`start_mismatch`) and nothing is sent. The caller brings the robot back first if needed.
 
 With `duration_s=D`, the `gesture` segment (entry and return included) lasts about `D`, so the
 movement and the speech have the same length.

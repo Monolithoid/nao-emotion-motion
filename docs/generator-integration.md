@@ -180,18 +180,18 @@ The movement returned with `current_pose` is made of named segments (`g.segments
 `(name, start_s, end_s)`):
 
 ```
-from_rest=False:  [to_start]      -> gesture [-> start_to_rest]
+from_rest=False:                     gesture [-> start_to_rest]
 from_rest=True:   rest_to_start   -> gesture [-> start_to_rest]
 ```
 
 The `gesture` segment starts and ends on the start pose, at rest, inside its own B-spline
 (with or without `duration_s`; without it, one learned gesture, uncut): there is no
 `start_to_gesture` / `gesture_to_start` segment any more, so a sentence started with the
-`gesture` segment starts with the movement. `to_start` is added only when the measured posture
-is further than `start_tolerance` from the start pose. Explained with diagrams in
-[gesture-curve.md](gesture-curve.md). (Should an end of the curve ever differ from the start
-pose, e.g. moved by the playable adaptation, the former `start_to_gesture` /
-`gesture_to_start` transitions are added back as a fallback.)
+`gesture` segment starts with the movement. There is no `to_start` either: with
+`from_rest=False`, the measured posture must already be within `start_tolerance` of the start
+pose, otherwise the gesture is refused (`start_mismatch`, and a note in `g.notes`); bring the
+robot back to the start pose first (e.g. with `rest_segment()`, see section 5). Explained with
+diagrams in [gesture-curve.md](gesture-curve.md).
 
 Without `current_pose`, only the `gesture` segment is returned. It starts on the start pose,
 **not** from where the robot is: the caller must first bring the robot to the start pose (and
@@ -207,7 +207,7 @@ validate that move itself). A note in `g.notes` says so.
 | `g.joints`, `g.times`, `g.positions` | joint names; times in s from 0; one row per time step (rad; `LHand`/`RHand` are openings 0..1) |
 | `g.segments` | see above |
 | `g.duration` | total duration in s |
-| `g.notes` | human-readable notes (missing model, eased transitions...) |
+| `g.notes` | human-readable notes (missing model, robot not at the start pose...) |
 | `g.group_durations_s` | learned duration of each group's gesture |
 | `g.adaptation` | what was done to make the gesture playable: `changed`, `time_scale`, `max_shape_change_rad`, `joints_changed`, `notes` (`None` when `adapt=False`) |
 | `g.raw_report` | guardian report on the raw learned gesture, before adaptation (diagnostic) |
@@ -294,11 +294,9 @@ How each segment is built and checked (`generate()`):
 
 | Segment | Built as | Checked against |
 |---|---|---|
-| `to_start` (measured posture → start, `from_rest=False`) | minimum-jerk (`rest_segment()`), ≤ 0.8 × per-joint velocity and acceleration limits when `rest_velocity_rad_s` is `factory` (default); with a number, ≤ 0.8 × that velocity and 0.25 × max acceleration | factory limits, rest velocity (rest rules): the measured posture may be outside the zone |
-| `rest_to_start` (`from_rest=True`) | same profile | same, plus `not_at_rest` if not measured at rest |
+| `rest_to_start` (`from_rest=True`) | minimum-jerk (`rest_segment()`), ≤ 0.8 × per-joint velocity and acceleration limits when `rest_velocity_rad_s` is `factory` (default); with a number, ≤ 0.8 × that velocity and 0.25 × max acceleration | factory limits, rest velocity (rest rules): rest may be outside the zone; plus `not_at_rest` if not measured at rest |
 | `gesture` | B-spline decoded from the models, the start pose repeated at both ends ([gesture-curve.md](gesture-curve.md)) | calibrated zone |
-| `start_to_gesture`, `gesture_to_start` (fallback only, see section 3) | quintic matched in position, velocity and acceleration with the gesture, ≤ 0.8 × per-joint limits; if no such curve stays inside the zone, the gesture is eased in/out and joined with a straight segment (`g.notes` says so) | calibrated zone: limits minus margin, coupled constraints, velocity, acceleration |
-| `start_to_rest` (`return_to="rest"`) | minimum-jerk, same profile as `to_start` | rest rules |
+| `start_to_rest` (`return_to="rest"`) | minimum-jerk, same profile as `rest_to_start` | rest rules |
 
 Practical consequences:
 
