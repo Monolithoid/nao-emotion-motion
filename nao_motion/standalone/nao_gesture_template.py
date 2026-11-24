@@ -41,10 +41,12 @@ guardian never modifies a movement: it accepts or rejects it.
 
 `current_pose` ({joint: measured value}): the gesture starts and ends on the
 calibrated start position, inside its own B-spline (no transition around it).
-Given the measured posture, the generator adds what is missing (current posture
--> start when it is not there yet, start -> rest if asked) and validates the
-whole, like the project UI. Without it, only the gesture is returned and the
-caller must first bring the robot to the start position.
+Given the measured posture, the generator adds rest -> start (`from_rest=True`)
+and start -> rest (`return_to="rest"`) and validates the whole. Otherwise the
+robot must already be at the start position (within `start_tolerance`): no
+move to it is added and the guardian refuses the gesture (start_mismatch).
+Without `current_pose`, only the gesture is returned and the caller must first
+bring the robot to the start position.
 `from_rest=True`: the robot is at rest (possibly outside the movement zone, in
 contact); the rest -> start segment then follows the "rest" rules.
 """
@@ -71,7 +73,7 @@ TIMINGS = ("hold", "stretch")
 DEGREE = 3
 # segments checked on the factory limits at reduced speed: rest and the measured posture may lie
 # outside the movement zone (same rule as the workbench controller)
-REST_SEGMENTS = ("rest_to_start", "to_start", "start_to_rest")
+REST_SEGMENTS = ("rest_to_start", "start_to_rest")
 
 
 class GestureError(ValueError):
@@ -188,105 +190,6 @@ def rest_segment(guardian, q0, q1, joints):
     back to rest on their own (e.g. after a delay without gesture) build the same segment."""
     v_max, a_max = guardian.rest_transition_caps(joints)
     return _min_jerk(q0, q1, v_max, a_max)
-
-
-def _quintic(q0, v0, a0, q1, v1, a1, v_max, a_max, rate_hz=50.0, min_duration=0.4, max_duration=6.0,
-             accept=None):
-    """Transition matched in position, velocity and acceleration at both ends. v_max / a_max:
-    one cap per joint. Among the durations within the caps, the shortest one that `accept`
-    approves (else the shortest); when none is within the caps, the acceleration match is
-    dropped, and failing that the least bad is kept. Same as
-    nao_motion.control.transitions.quintic_matched."""
-    z = [0.0] * len(q0)
-    leasts = []
-    for a_s, a_e in ((a0, a1), (z, z)):
-        cands, least = _quintic_candidates(q0, v0, a_s, q1, v1, a_e, v_max, a_max, rate_hz,
-                                           min_duration, max_duration)
-        if cands:
-            if accept is not None:
-                for c in cands:
-                    if accept(c):
-                        return c
-            return cands[0]
-        leasts.append(least)
-    return min(leasts, key=lambda x: x[1])[0]
-
-
-def _quintic_candidates(q0, v0, a0, q1, v1, a1, v_max, a_max, rate_hz, min_duration, max_duration):
-    J = len(q0)
-    # caps raised to the matched boundary values: the gesture may enter or leave faster
-    vcap = [max(v_max[j], abs(v0[j]), abs(v1[j])) for j in range(J)]
-    acap = [max(a_max[j], abs(a0[j]), abs(a1[j])) for j in range(J)]
-    T = float(min_duration)
-    ok, least, least_score = [], None, float("inf")
-    while T <= max_duration + 1e-9:
-        n = max(3, int(math.ceil(T * rate_hz)) + 1)
-        tt = _linspace(0.0, T, n)
-        T2, T3, T4, T5 = T ** 2, T ** 3, T ** 4, T ** 5
-        C = []
-        for j in range(J):
-            C.append([q0[j], v0[j], a0[j] / 2,
-                      (20 * (q1[j] - q0[j]) - (8 * v1[j] + 12 * v0[j]) * T - (3 * a0[j] - a1[j]) * T2) / (2 * T3),
-                      (30 * (q0[j] - q1[j]) + (14 * v1[j] + 16 * v0[j]) * T + (3 * a0[j] - 2 * a1[j]) * T2) / (2 * T4),
-                      (12 * (q1[j] - q0[j]) - (6 * v1[j] + 6 * v0[j]) * T - (a0[j] - a1[j]) * T2) / (2 * T5)])
-        rows, score = [], 0.0
-        for t in tt:
-            row = []
-            for j, c in enumerate(C):
-                row.append(sum(c[k] * t ** k for k in range(6)))
-                score = max(score, abs(sum(k * c[k] * t ** (k - 1) for k in range(1, 6))) / vcap[j],
-                            abs(sum(k * (k - 1) * c[k] * t ** (k - 2) for k in range(2, 6))) / acap[j])
-            rows.append(row)
-        tr = _traj(tt, rows)
-        if score <= 1.0:
-            ok.append(tr)
-        if score < least_score - 1e-9:
-            least, least_score = tr, score
-        T *= 1.15
-    return ok, (least, least_score)
-
-
-def _ease(tr, ease_in, ease_out):
-    """Same path, retimed to start and/or end at rest (time warp t = Tw(u^3 - u^4/2)).
-    Same as nao_motion.control.transitions.ease."""
-    t0, ts, q = tr["t"][0], tr["t"], tr["q"]
-    h = ts[1] - ts[0]
-    D = ts[-1] - t0
-    ti = math.ceil(ease_in / h - 1e-9) * h if ease_in > 0 else 0.0
-    to = math.ceil(ease_out / h - 1e-9) * h if ease_out > 0 else 0.0
-    N = D + ti + to
-    taus = _linspace(0.0, N, int(round(N / h)) + 1)
-    tt = []
-    for tau in taus:
-        x = tau - ti
-        if ti > 0 and tau < 2 * ti:
-            u = tau / (2 * ti)
-            x = 2 * ti * (u ** 3 - u ** 4 / 2)
-        if to > 0 and tau > N - 2 * to:
-            u = (N - tau) / (2 * to)
-            x = D - 2 * to * (u ** 3 - u ** 4 / 2)
-        tt.append(t0 + min(max(x, 0.0), D))
-    cols = [[r[k] for r in q] for k in range(len(q[0]))]
-    return _traj(taus, _sample(ts, cols, tt))
-
-
-def _ease_duration(v, a_max, min_s=0.15):
-    return max([min_s] + [1.5 * abs(x) / a for x, a in zip(v, a_max)])
-
-
-def _boundary(tr, at_end=False):
-    """Velocity and acceleration (finite differences) at the start or the end."""
-    t, q = tr["t"], tr["q"]
-    if at_end:
-        t, q = t[::-1], q[::-1]
-    J = len(q[0])
-    if len(t) < 3:
-        return [0.0] * J, [0.0] * J
-    dt1, dt2 = t[1] - t[0], t[2] - t[1]
-    v1 = [(q[1][j] - q[0][j]) / dt1 for j in range(J)]
-    v2 = [(q[2][j] - q[1][j]) / dt2 for j in range(J)]
-    a = [(v2[j] - v1[j]) / ((dt1 + dt2) / 2) for j in range(J)]
-    return [v1[j] - a[j] * dt1 / 2 for j in range(J)], a
 
 
 def _resampled(tr, rate_hz):
@@ -1174,7 +1077,8 @@ class GestureGenerator(object):
                  count=None, duration_fit=None, margin_k=None):
         """Generates and validates. See the module documentation.
 
-        current_pose : measured posture {joint: value}; adds the transitions.
+        current_pose : measured posture {joint: value}: must be the start pose (within
+                       start_tolerance) unless from_rest; the whole movement is validated.
         from_rest    : the robot is at rest (rest -> start segment under the "rest" rules).
         return_to    : "start" (end in the start position) or "rest" (go back to rest);
                        ignored without current_pose.
@@ -1252,46 +1156,18 @@ class GestureGenerator(object):
             if far:
                 violations.append(Violation("not_at_rest", "Robot not measured at rest: %s" % ", ".join(far)))
         motion = _resampled(_traj(tt, rows), 50.0)
-        v0, a0 = _boundary(motion)
-        v1, a1 = _boundary(motion, at_end=True)
-        z = [0.0] * len(joints)
-        # per-joint caps (factory speeds or the takes'), not the global default
-        vlim = [g.velocity_limit(j) * 0.8 for j in joints]
-        alim = [g.acceleration_limit(j) * 0.8 for j in joints]
-
-        def in_zone(seg):  # transitions must stay inside the guardian zone (limits, coupled)
-            r = g.check_trajectory(seg["t"], joints, seg["q"], check_duration=False, context=ctx)
-            return not any(x.code in ("limit", "coupled") for x in r.violations)
+        # the curve starts and ends on the start pose at rest: no transition around it. The robot
+        # must already be there (within start_tolerance), or come from rest: no to_start segment;
+        # otherwise the guardian refuses the movement (start_mismatch)
         if from_rest:
             segs = [("rest_to_start", rest_segment(g, q_cur, start, joints))]
-        elif any(abs(q - p) > g.start_tolerance for q, p in zip(q_cur, start)):
-            segs = [("to_start", rest_segment(g, q_cur, start, joints))]
         else:
-            segs = []  # already at the start pose: the gesture leaves it by itself
-        # the curve starts and ends on the start pose at rest: no transition around it. Kept as a
-        # fallback should an end differ from the start pose (e.g. moved by the playback adaptation)
-        need_in = any(abs(a - b) > 1e-3 for a, b in zip(motion["q"][0], start))
-        need_out = any(abs(a - b) > 1e-3 for a, b in zip(motion["q"][-1], start))
-        t_in = t_out = None
-        if need_in:
-            t_in = _quintic(start, z, z, motion["q"][0], v0, a0, vlim, alim, accept=in_zone)
-        if need_out:
-            t_out = _quintic(motion["q"][-1], v1, a1, start, z, z, vlim, alim, accept=in_zone)
-        # no velocity-matched transition inside the zone: ease the gesture in/out (same path,
-        # from/to rest) and join it with a straight segment, inside the (convex) zone
-        ti = 0.0 if t_in is None or in_zone(t_in) else _ease_duration(v0, alim)
-        to = 0.0 if t_out is None or in_zone(t_out) else _ease_duration(v1, alim)
-        if ti or to:
-            scale = min(1.0, 0.6 * (motion["t"][-1] - motion["t"][0]) / (ti + to))
-            motion = _ease(motion, ti * scale, to * scale)
-            if ti:
-                t_in = _min_jerk(start, motion["q"][0], vlim, alim)
-            if to:
-                t_out = _min_jerk(motion["q"][-1], start, vlim, alim)
-            notes.append("Straight transition, gesture eased %s: the velocity-matched transition left the zone"
-                         % " and ".join(x for x, y in (("in", ti), ("out", to)) if y))
-        segs += ([("start_to_gesture", t_in)] if t_in is not None else []) + [("gesture", motion)] + \
-            ([("gesture_to_start", t_out)] if t_out is not None else [])
+            segs = []
+            far = [j for j, q, p in zip(joints, q_cur, start) if abs(q - p) > g.start_tolerance]
+            if far:
+                notes.append("Robot not at the start pose (%s): bring it there first, the gesture does not "
+                             "add the move" % ", ".join(far))
+        segs.append(("gesture", motion))
         if return_to == "rest":
             segs.append(("start_to_rest", rest_segment(g, start, rest, joints)))
         # validation: rest segments on their own, everything else on the continuous path it forms

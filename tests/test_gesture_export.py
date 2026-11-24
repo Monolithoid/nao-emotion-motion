@@ -113,30 +113,25 @@ def test_same_gesture_as_engine(exported, case):
     assert g.ok, [v.to_dict() for v in g.report.violations][:8]
 
 
-@pytest.mark.parametrize("from_rest", [False, True])
-def test_cycle_against_controller(exported, tmp_path, from_rest):
+def test_cycle_from_rest_against_controller(exported, tmp_path):
     """The exported generator puts the start pose inside the gesture's B-spline: no
-    start <-> gesture transition, unlike the project controller. The rest / to-start segment
-    before the gesture is still the controller's."""
+    start <-> gesture transition and no to_start, unlike the project controller. The
+    rest -> start segment before the gesture is still the controller's."""
     c, models, _, _, gen = exported
     wb = make_wb(tmp_path, c)
     eng = MotionEngine.from_paths(c, models["arms"], models["head"], models["hands"])
     ev = EventContext(True, 0.4, 0.1, source="t", distance_m=1.0)
     ref = eng.generate(c.emotions[0], 0.8, ev)
     joints = ref.combined.joints
-    pose = dict(zip(joints, c.pose("rest" if from_rest else "start", joints)))
-    if not from_rest:
-        pose = {j: v + 0.05 * (k % 3 - 1) * (not c.is_hand(j)) for k, (j, v) in enumerate(pose.items())}
-    plan = wb.ctrl.plan_cycle(ref.combined, from_pose="rest" if from_rest else "current", current=pose,
-                              to_pose="rest" if from_rest else "start")
-    g = gen.generate(c.emotions[0], 0.8, _event_dict(ev), current_pose=pose, from_rest=from_rest,
-                     return_to="rest" if from_rest else "start")
+    pose = dict(zip(joints, c.pose("rest", joints)))
+    plan = wb.ctrl.plan_cycle(ref.combined, from_pose="rest", current=pose, to_pose="rest")
+    g = gen.generate(c.emotions[0], 0.8, _event_dict(ev), current_pose=pose, from_rest=True, return_to="rest")
     names_fr = {"repos_vers_depart": "rest_to_start", "vers_depart": "to_start", "depart_vers_geste": "start_to_gesture",
                 "geste": "gesture", "geste_vers_depart": "gesture_to_start", "depart_vers_repos": "start_to_rest"}
     expected = [names_fr.get(s[0], s[0]) for s in plan.segments]
-    expected = [n for n in expected if n not in ("start_to_gesture", "gesture_to_start")]
+    expected = [n for n in expected if n not in ("to_start", "start_to_gesture", "gesture_to_start")]
     assert [s[0] for s in g.segments] == expected
-    # same first segment (measured posture -> start) as the controller
+    # same first segment (rest -> start) as the controller
     end = g.segments[0][2]
     n = sum(1 for t in g.times if t <= end + 1e-9)
     np.testing.assert_allclose(g.times[:n], plan.traj.t[:n], atol=1e-9)

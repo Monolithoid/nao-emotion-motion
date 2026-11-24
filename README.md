@@ -342,7 +342,7 @@ gen = GestureGenerator.load("nao_gesture.json")
 print(gen.emotions)                       # e.g. ['joy', 'sadness', 'anger', 'fear', 'surprise', 'calm']
 g = gen.generate("joy", 0.7,                                   # emotion (or a mix {"joy": 0.7, "surprise": 0.3}), intensity 0..1
                  event={"azimuth_deg": 30, "elevation_deg": 0, "distance_m": 1.2},   # optional; None = no event
-                 current_pose=measured_posture)                 # recommended: adds the transitions
+                 current_pose=measured_posture)                 # recommended: validates against the measured posture
 if g.ok:                                                        # accepted by the guardian
     names, angles, times = g.angle_interpolation()
     motion.angleInterpolation(names, angles, times, True)       # ALMotion, absolute angles
@@ -358,7 +358,7 @@ else:
 - `duration_s=8` fills 8 s (e.g. the speech) with one movement: several learned gestures (a new z each with CVAE models) are blended into one B-spline per group, without going back to the start pose between them, cut on a control point; the start pose begins and ends that same B-spline, so no transition is added around the gesture ([docs/gesture-curve.md](docs/gesture-curve.md)); the tempo may change within a margin that shrinks with the intensity (`model.yaml` → `sequence`, exported in `nao_gesture.json`), and is only sped up if the guardian accepts it. `count=n` forces n draws, `g.sequence` reports what was done, `gen.info["capabilities"]` announces the feature. Details in [docs/generator-integration.md](docs/generator-integration.md).
 - `nao_gesture.py` contains the same guardian as `nao_guardian.py` (`Guardian`, `Report`, `check_rest_transition`...), so a separate guardian export is not needed. Command line: `python nao_gesture.py nao_gesture.json joy 0.7 30 0 1.2` prints the verdict (code 0 accepted, 1 rejected, 2 usage); `--duration=8`, `--count=3` and `--seed=1` for a sequence.
 
-The tests compare the exported library with the project: same gestures as `MotionEngine` (numpy backend), same transitions and verdicts as the controller's `plan_cycle`. Python 2.7 compatibility is checked statically (syntax and imports) only; it has not been run on a real Python 2.7 yet. Nothing is ever sent to the robot by the library: executing the gesture is the integrating project's job.
+The tests compare the exported library with the project: same gestures as `MotionEngine` (numpy backend), same rest -> start segment as the controller's `plan_cycle` (the exported generator adds no start <-> gesture transition and no `to_start`). Python 2.7 compatibility is checked statically (syntax and imports) only; it has not been run on a real Python 2.7 yet. Nothing is ever sent to the robot by the library: executing the gesture is the integrating project's job.
 
 ## Connecting the real robot
 

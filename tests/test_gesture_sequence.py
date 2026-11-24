@@ -107,16 +107,23 @@ def test_continuous_and_starts_and_ends_at_rest_on_the_start_pose(exported):
 
 @pytest.mark.parametrize("D", [None, 3.0])
 def test_segments_around_the_gesture(exported, D):
-    """No transition around the gesture: to_start only when the robot is not at the start pose."""
+    """No transition around the gesture and no to_start: a robot away from the start pose is
+    refused (start_mismatch); from rest, rest_to_start."""
     c, _, _, _, gen = exported
     at_start = _pose(c, gen)
     g = gen.generate(c.emotions[1], 0.6, current_pose=at_start, duration_s=D, seed=7)
     assert [s[0] for s in g.segments] == ["gesture"] and g.ok
     away = dict(at_start)
     j = gen.groups["arms"][0]
+    near = dict(at_start)
+    near[j] += 0.8 * gen.guardian.start_tolerance
+    g = gen.generate(c.emotions[1], 0.6, current_pose=near, duration_s=D, seed=7)
+    assert [s[0] for s in g.segments] == ["gesture"] and g.ok
     away[j] += 3 * gen.guardian.start_tolerance
     g = gen.generate(c.emotions[1], 0.6, current_pose=away, duration_s=D, seed=7)
-    assert [s[0] for s in g.segments] == ["to_start", "gesture"] and g.ok
+    assert [s[0] for s in g.segments] == ["gesture"] and not g.ok
+    assert [v.code for v in g.report.violations] == ["start_mismatch"]
+    assert any("not at the start pose" in n for n in g.notes)
     rest = dict(zip(gen._joint_order(), c.pose("rest", gen._joint_order())))
     g = gen.generate(c.emotions[1], 0.6, current_pose=rest, from_rest=True, return_to="rest", duration_s=D, seed=7)
     assert [s[0] for s in g.segments] == ["rest_to_start", "gesture", "start_to_rest"] and g.ok
