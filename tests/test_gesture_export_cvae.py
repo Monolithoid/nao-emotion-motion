@@ -75,6 +75,17 @@ def test_draws_differ_and_seed_reproduces(exported):
         gen.gesture("anger", 0.8, latent={"arms": [1.0]})
 
 
+def test_sequence_draws_a_new_latent_code_each_time(exported):
+    """generate(..., duration_s=D): each blended draw has its own z, derived from the one seed."""
+    *_, gen = exported
+    g = gen.generate("joy", 0.5, duration_s=4.0, seed=3)
+    zs = g.inputs["latent"]["arms"]
+    assert g.sequence["draws"] == len(zs) >= 2 and len(set(map(tuple, zs))) == len(zs)
+    assert zs[0] == gen.generate("joy", 0.5, seed=3).inputs["latent"]["arms"]  # first draw = the lone gesture
+    assert gen.generate("joy", 0.5, duration_s=4.0, seed=3).positions == g.positions
+    assert g.ok, g.report.summary()
+
+
 def test_file_without_latent_setting_keeps_the_central_gesture(exported):
     _, _, out, lib, _ = exported
     data = json.loads(open(out["data"]).read())

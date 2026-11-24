@@ -85,6 +85,27 @@ def _model_entry(cfg: Config, comp: str, path: Path) -> dict:
     }
 
 
+SEQUENCE_DEFAULTS = {"duration_fit": "intensity", "margin_k": 1.0, "scale_min": 0.7, "scale_max": 3.0}
+
+
+def sequence_settings(cfg: Config) -> dict:
+    """Settings of duration-targeted sequences (model.yaml `sequence`, defaults if absent)."""
+    sq = cfg.model.get("sequence") or {}
+    out = dict(SEQUENCE_DEFAULTS)
+    if "duration_fit" in sq:
+        out["duration_fit"] = str(sq["duration_fit"])
+    if "duration_margin_k" in sq:
+        out["margin_k"] = float(sq["duration_margin_k"])
+    for k in ("scale_min", "scale_max"):
+        if k in sq:
+            out[k] = float(sq[k])
+    if out["duration_fit"] not in ("intensity", "off"):
+        raise ExportError("model.yaml sequence.duration_fit: intensity or off")
+    if out["margin_k"] < 0 or not 0 < out["scale_min"] <= 1.0 <= out["scale_max"]:
+        raise ExportError("model.yaml sequence: duration_margin_k >= 0 and scale_min <= 1 <= scale_max expected")
+    return out
+
+
 def bundle_dict(cfg: Config, models: Dict[str, Optional[Path]], allow_uncalibrated: bool = False) -> dict:
     ex = {"project_control_points": True, "adapt_generated": True, "slow_down": "local",
           **{k: v for k, v in (cfg.robot.get("execution") or {}).items()
@@ -109,6 +130,8 @@ def bundle_dict(cfg: Config, models: Dict[str, Optional[Path]], allow_uncalibrat
         "playback": {k: ex[k] for k in ("project_control_points", "adapt_generated", "slow_down") if k in ex},
         # CVAE models: default temperature of the latent draw (model.yaml cvae.temperature)
         "latent": {"temperature": float((cfg.model.get("cvae") or {}).get("temperature", 1.0))},
+        # generate(..., duration_s=D): tempo margin of the blended sequence (model.yaml sequence)
+        "sequence": sequence_settings(cfg),
     }
 
 
