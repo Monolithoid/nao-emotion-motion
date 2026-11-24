@@ -312,3 +312,18 @@ def test_playback_settings_exported(exported_fast):
     old.pop("playback")  # files exported before this setting: adaptation on by default
     g2 = lib.GestureGenerator(old)
     assert g2.adapt_generated and g2.project_control_points and g2.slow_down == "local"
+
+
+def test_rest_segment_is_public_and_matches_controller(exported, tmp_path):
+    """rest_segment(): what a caller returning to rest on its own builds (e.g. the drone after
+    a delay without gesture), identical to the controller's rest <-> start segment."""
+    c, _, _, lib, gen = exported
+    wb = make_wb(tmp_path, c)
+    joints = c.arm_joints + c.head_joints
+    start, rest = c.pose("start", joints), c.pose("rest", joints)
+    seg = lib.rest_segment(gen.guardian, start, rest, joints)
+    ref = wb.ctrl._rest_transition(np.array(start), np.array(rest), joints)
+    np.testing.assert_allclose(seg["t"], ref.t, atol=1e-9)
+    np.testing.assert_allclose(np.array(seg["q"]), ref.q, atol=1e-7)
+    assert gen.guardian.check_rest_transition(seg["t"], joints, seg["q"]).ok
+    assert seg["t"][-1] < 1.0

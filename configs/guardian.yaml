@@ -59,7 +59,12 @@ transition_velocity_rad_s: 0.5  # max velocity of the rest <-> start <-> gesture
 # contact). The rest <-> start segments are therefore checked against the factory limits,
 # the velocity below and the acceleration, without margin or coupled constraints. Making sure
 # the start pose can be reached smoothly from rest is up to whoever calibrates.
-rest_velocity_rad_s: 0.3
+# "factory" = the same per-joint limits as the gestures (factory velocities above, and
+# their accelerations); these segments are then built at 0.8 x those limits, like the
+# start <-> gesture transitions (operator's choice 2026-11-23, contact risk with the
+# knees accepted). A number (rad/s, e.g. the former 0.3) applies that velocity to every
+# joint, with 0.25 x max_acceleration_rad_s2.
+rest_velocity_rad_s: factory
 
 # Linear coupled constraints: sum(coef_i * q_i) <= bound (radians), on top of the
 # hulls measured by the calibration. None by default: the five examples shipped here

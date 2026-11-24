@@ -174,7 +174,8 @@ class Controller:
 
     def _rest_transition(self, q0, q1, joints):
         g = self.cfg.guardian
-        return min_jerk(q0, q1, joints, g.rest_velocity_rad_s * 0.8, g.max_acceleration_rad_s2 * 0.25)
+        v_max, a_max = g.rest_transition_caps(joints)
+        return min_jerk(q0, q1, joints, np.asarray(v_max), np.asarray(a_max))
 
     def _validate_segments(self, segs, rest_names, start_state, ctx) -> Report:
         """Rest <-> start segments: validate_rest_transition (rest may be outside

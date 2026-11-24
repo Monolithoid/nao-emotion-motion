@@ -182,3 +182,33 @@ def test_checker_is_python27_compatible():
             assert not (isinstance(n.func, ast.Name) and n.func.id in ("open",)), "io.open requis en Python 2"
         if isinstance(n, ast.ClassDef):
             assert n.bases, f"{n.name}: inherit explicitly (object) in Python 2"
+
+
+def test_rest_velocity_factory_exported(calibrated):
+    """rest_velocity_rad_s "factory": rest <-> start segments use the per-joint gesture
+    limits, in the project guardian and the exported checker alike."""
+    c, out, g = calibrated
+    assert c.guardian.rest_velocity_rad_s is None  # configs/guardian.yaml: factory
+    d = json.loads(open(out["guardian"], encoding="utf-8").read())
+    assert d["rest_velocity_rad_s"] == "factory"
+    assert g.rest_velocity_factory
+    for j in c.controlled_joints:
+        assert g.rest_velocity_limit(j) == pytest.approx(c.guardian.rest_velocity_limit(j))
+        assert c.guardian.rest_velocity_limit(j) == pytest.approx(c.guardian.velocity_limit(j))
+    # single value kept for older callers: the lowest per-joint limit
+    assert g.rest_velocity == pytest.approx(min(g.velocity_limit(j) for j in g.rest_limits))
+    joints = sorted(c.controlled_joints)
+    assert g.rest_transition_caps(joints) == (
+        pytest.approx(list(c.guardian.rest_transition_caps(joints)[0])),
+        pytest.approx(list(c.guardian.rest_transition_caps(joints)[1])))
+
+
+def test_rest_velocity_number_keeps_former_rule(calibrated):
+    c, out, _ = calibrated
+    d = json.loads(open(out["guardian"], encoding="utf-8").read())
+    d["rest_velocity_rad_s"] = 0.3
+    g = ng.Guardian(d)
+    assert not g.rest_velocity_factory and g.rest_velocity == 0.3
+    assert g.rest_velocity_limit("LWristYaw") == 0.3
+    v, a = g.rest_transition_caps(["LWristYaw", "HeadYaw"])
+    assert v == pytest.approx([0.24, 0.24]) and a == pytest.approx([g.max_acceleration * 0.25] * 2)

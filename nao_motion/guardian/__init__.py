@@ -188,7 +188,8 @@ class Guardian:
 
         Rest may be outside the calibrated movement zone (e.g. arms resting on the
         knees: contact). These segments are the ONLY ones allowed to leave it. They are
-        checked against the factory limits, at reduced velocity and acceleration; no margin
+        checked against the factory limits, the rest velocity (rest_velocity_rad_s, or the
+        per-joint gesture limits when it is "factory") and the acceleration; no margin
         and no coupled constraints. The guardian does not guarantee absence of collision along
         this path: making sure the start pose can be reached smoothly from rest is
         up to the operator who calibrates."""
@@ -214,8 +215,8 @@ class Guardian:
                                    limit=lo if qq[i, k] < lo else hi))
         dt = np.diff(traj.t)
         vel = np.diff(traj.q, axis=0) / dt[:, None] if dt.size else np.zeros((0, len(traj.joints)))
-        lim = self.g.rest_velocity_rad_s
         for k, j in enumerate(traj.joints):
+            lim = self.g.rest_velocity_limit(j)
             if vel.size and np.abs(vel[:, k]).max() > lim:
                 i = int(np.argmax(np.abs(vel[:, k])))
                 v.append(Violation("rest_velocity", "Segment repos <-> départ trop rapide", joint=j,
