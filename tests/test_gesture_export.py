@@ -159,12 +159,22 @@ def test_refusals(exported):
     with pytest.raises(lib.GestureError):
         gen.generate(c.emotions[0], 0.5, {"azimuth_deg": 10})
     joints = gen.gesture(c.emotions[0], 0.5)[0]
-    far = {j: 0.0 for j in joints}
-    far["LShoulderRoll"] = 1.3  # far from rest
-    g = gen.generate(c.emotions[0], 0.5, current_pose=far, from_rest=True)
-    assert not g.ok and "not_at_rest" in {v.code for v in g.report.violations}
+    # halfway between rest and start: neither the rest pose nor the start pose
+    mid = {j: (r + s) / 2 for j, r, s in zip(joints, c.pose("rest", joints), c.pose("start", joints))}
+    g = gen.generate(c.emotions[0], 0.5, current_pose=mid, from_rest=False)
+    assert not g.ok and "start_mismatch" in {v.code for v in g.report.violations}
     with pytest.raises(lib.GuardianError):
         g.angle_interpolation()
+
+
+def test_any_posture_before_start_counts_as_rest(exported):
+    c, _, _, _, gen = exported
+    joints = gen.gesture(c.emotions[0], 0.5)[0]
+    mid = {j: (r + s) / 2 for j, r, s in zip(joints, c.pose("rest", joints), c.pose("start", joints))}
+    g = gen.generate(c.emotions[0], 0.5, current_pose=mid, from_rest=True)
+    assert g.ok, [v.to_dict() for v in g.report.violations][:8]
+    assert [name for name, _, _ in g.segments] == ["rest_to_start", "gesture"]
+    np.testing.assert_allclose(g.positions[0], [mid[j] for j in joints], atol=1e-9)
 
 
 def test_event_degrees_and_head_frame(exported):
