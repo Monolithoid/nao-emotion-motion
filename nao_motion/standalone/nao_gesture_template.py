@@ -30,7 +30,10 @@ Inputs
     in the torso frame (FRAME_TORSO): azimuth positive to the robot's LEFT, elevation
     positive UP, 0 = straight ahead. A direction seen by the camera is given with
     "frame": "head" plus the HeadYaw / HeadPitch measured at detection time
-    ("head_yaw_rad", "head_pitch_rad").
+    ("head_yaw_rad", "head_pitch_rad");
+  - duration_s (optional): fill that many seconds (e.g. the speech) with ONE movement made of
+    several blended learned gestures, cut and fitted within a tempo margin set by the
+    intensity (see generate()). `gen.info["capabilities"]` lists it.
 
 Output: a `Gesture` (joints, times in s, positions in rad; LHand / RHand are
 openings 0..1) and the guardian report. The generator commands NOTHING and the
@@ -590,11 +593,82 @@ def _make_playable(guardian, joints, t, q, context=None, rate_hz=50.0, mode="loc
     return st, sq, info
 
 
+# -- duration-targeted sequence (generate(..., duration_s=D)) --------------------------------
+# Several learned gestures (draws) are blended into ONE cubic B-spline per group: their control
+# points are concatenated (the clamped end points at each junction are dropped, so the movement
+# does not pass through the start pose between draws), the curve is cut on a control point and
+# ends on the start pose repeated (arrival at zero velocity). The duration is then fitted to D
+# within a margin that depends on the intensity.
+CAPABILITIES = ("duration_s", "count")
+DURATION_FITS = ("intensity", "off")
+SEQUENCE_DEFAULTS = {"duration_fit": "intensity", "margin_k": 1.0, "scale_min": 0.7, "scale_max": 3.0}
+RETURN_SPANS = 2.0     # time allowed to go back to the start pose after the cut, in knot spans
+
+
+def _greville(n_ctrl):
+    """Parameter (0..1) of each control point of a clamped uniform cubic B-spline."""
+    k = _knots(n_ctrl)
+    return [(k[j + 1] + k[j + 2] + k[j + 3]) / 3.0 for j in range(n_ctrl)]
+
+
+def _knots_from_times(tau):
+    """Clamped cubic knot vector, normalised to [0, 1], for control points placed at the
+    increasing times `tau` (knot averaging, de Boor)."""
+    n = len(tau)
+    if n < DEGREE + 1:
+        raise GestureError("n_control_points >= 4 required")
+    t0, t1 = tau[0], tau[-1]
+    inner = [(sum(tau[j:j + DEGREE]) / DEGREE - t0) / (t1 - t0) for j in range(1, n - DEGREE)]
+    return [0.0] * (DEGREE + 1) + inner + [1.0] * (DEGREE + 1)
+
+
+def _margin(intensity, fit, k, scale_min, scale_max):
+    """(lowest, highest) time factor allowed to fit the duration: 1 +- k (1 - intensity),
+    bounded by [scale_min, scale_max]. Intensity 1 = learned tempo only."""
+    if fit == "off":
+        return 1.0, 1.0
+    m = max(0.0, float(k)) * (1.0 - float(intensity))
+    return min(1.0, max(float(scale_min), 1.0 - m)), max(1.0, min(float(scale_max), 1.0 + m))
+
+
+def _sequence_curve(draws, end_pose, E, R, rate_hz):
+    """Times and rows of the blended sequence cut at E s (ending on `end_pose` at rest).
+
+    draws: [(duration s, {group: ctrl})], end_pose: {group: [value per joint]}, R: return time
+    (s) kept after the last control point. Returns (times, {group: rows}, kept points per group)."""
+    tt = _grid(E, rate_hz)
+    out, kept = {}, {}
+    n = len(draws)
+    for name in draws[0][1]:
+        pts, tau, off = [], [], 0.0
+        for i, (T, plans) in enumerate(draws):
+            ctrl = plans[name]
+            for j, u in enumerate(_greville(len(ctrl))):
+                if (j == 0 and i > 0) or (j == len(ctrl) - 1 and i < n - 1):
+                    continue  # clamped end points at a junction: dropped, no stop between draws
+                pts.append(ctrl[j])
+                tau.append(off + u * T)
+            off += T
+        m = max(1, len([x for x in tau if x <= E - R + 1e-9]))
+        pts, tau = pts[:m], tau[:m]
+        a = tau[-1]
+        pts += [list(end_pose[name])] * DEGREE
+        tau += [a + (E - a) * f / DEGREE for f in range(1, DEGREE + 1)]
+        knots = _knots_from_times(tau)
+        J, K = len(pts[0]), len(pts)
+        rows = []
+        for t in tt:
+            B = _bspline_row(knots, K, t / E)
+            rows.append([sum(B[c] * pts[c][j] for c in range(K)) for j in range(J)])
+        out[name], kept[name] = rows, m
+    return tt, out, kept
+
+
 class Gesture(object):
     """Proposed movement. `ok` = accepted by the guardian; nothing has been sent to the robot."""
 
     def __init__(self, joints, times, positions, report, gesture_report, segments, inputs, notes, durations,
-                 adaptation=None, raw_report=None):
+                 adaptation=None, raw_report=None, sequence=None):
         self.joints = list(joints)
         self.times = list(times)            # s, from 0
         self.positions = positions          # one row per time step, one column per joint
@@ -606,6 +680,7 @@ class Gesture(object):
         self.group_durations_s = durations
         self.adaptation = adaptation        # what was changed to make the gesture playable (None: off)
         self.raw_report = raw_report        # report on the raw learned gesture, before the adaptation
+        self.sequence = sequence            # duration_s / count: draws, cut and time factor (None: off)
 
     @property
     def ok(self):
@@ -640,13 +715,16 @@ class Gesture(object):
         return names, angles, times
 
     def to_dict(self):
-        return {"ok": self.ok, "inputs": self.inputs, "duration_s": self.duration, "notes": self.notes,
-                "segments": self.segments, "group_durations_s": self.group_durations_s,
-                "guardian": self.report.to_dict(), "gesture_guardian": self.gesture_report.to_dict(),
-                "adaptation": self.adaptation,
-                "raw_guardian": None if self.raw_report is None else self.raw_report.to_dict(),
-                "trajectory": {"joints": self.joints, "unit": "rad", "time_unit": "s",
-                               "t": self.times, "q": self.positions}}
+        d = {"ok": self.ok, "inputs": self.inputs, "duration_s": self.duration, "notes": self.notes,
+             "segments": self.segments, "group_durations_s": self.group_durations_s,
+             "guardian": self.report.to_dict(), "gesture_guardian": self.gesture_report.to_dict(),
+             "adaptation": self.adaptation,
+             "raw_guardian": None if self.raw_report is None else self.raw_report.to_dict(),
+             "trajectory": {"joints": self.joints, "unit": "rad", "time_unit": "s",
+                            "t": self.times, "q": self.positions}}
+        if self.sequence is not None:
+            d["sequence"] = self.sequence
+        return d
 
 
 class _Model(object):
@@ -718,6 +796,12 @@ class GestureGenerator(object):
         # gesture (z = 0), the former behaviour.
         lt = (data.get("latent") or {}).get("temperature", 0.0)
         self.latent_temperature = float(lt) if _finite(lt) and float(lt) >= 0 else 0.0
+        # duration-targeted sequences (model.yaml sequence at export); older files: defaults
+        sq = dict(SEQUENCE_DEFAULTS)
+        sq.update((k, v) for k, v in (data.get("sequence") or {}).items() if k in SEQUENCE_DEFAULTS)
+        if sq["duration_fit"] not in DURATION_FITS:
+            raise GestureError("Unknown sequence.duration_fit: %r" % (sq["duration_fit"],))
+        self.sequence_settings = sq
         for j in self.groups["arms"] + self.groups["head"] + self.groups.get("hands", []):
             if j not in self.guardian.limits:
                 raise GestureError("Joint %s missing from the guardian" % j)
@@ -729,10 +813,12 @@ class GestureGenerator(object):
 
     @property
     def info(self):
-        """Provenance: export date, calibration, source runs of the models."""
+        """Provenance: export date, calibration, source runs of the models; `capabilities` lists the
+        optional generate() features of this library (e.g. "duration_s")."""
         return {"exported_at": self.data.get("exported_at"), "calibration": self.guardian.source,
                 "models": dict((k, (self.data["models"][k] or {}).get("source")) for k in self.models),
-                "emotions": self.emotions}
+                "emotions": self.emotions, "capabilities": list(CAPABILITIES),
+                "sequence": dict(self.sequence_settings)}
 
     # -- inputs ----------------------------------------------------------------------
     def _emotion_vector(self, emotion):
@@ -807,6 +893,26 @@ class GestureGenerator(object):
             ctrl = [[min(hi[j], max(lo[j], c)) for j, c in enumerate(row)] for row in ctrl]
         return ctrl, dur
 
+    def _temperature(self, temperature):
+        t = self.latent_temperature if temperature is None else float(temperature)
+        if not _finite(t) or t < 0:
+            raise GestureError("Invalid temperature (>= 0)")
+        return t
+
+    def _plans(self, x, variation, seed, project, temperature, latent):
+        """({group: (control points, learned duration)}, notes, {group: z}) of one draw."""
+        latent = latent or {}
+        plans, notes, zs = {}, [], {}
+        for k, name in enumerate(COMPONENTS):
+            if name in self.models:
+                sub = None if seed is None else int(seed) + k
+                z = self._latent(self.models[name], temperature, sub, latent.get(name))
+                if z is not None:
+                    zs[name] = [round(v, 4) for v in z]
+                plans[name] = self._plan(self.models[name], x, variation, sub,
+                                         project=project, notes=notes, z=z)
+        return plans, notes, zs
+
     def gesture(self, emotion, intensity, event=None, variation=0.0, seed=None, project=False,
                 temperature=None, latent=None):
         """Gesture alone (arms + head + hands), no transitions: (joints, times, positions, info).
@@ -814,19 +920,8 @@ class GestureGenerator(object):
         (raw model output otherwise). temperature / latent: see generate()."""
         x = self.model_input(emotion, intensity, event)
         variation = float(variation or 0.0)
-        t = self.latent_temperature if temperature is None else float(temperature)
-        if not _finite(t) or t < 0:
-            raise GestureError("Invalid temperature (>= 0)")
-        latent = latent or {}
-        plans, proj_notes, zs = {}, [], {}
-        for k, name in enumerate(COMPONENTS):
-            if name in self.models:
-                sub = None if seed is None else int(seed) + k
-                z = self._latent(self.models[name], t, sub, latent.get(name))
-                if z is not None:
-                    zs[name] = [round(v, 4) for v in z]
-                plans[name] = self._plan(self.models[name], x, variation, sub,
-                                         project=project, notes=proj_notes, z=z)
+        t = self._temperature(temperature)
+        plans, proj_notes, zs = self._plans(x, variation, seed, project, t, latent)
         T = max(d for _, d in plans.values())
         n = max(4, int(math.ceil(T * self.rate_hz)) + 1)
         tt = _linspace(0.0, T, n)
@@ -857,8 +952,179 @@ class GestureGenerator(object):
         durations = dict((k, round(d, 3)) for k, (_, d) in plans.items())
         return joints, tt, rows, {"notes": notes, "durations": durations, "temperature": t, "latent": zs}
 
+    def _joint_order(self):
+        """Joints of a generated gesture, in the order gesture() returns them."""
+        joints = []
+        for name in COMPONENTS:
+            js = self.groups.get(name) or []
+            if js and (name in self.models or name in ("arms", "head")):
+                joints += js
+        return joints
+
+    def _sequence(self, emotion, intensity, event, duration_s, count, variation, seed, project, temperature,
+                  latent, adapt, context, duration_fit=None, margin_k=None):
+        """Blended draws fitted to `duration_s` (see generate()). Returns
+        (joints, times, rows, extra, adaptation, raw_report, sequence info)."""
+        g = self.guardian
+        x = self.model_input(emotion, intensity, event)
+        variation = float(variation or 0.0)
+        temp = self._temperature(temperature)
+        st = self.sequence_settings
+        fit = st["duration_fit"] if duration_fit is None else duration_fit
+        if fit not in DURATION_FITS:
+            raise GestureError("duration_fit: one of %s" % ", ".join(DURATION_FITS))
+        k = float(st["margin_k"] if margin_k is None else margin_k)
+        if not _finite(k) or k < 0:
+            raise GestureError("margin_k: a number >= 0 is expected")
+        target, notes = None, []
+        if duration_s is not None:
+            D = float(duration_s)
+            if not _finite(D) or D <= 0:
+                raise GestureError("duration_s: a strictly positive number of seconds is expected")
+            target = min(D, g.max_duration_s)
+            if D > g.max_duration_s:
+                notes.append("duration_s %.2f s above the guardian maximum: cut at %s s" % (D, g.max_duration_s))
+        if count is not None:
+            count = int(count)
+            if count < 1:
+                raise GestureError("count: at least 1 draw")
+        lo, hi = _margin(intensity, fit, k, st["scale_min"], st["scale_max"])
+        if seed is None:  # drawn once and reported: the same sequence can be generated again
+            seed = random.Random().randrange(2 ** 31)
+        seed = int(seed)
+        rng = random.Random(seed)
+        draws, seeds, zs_all, durations, total = [], [], [], {}, 0.0
+        while True:
+            s_i = seed if not draws else rng.randrange(2 ** 31)
+            plans, pn, zs = self._plans(x, variation, s_i, project, temp, latent)
+            T = max(d for _, d in plans.values())
+            draws.append((T, dict((n, c) for n, (c, _) in plans.items())))
+            seeds.append(s_i)
+            zs_all.append(zs)
+            notes += ["draw %d: %s" % (len(draws), n) for n in pn]
+            for n, (_, d) in plans.items():
+                durations[n] = durations.get(n, 0.0) + d
+            total += T
+            if (len(draws) >= count) if count is not None else total > target:
+                break
+        start = g.pose("start")
+        end_pose = {}
+        for n, ctrl in draws[0][1].items():
+            js = self.groups[n]
+            end_pose[n] = [float(start[j]) if j in start else ctrl[0][c] for c, j in enumerate(js)]
+        R = RETURN_SPANS * max(draws[0][0] / (len(c) - DEGREE) for c in draws[0][1].values())
+        # possible cuts: after each control point of the finest group, or at the end of the last draw
+        ref = max(draws[0][1], key=lambda n: len(draws[0][1][n]))
+        taus, off = [], 0.0
+        for i, (T, plans) in enumerate(draws):
+            us = _greville(len(plans[ref]))
+            taus += [off + u * T for j, u in enumerate(us) if not (j == 0 and i > 0)
+                     and not (j == len(us) - 1 and i < len(draws) - 1)]
+            off += T
+        cuts = sorted(set([round(x + R, 6) for x in taus[1:] if x + R < total] + [round(total, 6)]))
+        if target is None:
+            cuts = cuts[-1:]
+        joints = self._joint_order()
+        held = dict((n, [float(start[j]) for j in self.groups[n]]) for n in ("arms", "head")
+                    if n not in self.models and self.groups.get(n))
+        cache = {}
+
+        def evaluate(E):
+            if E not in cache:
+                tt, by, kept = _sequence_curve(draws, end_pose, E, R, self.rate_hz)
+                rows = []
+                for i in range(len(tt)):
+                    row = []
+                    for n in COMPONENTS:
+                        if n in by:
+                            row += by[n][i]
+                        elif n in held:
+                            row += held[n]
+                    rows.append(row)
+                raw = adaptation = None
+                if adapt:
+                    raw = g.check_trajectory(tt, joints, rows, context=context)
+                    tt, rows, adaptation = _make_playable(g, joints, tt, rows, mode=self.slow_down)
+                cache[E] = (tt, rows, raw, adaptation, kept)
+            return cache[E]
+
+        bounds = [g.allowed_range(j) for j in joints]
+
+        def scaled(tt, rows, s):
+            ts, qs = _stretch(tt, rows, s, self.rate_hz)
+            return ts, [[min(b, max(a, v)) for v, (a, b) in zip(r, bounds)] for r in qs]
+
+        def accepted(tt, rows, s):  # a tighter tempo is kept only if the guardian accepts it
+            ts, qs = scaled(tt, rows, s)
+            return g.check_trajectory(ts, joints, qs, check_duration=False, context=context).ok
+
+        def factor(F):
+            if target is None:
+                return 1.0
+            return max(lo, min(hi, target / F))
+
+        def score(F, s):
+            return (F * s > g.max_duration_s + 1e-6, abs(F * s - (target or F)), abs(math.log(s)))
+
+        # pick the cut whose PLAYED duration (after _make_playable, which may slow it down) fits best;
+        # rho = slow-down seen on the last try, used to predict the next one
+        rho, best, upper = 1.0, None, None
+        for _ in range(8):
+            pool = [e for e in cuts if upper is None or e < upper] or cuts[:1]
+            E = min(pool, key=lambda e: score(e * rho, factor(e * rho)))
+            if E in cache:
+                break
+            tt, rows = evaluate(E)[:2]
+            F = tt[-1]
+            s = factor(F)
+            if s < 1.0 and not accepted(tt, rows, s):
+                ok, bad = 1.0, s  # strongest tightening the guardian still accepts
+                for _ in range(6):
+                    mid = (ok + bad) / 2.0
+                    if accepted(tt, rows, mid):
+                        ok = mid
+                    else:
+                        bad = mid
+                s = ok if ok <= 0.98 else 1.0
+            if abs(s - 1.0) < 0.005:
+                s = 1.0
+            ts, qs = scaled(tt, rows, s) if s != 1.0 else (tt, rows)
+            ok = g.check_trajectory(ts, joints, qs, context=context).ok
+            sc = (not ok,) + score(F, s)
+            if best is None or sc < best[0]:
+                best = (sc, E, F, s)
+            if not ok and F * s > 0.95 * g.max_duration_s:
+                # too long to be made playable within the maximum duration (the slow-down was capped,
+                # so F understates it): cut earlier
+                upper, rho = E, max(rho, F / E) * 1.5
+            else:
+                rho = F / E
+        E, F, s = best[1:]
+        tt, rows, raw, adaptation, kept = evaluate(E)
+        if s != 1.0:
+            tt, rows = scaled(tt, rows, s)
+        if s > 1.0:
+            notes.append("sequence played x%.2f slower to fill duration_s" % s)
+        elif s < 1.0:
+            notes.append("sequence played x%.2f faster to fit duration_s" % (1.0 / s))
+        if target is not None and F * s > g.max_duration_s + 1e-6:
+            notes.append("sequence longer than the guardian maximum (%s s): the guardian will refuse it"
+                         % g.max_duration_s)
+        notes.append("sequence: %d draw(s) blended, cut at %.2f s of learned time, %.2f s played"
+                     % (len(draws), E, tt[-1]))
+        info = {"draws": len(draws), "seed": seed, "draw_seeds": seeds,
+                "draw_durations_s": [round(T, 3) for T, _ in draws], "target_s": target,
+                "cut_s": round(E, 3), "playable_s": round(F, 3), "time_scale": round(s, 3),
+                "scale_range": [round(lo, 3), round(hi, 3)], "duration_fit": fit, "margin_k": k,
+                "duration_s": round(tt[-1], 3), "kept_control_points": kept}
+        extra = {"notes": notes, "durations": dict((n, round(d, 3)) for n, d in durations.items()),
+                 "temperature": temp, "latent": zs_all[0] if len(zs_all) == 1 else
+                 dict((n, [z.get(n) for z in zs_all]) for n in zs_all[0])}
+        return joints, tt, rows, extra, adaptation, raw, info
+
     def generate(self, emotion, intensity, event=None, current_pose=None, from_rest=False, return_to="start",
-                 variation=0.0, seed=None, adapt=None, temperature=None, latent=None):
+                 variation=0.0, seed=None, adapt=None, temperature=None, latent=None, duration_s=None,
+                 count=None, duration_fit=None, margin_k=None):
         """Generates and validates. See the module documentation.
 
         current_pose : measured posture {joint: value}; adds the transitions.
@@ -874,32 +1140,55 @@ class GestureGenerator(object):
         adapt        : make the gesture playable before the check, like the project UI
                        (control points into the zone, smooth saturation, slow-down where a
                        velocity or acceleration limit is exceeded). None = the file's setting
-                       (on by default), False = the raw learned gesture."""
+                       (on by default), False = the raw learned gesture.
+        duration_s   : fill this many seconds (e.g. the speech) with ONE movement: learned gestures
+                       are drawn (same prompt, a new z each) until their learned durations exceed
+                       duration_s, blended into one B-spline per group (no stop at the start pose
+                       between them), cut on a control point and ended at the start pose. The
+                       "gesture" segment then lasts duration_s, within the tempo margin: slowed
+                       down at most 1 + k (1 - intensity) times, sped up at most 1 / (1 - k (1 -
+                       intensity)) times and only if the guardian accepts it (intensity 1 = learned
+                       tempo, the cut alone fits the duration). Capped at the guardian maximum
+                       duration. `g.sequence` reports the draws, the cut and the time factor.
+                       Same `seed` = same sequence. None = a single gesture, as before.
+        count        : force this many draws (with or without duration_s).
+        duration_fit : "intensity" (the margin above) or "off" (cut only, learned tempo);
+                       None = the file's setting.
+        margin_k     : k of the margin; None = the file's setting (1.0 by default)."""
         if adapt is None:
             adapt = self.adapt_generated
         project = bool(adapt) and self.project_control_points
-        joints, tt, rows, extra = self.gesture(emotion, intensity, event, variation, seed, project=project,
-                                               temperature=temperature, latent=latent)
-        notes = list(extra["notes"])
         g = self.guardian
+        joints = self._joint_order()
         ctx = {}
         if current_pose is not None:
             current_pose = dict((k, float(v)) for k, v in current_pose.items())
             ctx = dict((j, v) for j, v in current_pose.items() if j not in joints and j in g.limits)
-        adaptation = raw_report = None
-        if adapt:
-            raw_report = g.check_trajectory(tt, joints, rows, context=ctx)
-            tt, rows, adaptation = _make_playable(g, joints, tt, rows, mode=self.slow_down)
-            notes += adaptation["notes"]
+        adaptation = raw_report = seq = None
+        if duration_s is None and count is None:
+            joints, tt, rows, extra = self.gesture(emotion, intensity, event, variation, seed, project=project,
+                                                   temperature=temperature, latent=latent)
+            notes = list(extra["notes"])
+            if adapt:
+                raw_report = g.check_trajectory(tt, joints, rows, context=ctx)
+                tt, rows, adaptation = _make_playable(g, joints, tt, rows, mode=self.slow_down)
+                notes += adaptation["notes"]
+        else:
+            joints, tt, rows, extra, adaptation, raw_report, seq = self._sequence(
+                emotion, intensity, event, duration_s, count, variation, seed, project, temperature, latent,
+                adapt, ctx, duration_fit, margin_k)
+            notes = list(extra["notes"]) + (adaptation["notes"] if adaptation else [])
         gesture_report = g.check_trajectory(tt, joints, rows, context=ctx)
         inputs = {"emotion": emotion, "intensity": float(intensity), "event": event, "variation": variation,
                   "seed": seed, "timing": self.timing}
+        if seq is not None:
+            inputs.update(duration_s=duration_s, count=count)
         if extra["latent"]:
             inputs.update(temperature=extra["temperature"], latent=extra["latent"])
         if current_pose is None:
             notes.append("No measured posture: bring the robot to the start position before sending this gesture")
             return Gesture(joints, tt, rows, gesture_report, gesture_report, [("gesture", 0.0, round(tt[-1], 4))],
-                           inputs, notes, extra["durations"], adaptation, raw_report)
+                           inputs, notes, extra["durations"], adaptation, raw_report, seq)
         if return_to not in ("start", "rest"):
             raise GestureError("return_to: 'start' or 'rest'")
         missing = [j for j in joints if j not in current_pose]
@@ -979,18 +1268,20 @@ class GestureGenerator(object):
                      "collisions is up to the calibration.")
         report = Report(not violations, violations, reports[0].stats)
         return Gesture(joints, full["t"], full["q"], report, gesture_report, segments, inputs, notes,
-                       extra["durations"], adaptation, raw_report)
+                       extra["durations"], adaptation, raw_report, seq)
 
 
 def _main(argv=None):
-    """python nao_gesture.py nao_gesture.json joy 0.7 [azimuth_deg elevation_deg [distance_m]]"""
+    """python nao_gesture.py nao_gesture.json joy 0.7 [azimuth_deg elevation_deg [distance_m]]
+    [--duration=S] [--count=N] [--seed=N] [--allow-uncalibrated] [--raw]"""
     argv = list(sys.argv[1:] if argv is None else argv)
     allow = "--allow-uncalibrated" in argv
     raw = "--raw" in argv
+    opts = dict(a[2:].split("=", 1) for a in argv if a.startswith("--") and "=" in a)
     args = [a for a in argv if not a.startswith("--")]
-    if len(args) not in (3, 5, 6):
+    if len(args) not in (3, 5, 6) or set(opts) - set(("duration", "count", "seed")):
         print("usage: python nao_gesture.py nao_gesture.json EMOTION INTENSITY [AZIMUTH_DEG ELEVATION_DEG "
-              "[DISTANCE_M]] [--allow-uncalibrated] [--raw]")
+              "[DISTANCE_M]] [--duration=S] [--count=N] [--seed=N] [--allow-uncalibrated] [--raw]")
         return 2
     gen = GestureGenerator.load(args[0], allow_uncalibrated=allow)
     event = None
@@ -998,9 +1289,15 @@ def _main(argv=None):
         event = {"azimuth_deg": float(args[3]), "elevation_deg": float(args[4])}
         if len(args) == 6:
             event["distance_m"] = float(args[5])
-    g = gen.generate(args[1], float(args[2]), event, adapt=False if raw else None)
-    out = json.dumps({"ok": g.ok, "duration_s": round(g.duration, 3), "joints": g.joints,
-                      "guardian": g.report.to_dict(), "adaptation": g.adaptation, "notes": g.notes}, indent=1, ensure_ascii=False)
+    g = gen.generate(args[1], float(args[2]), event, adapt=False if raw else None,
+                     duration_s=float(opts["duration"]) if "duration" in opts else None,
+                     count=int(opts["count"]) if "count" in opts else None,
+                     seed=int(opts["seed"]) if "seed" in opts else None)
+    res = {"ok": g.ok, "duration_s": round(g.duration, 3), "joints": g.joints,
+           "guardian": g.report.to_dict(), "adaptation": g.adaptation, "notes": g.notes}
+    if g.sequence is not None:
+        res["sequence"] = g.sequence
+    out = json.dumps(res, indent=1, ensure_ascii=False)
     if not isinstance(out, str):  # Python 2: unicode -> bytes
         out = out.encode("utf-8")
     print(out)

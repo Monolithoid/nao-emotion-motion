@@ -81,7 +81,7 @@ uncalibrated or invalid guardian section. Useful attributes:
 | `gen.groups` | `{"arms": [...], "head": [...], "hands": [...]}` joint names |
 | `gen.models` | groups that have a trained model (`arms`, `head`, `hands`) |
 | `gen.guardian` | the bundled `Guardian` (limits, poses, velocities) |
-| `gen.info` | export date, calibration, source training runs |
+| `gen.info` | export date, calibration, source training runs; `capabilities` lists the optional `generate()` features of this library (`"duration_s"`, `"count"`) and `sequence` its margin settings. A caller that may load an older file pair checks `"duration_s" in gen.info.get("capabilities", [])` |
 | `gen.timing` | `hold` or `stretch` (how groups of different durations are combined) |
 
 ### Emotions
@@ -121,7 +121,7 @@ What the models actually receive (for reference, `event_features()`):
 `[present, sin(az), cos(az), elevation_rad, distance_known, 1/(1+distance_m)]`, appended to
 `[emotion one-hot or mix..., intensity]`.
 
-### `gen.generate(emotion, intensity, event=None, current_pose=None, from_rest=False, return_to="start", variation=0.0, seed=None, adapt=None)`
+### `gen.generate(emotion, intensity, event=None, current_pose=None, from_rest=False, return_to="start", variation=0.0, seed=None, adapt=None, temperature=None, latent=None, duration_s=None, count=None, duration_fit=None, margin_k=None)`
 
 Returns a `Gesture`. Raises `GestureError` for invalid inputs (unknown emotion, intensity out of
 range, bad event, incomplete `current_pose`, bad `return_to`).
@@ -135,6 +135,45 @@ range, bad event, incomplete `current_pose`, bad `return_to`).
 | `temperature` | CVAE models only (`gen.latent_dims` not empty): each call draws a latent code z ~ N(0, T²) per group, so the same prompt gives a different learned gesture (a "way of doing" seen in the takes). `None` (default) = the file's `latent_temperature` (model.yaml `cvae.temperature` at export; 0 for files exported before it), `0` = always the central gesture (z = 0). With `seed`, the draw is reproducible (not the same z as the project engine for the same seed). Recorded in `g.inputs["temperature"]` and `g.inputs["latent"]`. |
 | `latent` | CVAE models only: a given z per group, e.g. `{"arms": [0.5, -1.0, 0.0, 0.2]}` (same z = same gesture as the project engine). |
 | `adapt` | `None` (default): follow the `playback` settings exported with the JSON (the project's `execution` section), i.e. make the gesture playable as the project UI does (section 6). `False`: check the raw learned gesture only. |
+| `duration_s` | fill this many seconds (typically the speech the gesture goes with) with **one** movement; see "Duration-targeted sequence" below. `None` (default): a single learned gesture, exactly as before. |
+| `count` | force this many blended draws (with or without `duration_s`; without it, the whole material is played at the learned tempo). |
+| `duration_fit` | `"intensity"` (tempo margin below) or `"off"` (learned tempo, the cut alone fits the duration). `None` = the file's setting. |
+| `margin_k` | `k` of the tempo margin. `None` = the file's setting (1.0 by default). |
+
+#### Duration-targeted sequence (`duration_s`)
+
+With `duration_s=D`, the `gesture` segment lasts about `D` seconds and stays one continuous,
+validated movement:
+
+1. **Draws**: learned gestures are drawn for the same emotion, intensity and event (CVAE models:
+   a new latent z each; plain models: the same gesture repeated, unless `variation` > 0) until
+   their learned durations add up to more than `D`. Each draw has its own seed derived from
+   `seed` (the first draw uses `seed` itself, so it is the gesture `generate()` gives alone).
+   Without `seed`, one is drawn and reported in `g.sequence["seed"]`: passing it back gives the
+   same movement.
+2. **Blend**: per group, the control points of the draws are concatenated into one cubic
+   B-spline; the clamped end points at each junction are dropped, so the robot does **not** go
+   back to the start pose between draws (the end of one draw and the start of the next are
+   slightly smoothed). Within a draw, arms, head and hands share the draw's duration.
+3. **Cut**: the curve is cut on a control point and ends on the start pose repeated (arrival at
+   zero velocity and acceleration). The cut is chosen on the duration **after** the usual
+   playable adaptation (section 6), which may slow fast moments down.
+4. **Tempo margin**: the result is played `s` times slower (`s` > 1) or faster (`s` < 1) to
+   land on `D`, with `s` in `[max(scale_min, 1 - k (1 - i)), min(scale_max, 1 + k (1 - i))]`
+   (`i` = intensity; file defaults `k = 1`, `scale_min = 0.7`, `scale_max = 3`, from the
+   project's `model.yaml` → `sequence`). A faster tempo is kept only if the guardian accepts it,
+   so velocities and accelerations never go past the limits. Intensity 1 = learned tempo: only
+   the cut fits the duration (within about one knot span).
+5. **Maximum**: `D` above the guardian maximum duration (`max_duration_s`, 15 s by default) is
+   cut at that maximum (a note says so).
+
+The transitions around it are unchanged (`to_start` / `rest_to_start`, `start_to_gesture`,
+`gesture_to_start`, `start_to_rest`): to fit a whole speech, subtract their durations (or accept
+that the movement runs a little longer). `g.sequence` reports `draws`, `seed`, `draw_seeds`,
+`draw_durations_s`, `target_s`, `cut_s` (learned time kept), `playable_s` (after adaptation),
+`time_scale` (`s`), `scale_range`, `duration_s` (of the `gesture` segment) and
+`kept_control_points`. With CVAE models, `g.inputs["latent"]` then holds one z per draw for each
+group. Files exported before this feature have no `sequence` settings: the defaults apply.
 
 The movement returned with `current_pose` is made of named segments (`g.segments`, list of
 `(name, start_s, end_s)`):
@@ -162,6 +201,7 @@ the robot to the start pose (and validate that move itself). A note in `g.notes`
 | `g.group_durations_s` | learned duration of each group's gesture |
 | `g.adaptation` | what was done to make the gesture playable: `changed`, `time_scale`, `max_shape_change_rad`, `joints_changed`, `notes` (`None` when `adapt=False`) |
 | `g.raw_report` | guardian report on the raw learned gesture, before adaptation (diagnostic) |
+| `g.sequence` | with `duration_s` or `count`: draws, cut and time factor (see above); `None` otherwise |
 | `g.to_dict()` | everything, JSON-serialisable (good for logs) |
 | `g.angle_interpolation(rate_hz=None)` | `(names, angles, times)` for `ALMotion.angleInterpolation(names, angles, times, True)`. Drops the t = 0 point (NAOqi starts from the current posture). `rate_hz=10` thins the ~50 Hz samples. **Raises `GuardianError` if the movement was refused.** |
 
@@ -172,6 +212,7 @@ in `g.joints` (not commanded). Check `g.notes`.
 
 ```bash
 python nao_gesture.py nao_gesture.json joy 0.7 30 0 1.2   # emotion, intensity, azimuth°, elevation°, distance m
+python nao_gesture.py nao_gesture.json joy 0.7 --duration=8 --seed=1   # sequence filling 8 s (also --count=N)
 # prints the verdict as JSON; exit code 0 = accepted, 1 = refused, 2 = usage
 ```
 

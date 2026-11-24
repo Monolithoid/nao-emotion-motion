@@ -17,6 +17,15 @@ hands_model:                # hand opening, independent of the arms
 combine:                    # arms + head + hands assembly at generation
   timing: hold              # hold: each group keeps its learned duration, shorter ones hold their final pose
                             # stretch: all groups stretched over the longest duration
+sequence:                   # exported generator, generate(..., duration_s=D): learned gestures drawn and blended
+                            # into one movement cut to D s (e.g. the speech). Within each draw the groups share
+                            # the draw's duration
+  duration_fit: intensity   # intensity: the tempo may change to fit D, the less the more intense (below);
+                            # off: learned tempo, the cut alone fits D
+  duration_margin_k: 1.0    # time factor allowed in [1 - k (1 - intensity), 1 + k (1 - intensity)]; faster only if
+                            # the guardian accepts it. Intensity 1 = learned tempo
+  scale_min: 0.7            # bounds of that factor, whatever the intensity
+  scale_max: 3.0
 training:
   epochs: 800
   lr: 0.01
